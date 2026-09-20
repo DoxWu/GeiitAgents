@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GeiIt Agents Dev",
+  "version": "0.1.0-dev.1",
+  "identifier": "com.geiit.agents.dev",
+  "build": {
+    "beforeBuildCommand": "npm run build -- --mode desktop --outDir dist-desktop-dev",
+    "frontendDist": "../dist-desktop-dev"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "GeiIt Agents · 开发版", "width": 1200, "height": 820, "minWidth": 680, "minHeight": 540, "dragDropEnabled": false }]
+  }
+}

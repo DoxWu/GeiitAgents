@@ -5,6 +5,7 @@ import { DEFAULT_PROFILE, fingerprint, LIMITS, rank, readDocument, validateProfi
   type EmbeddingProfile, type LocalIndex, type SearchHit } from '@/localKnowledge/core';
 import { commitIndex, loadIndex, MODEL_CACHE, SESSION_LOCK } from '@/localKnowledge/storage';
 import { LocalEmbeddingClient } from '@/localKnowledge/client';
+import LocalKnowledgeBackup from '@/components/workbench/LocalKnowledgeBackup';
 import '@/styles/local-knowledge.css';
 
 async function acquireSession(): Promise<() => void> {
@@ -171,5 +172,9 @@ export default function LocalKnowledgePage() {
       {hits.map((hit, n) => <article className="lk-hit" key={`${hit.documentId}-${hit.start}`}><div><strong>{n + 1}. {hit.name}</strong><span>相似度 {hit.score.toFixed(3)}</span></div>
         <small>字符 {hit.start + 1}–{hit.end} · 来源原文（UTF-16 位置）</small><pre>{hit.text}</pre></article>)}
     </section>
+    <LocalKnowledgeBackup disabled={!loaded || ready || busy} onRestore={value => {
+      setIndex(value); setDraft(JSON.stringify(value.profile, null, 2)); setHits([]); setSearched(false);
+      setError(''); setStatus('本地库已恢复，模型尚未启用');
+    }} />
   </main>;
 }
