@@ -20,7 +20,6 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
-from app.core.config import settings
 
 
 # revision identifiers, used by Alembic.
@@ -38,6 +37,10 @@ def upgrade() -> None:
         创建数据库初始结构。
         按依赖顺序创建：先创建被依赖的表（users），后创建依赖表。
     """
+
+    # Read model dimensions only when migrating. Independent ops monitors load
+    # revision metadata without requiring the main application's secrets.
+    from app.core.config import settings
 
     # ============================================
     # 1. 启用 pgvector 扩展

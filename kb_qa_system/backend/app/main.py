@@ -24,7 +24,7 @@ import os
 import logging
 
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import engine
 from app.api.routes.auth import router as auth_router
 from app.api.routes.registration import router as registration_router
 from app.api.routes.documents import router as documents_router
@@ -33,6 +33,8 @@ from app.api.routes.stats import router as stats_router
 from app.api.routes.document_chat import router as document_chat_router
 from app.api.routes.metrics import router as metrics_router
 from app.api.routes.folders import router as folders_router
+from app.api.routes.private_models import router as private_models_router
+from app.api.routes.maintenance import router as maintenance_router
 from app.api.ws_notifications import router as ws_notifications_router
 
 
@@ -151,14 +153,7 @@ async def lifespan(app: FastAPI):
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.redis import RedisIntegration
 
-        def _filter_pii(event, hint):
-            """过滤 PII（个人身份信息），移除敏感请求头"""
-            if "request" in event and "headers" in event["request"]:
-                event["request"]["headers"] = {
-                    k: v for k, v in event["request"]["headers"].items()
-                    if k.lower() not in ("authorization", "cookie")
-                }
-            return event
+        from app.core.privacy import filter_monitoring_event
 
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
@@ -170,25 +165,21 @@ async def lifespan(app: FastAPI):
                 CeleryIntegration(),
                 RedisIntegration(),
             ],
-            before_send=_filter_pii,
+            before_send=filter_monitoring_event,
+            before_send_transaction=filter_monitoring_event,
+            include_local_variables=False,
         )
         logger.info("✅ Sentry 错误监控已启用")
     else:
         logger.info("ℹ️ Sentry 未配置（ENABLE_SENTRY=False 或 SENTRY_DSN 为空）")
 
-    # 1. 数据库 schema 管理
-    # C-11 修复：移除 Base.metadata.create_all，完全依赖 Alembic 迁移
-    # 作用：create_all 仅创建表结构，不应用 Alembic 迁移的索引（IVFFlat/GIN），
-    #       导致向量检索全表扫描；与 Alembic 并存还会造成 schema 漂移
-    # 部署要求：必须执行 `alembic upgrade head`（Railway 配置 releaseCommand）
-    # 开发环境：首次启动前手动执行 `alembic upgrade head`
-    if settings.DEBUG:
-        # 开发环境保留 create_all 便于快速启动（仅创建缺失的表，不覆盖已有 schema）
-        # 注意：生产环境必须依赖 Alembic，不走此分支
-        Base.metadata.create_all(bind=engine)
-        logger.info("✅ 开发环境：数据库表已创建（生产环境由 Alembic 管理）")
-    else:
-        logger.info("ℹ️ 生产环境：数据库 schema 由 Alembic 管理，请确保已执行 alembic upgrade head")
+    # C-11: use complete Alembic migrations for every environment, including direct uvicorn.
+    import asyncio
+    from app.ops.recovery import ensure_database
+    from app.ops.runtime import application_config, recovery_loop
+    ops_config = application_config(settings)
+    await asyncio.to_thread(ensure_database, ops_config)
+    recovery_task = asyncio.create_task(recovery_loop(ops_config)) if ops_config.DB_RECOVERY_ENABLED else None
 
     # 2. 创建必要目录
     # 作用：上传目录和数据目录在启动时确保存在
@@ -236,7 +227,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("🔒 API 文档已在生产模式关闭")
 
-    yield  # 应用运行期间
+    try:
+        yield  # 应用运行期间
+    finally:
+        if recovery_task:
+            recovery_task.cancel()
+            from contextlib import suppress
+            with suppress(asyncio.CancelledError):
+                await recovery_task
 
     # ===== 关闭时执行 =====
     # C-10 修复：资源清理，避免连接泄漏
@@ -348,6 +346,7 @@ app.add_middleware(
         "Content-Type",
         "Accept",
         "X-Request-ID",
+        "X-Model-Api-Key",
         # M-22 修复：移除未使用的 X-Idempotency-Key 头
         # 原设计计划通过 Header 传递幂等键，实际实现在请求体 QuestionRequest.idempotency_key 中
         # 保留未使用的头会增加 CORS 预检开销且暴露 API 设计意图
@@ -400,6 +399,8 @@ app.include_router(documents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(chat_router, prefix=settings.API_V1_PREFIX)
 app.include_router(document_chat_router, prefix=settings.API_V1_PREFIX)
 app.include_router(stats_router, prefix=settings.API_V1_PREFIX)
+app.include_router(private_models_router, prefix=settings.API_V1_PREFIX)
+app.include_router(maintenance_router, prefix=settings.API_V1_PREFIX)
 # metrics 路由不加 API_V1_PREFIX，放在根路径（/metrics）
 app.include_router(metrics_router)
 # E1-04: WebSocket 通知端点，不加 API_V1_PREFIX，放在根路径（/ws/notifications）
@@ -409,78 +410,27 @@ app.include_router(ws_notifications_router)
 
 # ============================================
 # 健康检查接口
+# L-13: dependency readiness returns 503; process liveness remains independent.
 # ============================================
 
+@app.get("/live", tags=["系统"])
+async def liveness():
+    return {"status": "alive"}
+
+
+@app.get("/ready", tags=["系统"])
 @app.get("/health", tags=["系统"])
 async def health_check():
-    """
-    健康检查接口（L-13 修复：增强为深度健康检查）
-
-    作用：
-        检查服务及核心依赖（DB、Redis）是否正常运行。
-        用于：
-        - 负载均衡器健康检查（建议只看 status 字段）
-        - 监控系统探活
-        - 部署后验证
-        - 依赖故障快速定位
-
-    响应（200）：
-        {
-            "status": "healthy",  # overall: healthy / degraded / unhealthy
-            "service": "GeiIt企业知识库",
-            "version": "1.0.0",
-            "environment": "development",
-            "checks": {
-                "database": {"status": "healthy", "latency_ms": 2},
-                "redis": {"status": "healthy", "latency_ms": 1}
-            }
-        }
-    """
-    checks = {}
-    overall_healthy = True
-
-    # 1. 检查数据库连通性
-    # 作用：DB 不可用时文档/对话/用户等核心功能全部失效
-    try:
-        from app.core.database import SessionLocal
-        from sqlalchemy import text
-        import time as _time
-        db_start = _time.time()
-        db = SessionLocal()
-        try:
-            db.execute(text("SELECT 1"))
-            db_latency = int((_time.time() - db_start) * 1000)
-            checks["database"] = {"status": "healthy", "latency_ms": db_latency}
-        finally:
-            db.close()
-    except Exception as e:
-        overall_healthy = False
-        checks["database"] = {"status": "unhealthy", "error": type(e).__name__}
-
-    # 2. 检查 Redis 连通性
-    # 作用：Redis 不可用时限流/幂等/Token黑名单等功能受影响（fail-closed 策略下会拒绝请求）
-    try:
-        from app.core.redis import RedisManager
-        import time as _time
-        redis_start = _time.time()
-        redis_ok = RedisManager.ping()
-        redis_latency = int((_time.time() - redis_start) * 1000)
-        if redis_ok:
-            checks["redis"] = {"status": "healthy", "latency_ms": redis_latency}
-        else:
-            overall_healthy = False
-            checks["redis"] = {"status": "unhealthy", "error": "ping returned False"}
-    except Exception as e:
-        overall_healthy = False
-        checks["redis"] = {"status": "unhealthy", "error": type(e).__name__}
-
-    return {
-        "status": "healthy" if overall_healthy else "degraded",
+    import asyncio
+    from app.ops.runtime import application_config, readiness
+    healthy, checks = await asyncio.to_thread(readiness, application_config(settings))
+    return JSONResponse(status_code=200 if healthy else 503, content={
+        "status": "healthy" if healthy else "degraded",
         "service": settings.APP_NAME,
         "version": "1.0.0",
         "environment": settings.ENVIRONMENT,
         "checks": checks,
-    }
+    })
 
 
 @app.get("/", tags=["系统"])

@@ -37,10 +37,11 @@ config = context.config
 # 从应用配置覆盖数据库 URL
 # 作用：统一使用 .env 中的数据库配置，不依赖 alembic.ini
 # Railway 兼容：自动转换 postgresql:// → postgresql+psycopg://
-database_url = settings.DATABASE_URL
+database_url = config.attributes.get("database_url", settings.DATABASE_URL)
+database_url = database_url.replace("postgres://", "postgresql://", 1)
 if database_url.startswith("postgresql://") and "+psycopg" not in database_url:
     database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-config.set_main_option("sqlalchemy.url", database_url)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 # 日志配置
 if config.config_file_name is not None:
@@ -99,13 +100,26 @@ def run_migrations_online() -> None:
         - context.run_migrations: 执行迁移
     """
     # 创建引擎
+    from app.ops.config import OpsSettings
+    ops_settings = config.attributes.get("ops_settings") or OpsSettings()
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={
+            "connect_timeout": ops_settings.DB_CONNECT_TIMEOUT_SECONDS,
+            "options": f"-c statement_timeout={ops_settings.DB_OPERATION_TIMEOUT_SECONDS * 1000} -c lock_timeout=10000",
+        },
     )
 
     with connectable.connect() as connection:
+        # Share the same maintenance lock with startup recovery and backups.
+        if not config.attributes.get("maintenance_lock_held"):
+            from sqlalchemy import text
+            from app.ops.postgres import LOCK_ID
+            connection.execute(text("SET lock_timeout = '300s'"))
+            connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": LOCK_ID})
+            connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

@@ -133,6 +133,9 @@ export default function SettingsPage() {
         <section className="rounded-lg border border-line bg-surface p-5">
           <h2 className="mb-4 text-sm font-semibold text-ink">快捷功能</h2>
           <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => navigate("/workbench")} className="flex items-center gap-3 rounded-md border border-line p-3 text-left text-sm hover:bg-muted">
+              <FileText className="h-4 w-4 text-brand" />办公工作台
+            </button>
             <button
               onClick={handleGoDocuments}
               className="flex items-center gap-3 rounded-md border border-line p-3 text-left transition-colors hover:bg-muted"
@@ -219,6 +222,12 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+
+        {user.is_superuser && <section className="rounded-lg border border-line bg-surface p-5">
+          <h2 className="mb-2 text-sm font-semibold text-ink">系统数据保护</h2>
+          <p className="mb-4 text-sm text-ink-secondary">查看备份快照、验证恢复能力并跟踪后台任务。</p>
+          <Button variant="secondary" onClick={() => navigate("/admin/backup-recovery")}>备份与恢复</Button>
+        </section>}
 
         {/* 账号操作 */}
         <section className="rounded-lg border border-line bg-surface p-5">

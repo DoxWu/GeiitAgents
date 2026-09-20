@@ -11,9 +11,14 @@
     "check": "tsc -b --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
+    "@tauri-apps/api": "^2.11.1",
     "clsx": "^2.1.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.511.0",
@@ -34,6 +39,8 @@
   ],
   "devDependencies": {
     "@eslint/js": "^9.25.0",
+    "@playwright/test": "^1.63.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/dom": "^10.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -48,6 +55,7 @@
     "eslint": "^9.25.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",
+    "fake-indexeddb": "6.2.4",
     "globals": "^16.0.0",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.3",

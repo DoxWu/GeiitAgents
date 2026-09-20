@@ -16,8 +16,11 @@
 .env.staging
 .env.development
 .env.*.local
+.env.ops
+.env.*
 # 显式保留示例文件
 !.env.example
+!kb_qa_system/frontend/.env.desktop
 
 # ============================================
 # Python（后端）
@@ -191,4 +194,9 @@ $RECYCLE.BIN/
 *.crt
 *.p12
 secrets.json
+kb_qa_system/frontend/src-tauri/target/
+kb_qa_system/frontend/src-tauri/gen/
+.tools/
 secret_key.txt
+*.geiitkb
+*.geiitkb.json

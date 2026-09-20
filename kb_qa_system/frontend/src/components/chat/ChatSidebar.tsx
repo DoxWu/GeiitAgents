@@ -147,6 +147,9 @@ export function ChatSidebar({ onCollapse }: ChatSidebarProps) {
 
       {/* 新对话按钮 */}
       <div className="px-3 py-2">
+        <button className="mb-2 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-ink-secondary hover:bg-muted" onClick={() => navigate("/workbench")}>
+          <Files className="h-4 w-4" />办公工作台
+        </button>
         <Button
           variant="primary"
           size="sm"

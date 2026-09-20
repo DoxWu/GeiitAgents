@@ -958,16 +958,18 @@ ENABLE_TABLE_EXTRACTION=True
 
 ### 6.5 配置健康检查
 
-在「健康检查」标签配置：
+故障恢复和备份配置以 [Sealos 故障恢复、异地备份与告警](SEALOS_RECOVERY_AND_BACKUP.md) 为准，包含 PVC 排查、完整三种探针 YAML 和环境变量。
+
+在「健康检查」标签配置存活探针；就绪探针另外使用 `/ready`，依赖异常返回 503：
 
 | 字段   | 值                       |
 | ---- | ----------------------- |
 | 检查类型 | `HTTP`                  |
-| 检查路径 | `/health`               |
+| 检查路径 | `/live`                 |
 | 端口   | `8000`                  |
 | 间隔   | `30` 秒                  |
 | 超时   | `10` 秒                  |
-| 启动延迟 | `60` 秒（首次启动需迁移数据库，时间较长） |
+| 启动延迟 | 使用 startupProbe 留出恢复时间，详见上述指南 |
 | 失败阈值 | `3` 次                   |
 
 ### 6.6 配置网络
@@ -1356,7 +1358,7 @@ curl -w "DNS解析: %{time_namelookup}s\nTCP连接: %{time_connect}s\nSSL握手:
 
 ```bash
 curl -w "\nHTTP状态: %{http_code}\n响应时间: %{time_total}s\n" \
-  -s https://geiit.online/api/v1/health
+  -s https://geiit.online/ready
 ```
 
 **预期**：
@@ -1827,7 +1829,7 @@ initdb: detail: It contains a lost+found directory, perhaps due to it being a mo
 - [ ] `kb-qa-api` 应用状态为 `Running`
 - [ ] 环境变量配置完整（`ROLE`、`DATABASE_URL`、`REDIS_URL`、`SECRET_KEY` 等）
 - [ ] 存储已挂载（`/app/uploads` + `/app/data`）
-- [ ] 健康检查配置正确（`/health` 端口 8000）
+- [ ] 存活检查 `/live`、就绪检查 `/ready` 分开配置（端口 8000）
 - [ ] 日志显示数据库迁移完成
 - [ ] 日志显示 FastAPI 启动成功
 - [ ] 日志显示 Celery Worker 启动成功

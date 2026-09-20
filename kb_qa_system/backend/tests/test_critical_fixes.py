@@ -501,17 +501,15 @@ class TestLifespanCleanup:
 class TestNoCreateAll:
     """C-11: 移除 create_all 测试"""
 
-    def test_create_all_conditional_on_debug(self):
-        """验证 create_all 仅在 DEBUG 模式下执行"""
+    def test_startup_uses_migrations_in_all_environments(self):
+        """所有环境均使用完整迁移，避免开发库缺少索引和版本记录。"""
         source = read_source("app/main.py")
-        assert "if settings.DEBUG:" in source, "C-11: create_all 应仅在 DEBUG 模式下执行"
-        assert "Base.metadata.create_all" in source, "开发环境可保留 create_all"
-        assert "alembic" in source.lower(), "应有 Alembic 迁移提示"
+        assert "Base.metadata.create_all" not in source
+        assert "await asyncio.to_thread(ensure_database, ops_config)" in source
 
-    def test_c11_fix_annotation(self):
-        """验证 C-11 修复注释存在"""
-        source = read_source("app/main.py")
-        assert "C-11" in source, "应有 C-11 修复标记"
+    def test_recovery_uses_alembic(self):
+        source = read_source("app/ops/recovery.py")
+        assert 'command.upgrade(config, "head")' in source
 
 
 # ============================================

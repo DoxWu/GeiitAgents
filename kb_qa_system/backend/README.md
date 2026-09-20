@@ -95,7 +95,7 @@ kb_qa_system/
     ├── tests/                      # 测试（Critical / Phase C 修复验证）
     ├── Dockerfile                  # 生产镜像（多角色：api/worker/flower）
     ├── entrypoint.sh               # 容器入口（按 ROLE 启动不同服务）
-    ├── railway.json                # Railway 部署配置（含 releaseCommand 迁移）
+    ├── railway.json                # Railway 部署配置（入口自动检查迁移）
     ├── alembic.ini
     ├── requirements.txt
     ├── .env.example
@@ -313,7 +313,7 @@ celery -A app.tasks.celery_app worker --loglevel=info
 生产环境部署详见 [`DEPLOYMENT.md`](../DEPLOYMENT.md)。关键要点：
 
 - **平台**：Railway（PostgreSQL + Redis + 应用服务）
-- **数据库迁移**：`railway.json` 已配置 `releaseCommand = "alembic upgrade head"`，每次发布自动迁移
+- **数据库迁移**：容器入口和应用生命周期自动检查/迁移，默认 `MIGRATE_ON_STARTUP=true`，支持数据库恢复重试
 - **Redis 持久化**：必须开启 AOF，支持 fail-closed 安全策略（Token 黑名单/限流）
 - **环境变量**：生产环境必须显式设置 `SECRET_KEY`（≥32 字符）、`DEBUG=False`、`ENVIRONMENT=production`
 - **多角色镜像**：同一 Dockerfile 通过 `ROLE` 环境变量启动 api / worker / flower

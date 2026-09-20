@@ -47,6 +47,7 @@ DEFAULT_RATE_LIMIT_PER_MINUTE = 60
 # 路径规则：已配置路由级限流的路径（避免重复限流）
 # 这些路径已在路由中通过 dependencies=[Depends(rate_limit(...))] 配置限流
 EXCLUDE_PATH_PATTERNS = [
+    r"^/api/v1/private-models/",          # 20次/分钟（路由级）
     r"^/api/v1/registration/apply",       # 3次/小时（路由级）
     r"^/api/v1/registration/status",      # 10次/分钟（路由级）
     r"^/api/v1/registration/set-password", # 5次/小时（路由级）

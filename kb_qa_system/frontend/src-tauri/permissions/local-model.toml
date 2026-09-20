@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-local-model"
+description = "Call and cancel validated loopback-only model requests."
+commands.allow = ["complete_local_model", "cancel_local_model"]

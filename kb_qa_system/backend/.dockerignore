@@ -18,6 +18,7 @@ ENV/
 .env
 .env.local
 .env.*.local
+.env.ops
 
 # 测试与覆盖率
 .pytest_cache/

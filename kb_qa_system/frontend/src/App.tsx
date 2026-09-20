@@ -39,6 +39,9 @@ const AdminApplicationsPage = lazy(() => import("@/pages/AdminApplicationsPage")
 const PrivacyPage = lazy(() => import("@/pages/PrivacyPage"));
 const TermsPage = lazy(() => import("@/pages/TermsPage"));
 const HelpPage = lazy(() => import("@/pages/HelpPage"));
+const WorkbenchPage = lazy(() => import("@/pages/WorkbenchPage"));
+const LocalKnowledgePage = lazy(() => import("@/pages/LocalKnowledgePage"));
+const BackupRecoveryPage = lazy(() => import("@/pages/BackupRecoveryPage"));
 import { useAuthStore } from "@/store/authStore";
 import { useNotification } from "@/hooks/useNotification";
 
@@ -75,7 +78,10 @@ export default function App() {
         <Suspense fallback={<PageFallback />}>
         <Routes>
           {/* 根路径重定向至文档管理页 */}
-          <Route path="/" element={<Navigate to="/documents" replace />} />
+          <Route path="/" element={<Navigate to={"__TAURI_INTERNALS__" in window ? "/workbench" : "/documents"} replace />} />
+          <Route path="/workbench" element={<WorkbenchPage />} />
+          <Route path="/local-knowledge" element={<LocalKnowledgePage />} />
+          <Route path="/admin/backup-recovery" element={<AdminRoute><BackupRecoveryPage /></AdminRoute>} />
 
           {/* 认证相关页面（已登录用户重定向至 /documents） */}
           <Route path="/login" element={<LoginRoute />} />

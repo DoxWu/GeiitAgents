@@ -175,11 +175,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      # 作用：通过 /health 接口判断 API 是否就绪
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # 存活检查不依赖数据库；外部就绪监控使用 /ready。
+      test: ["CMD", "curl", "-f", "http://localhost:8000/live"]
       interval: 30s
       timeout: 10s
-      start_period: 40s
+      start_period: 600s
       retries: 3
     deploy:
       resources:

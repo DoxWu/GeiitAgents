@@ -107,6 +107,6 @@ Railway
 └── flower (可选)        ← Celery 监控（仅监控 profile 激活时启动）
 ```
 
-- 数据库迁移：Railway `releaseCommand = "alembic upgrade head"`
+- 数据库迁移：启动与运行时数据库检查/迁移（MIGRATE_ON_STARTUP、DB_RECOVERY_ENABLED），参见 ../../docs/SEALOS_RECOVERY_AND_BACKUP.md
 - Redis 持久化：支持 fail-closed 策略（C-6/C-7）
 - 容器资源限制：api/worker 1G，postgres 512M，redis 256M，flower 256M

@@ -47,18 +47,13 @@ echo "=========================================="
 # 数据库迁移函数
 # 作用：在启动 API 前应用最新的 Alembic 迁移，保证表结构一致
 # 说明：
-#   - Railway 部署时通过 releaseCommand 执行迁移，设置 MIGRATE_ON_STARTUP=false 跳过
-#   - 非 Railway 部署保持 MIGRATE_ON_STARTUP=true（默认），在启动时执行迁移
-#   - 只在 api 角色执行迁移，避免多副本重复迁移
+#   - 所有平台启动时检查数据库，默认自动迁移并重试连接
+#   - ROLE=ops 独立运行异地备份与故障告警，无需启动 API
+#   - API 迁移使用数据库咨询锁，多个副本安全串行检查
 # --------------------------------------------
 run_migrations() {
-    if [ "${MIGRATE_ON_STARTUP:-true}" = "false" ]; then
-        echo "⏭️  MIGRATE_ON_STARTUP=false，跳过启动迁移（由 releaseCommand 执行）"
-        return 0
-    fi
-    echo "📦 正在执行数据库迁移..."
-    alembic upgrade head
-    echo "✅ 数据库迁移完成"
+    echo "Checking database availability, backup recovery and migrations..."
+    python -m app.ops.cli startup
 }
 
 # --------------------------------------------
@@ -161,8 +156,11 @@ case "${ROLE}" in
     flower)
         start_flower
         ;;
+    ops)
+        exec python -m app.ops.cli monitor
+        ;;
     *)
-        echo "❌ 未知角色: ${ROLE}，可选值: api / api+worker / worker / flower"
+        echo "❌ 未知角色: ${ROLE}，可选值: api / api+worker / worker / flower / ops"
         exit 1
         ;;
 esac

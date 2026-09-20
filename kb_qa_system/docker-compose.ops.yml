@@ -1,0 +1,16 @@
+# Deploy this SINGLE instance on another provider, not on the primary Sealos cluster.
+# Copy backend/.env.example to .env.ops and fill only the needed operations settings.
+# Run: docker compose -f docker-compose.ops.yml up -d --build
+services:
+  ops:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env.ops
+    environment:
+      ROLE: ops
+      OPS_STATE_FILE: /app/data/ops-state.json
+    volumes:
+      - ops_state:/app/data
+    # No inbound ports. The monitor connects out to PostgreSQL/HTTPS/email.
+volumes:
+  ops_state:

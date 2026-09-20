@@ -93,6 +93,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #             libsm6/libxrender1/libxext6/libgl1（opencv 已从依赖中删除）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    postgresql-client \
     tesseract-ocr \
     tesseract-ocr-chi-sim \
     tesseract-ocr-eng \
@@ -125,7 +126,7 @@ COPY --chown=kbapp:kbapp . /app/
 #   - docker-compose 用命名卷挂载时，若镜像中无此目录，
 #     Docker 会创建 root:root 755 空目录，导致非 root 用户 kbapp 无法写入（HTTP 500）
 #   - 显式创建并 chown 给 kbapp，命名卷首次挂载时继承此权限
-RUN chmod +x /app/entrypoint.sh && \
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh && \
     mkdir -p /app/uploads /app/data && \
     chown -R kbapp:kbapp /app/uploads /app/data
 # 注意：不在此处切换 USER kbapp。

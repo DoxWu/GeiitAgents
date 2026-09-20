@@ -135,6 +135,10 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+        "http://tauri.localhost",
+        "tauri://localhost",
     ]
 
     # ============================================
@@ -808,7 +812,7 @@ class Settings(BaseSettings):
                 errors.append("生产环境启用 Prometheus 时必须开启 PROMETHEUS_AUTH_ENABLED")
 
             # /metrics 端点密码不能为空
-            if self.ENABLE_PROMETHEUS and self.ENABLE_PROMETHEUS_AUTH_ENABLED and not self.PROMETHEUS_AUTH_PASSWORD:
+            if self.ENABLE_PROMETHEUS and self.PROMETHEUS_AUTH_ENABLED and not self.PROMETHEUS_AUTH_PASSWORD:
                 errors.append("生产环境 PROMETHEUS_AUTH_PASSWORD 不能为空")
 
             # 邮件配置校验（启用邮件时必须配置 API Key 和管理员邮箱）

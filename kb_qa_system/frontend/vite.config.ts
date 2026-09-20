@@ -5,6 +5,11 @@ import { visualizer } from "rollup-plugin-visualizer";
 
 // https://vite.dev/config/
 export default defineConfig({
+  worker: { format: 'es' },
+  server: {
+    // Rust outputs can be locked while linking on Windows; never watch them.
+    watch: { ignored: ['**/src-tauri/**'] },
+  },
   build: {
     sourcemap: 'hidden',
     // 优化2：显式配置 modulePreload

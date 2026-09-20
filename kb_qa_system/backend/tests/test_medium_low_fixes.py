@@ -727,9 +727,11 @@ class TestL13EnhancedHealthCheck:
         source = read_source("main.py")
         assert "checks" in source, "应返回 checks 字典"
 
-    def test_l13_annotation(self):
+    def test_readiness_status_and_liveness_are_separate(self):
         source = read_source("main.py")
-        assert "L-13" in source
+        assert '@app.get("/live"' in source
+        assert '@app.get("/ready"' in source
+        assert 'status_code=200 if healthy else 503' in source
 
 
 # ============================================

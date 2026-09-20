@@ -92,9 +92,9 @@ pg_restore \
     -d "$VERIFY_DB_NAME" \
     --no-owner \
     --no-privileges \
-    --clean \
-    --if-exists \
-    "$LATEST_BACKUP" 2>&1 | grep -v "^pg_restore:" || true
+    --exit-on-error \
+    --single-transaction \
+    "$LATEST_BACKUP"
 
 echo "✅ 恢复完成"
 
