@@ -3,6 +3,8 @@ import { PrivateVault } from "@/services/privateVault";
 import { completeModel, completeAccountModel, getAccountModel, validateProfile } from "@/services/workbenchModel";
 import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, VaultData, WorkConversation, WorkMessage } from "@/types/workbench";
+import type { SearchHit } from '@/localKnowledge/core';
+import { buildKnowledgeMessages } from '@/localKnowledge/answer';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -37,6 +39,7 @@ interface WorkbenchState {
   setProfile: (id: string, profileId: string) => void;
   send: (id: string, text: string) => Promise<void>;
   cancel: (id: string) => void;
+  answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal) => Promise<{ content: string; model: string }>;
 }
 
 function publicProfiles(): ModelProfile[] {
@@ -222,6 +225,34 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
   },
   cancel: (id) => { controllers.get(id)?.abort(); },
+  answerKnowledge: async (profileId, question, sources, allowCloud, signal) => {
+    if (!get().unlocked) throw new Error('请先解锁本机密钥库。');
+    const messages = buildKnowledgeMessages(question, sources);
+    const profile = get().profiles.find(item => item.id === profileId);
+    const secret = secrets.find(item => item.id === profileId);
+    const account = profileId === ACCOUNT_MODEL_ID;
+    if (account) {
+      if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error('当前账号没有可用的云端模型，请先检查账号权限。');
+    } else if (!profile || !secret) throw new Error('请选择已保存的生成模型连接。');
+    if ((account || profile?.mode === 'relay') && !allowCloud) throw new Error('发送本地片段到云端前需要明确授权。');
+    if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型请求。');
+    const id = `knowledge:${crypto.randomUUID()}`, controller = new AbortController(), epoch = generation;
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    controllers.set(id, controller); if (account || profile?.mode === 'relay') accountRequests.add(id);
+    const timeout = setTimeout(abort, 120000);
+    try {
+      if (signal.aborted) abort();
+      if (controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
+      const result = account ? await completeAccountModel(messages, controller.signal) : {
+        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal), model: profile!.model,
+      };
+      if (controller.signal.aborted || epoch !== generation) throw new DOMException('请求已取消或密钥库已锁定', 'AbortError');
+      return result;
+    } finally {
+      clearTimeout(timeout); signal.removeEventListener('abort', abort); controllers.delete(id); accountRequests.delete(id);
+    }
+  },
 }));
 
 window.addEventListener("storage", (event) => {

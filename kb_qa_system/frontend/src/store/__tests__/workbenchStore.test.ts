@@ -5,6 +5,7 @@ import { useWorkbenchStore as store, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from 
 import { useAuthStore } from "../authStore";
 import { completeModel, completeAccountModel, getAccountModel } from "@/services/workbenchModel";
 import type { ModelProfile } from "@/types/workbench";
+import type { SearchHit } from '@/localKnowledge/core';
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -104,4 +105,35 @@ it("clears account availability and ignores late cloud replies on logout", async
   reply({ content: "late cloud reply", model: "server-model" }); await sending;
   expect(store.getState().accountModel).toBeNull();
   expect(store.getState().conversations[0].messages).toHaveLength(1);
+});
+
+const source: SearchHit = { documentId: 'fixture', name: 'policy.txt', start: 0, end: 4, text: '测试资料', vector: [1], score: 1 };
+it('requires explicit consent for cloud knowledge answers and never falls back', async () => {
+  const cloud = { ...profile, id: 'cloud', mode: 'relay' as const, baseUrl: 'https://provider.example/v1' };
+  await store.getState().saveProfile(cloud, 'test-only-key');
+  await expect(store.getState().answerKnowledge('cloud', '问题', [source], false, new AbortController().signal)).rejects.toThrow('授权');
+  expect(completeModel).not.toHaveBeenCalled();
+  vi.mocked(completeModel).mockRejectedValue(new Error('provider unavailable'));
+  await expect(store.getState().answerKnowledge('cloud', '问题', [source], true, new AbortController().signal)).rejects.toThrow('provider unavailable');
+  expect(completeAccountModel).not.toHaveBeenCalled();
+  expect(store.getState().conversations).toHaveLength(0);
+});
+it('can use local models without cloud consent and keeps answer transient', async () => {
+  vi.mocked(completeModel).mockResolvedValue('测试回答 [1]');
+  const result = await store.getState().answerKnowledge(profile.id, '问题', [source], false, new AbortController().signal);
+  expect(result.content).toBe('测试回答 [1]');
+  expect(store.getState().conversations).toHaveLength(0);
+  expect(completeModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.any(Array), expect.any(AbortSignal));
+});
+it('blocks account answers without permission even with consent', async () => {
+  await expect(store.getState().answerKnowledge(ACCOUNT_MODEL_ID, '问题', [source], true, new AbortController().signal)).rejects.toThrow('没有可用');
+  expect(completeAccountModel).not.toHaveBeenCalled();
+});
+it('aborts knowledge requests on vault lock and ignores late replies', async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const result = store.getState().answerKnowledge(profile.id, '问题', [source], false, new AbortController().signal);
+  const rejected = expect(result).rejects.toThrow('取消');
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await store.getState().lock(); finish('late answer'); await rejected;
 });

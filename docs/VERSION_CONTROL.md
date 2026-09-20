@@ -19,7 +19,7 @@
 | 开发测试包（默认） | `npm run desktop:build` | 同一 dev 标识；`src-tauri/target-dev`；`dist-desktop-dev` |
 | 原正式通道构建 | `npm run desktop:build:release` | `com.geiit.workbench`；`src-tauri/target`；`dist`，需明确调用 |
 
-独立应用标识让默认 Tauri 数据目录与旧测试包/未来正式通道分开；开发 NSIS 产品名也独立。旧包仍为 `GeiIt Workbench`，不能自动迁移其本地数据；可通过本地知识库加密备份有选择地迁移。开发版本号 `0.1.0-dev.1` 仅用于当前检查点，后续发包要递增。
+独立应用标识让默认 Tauri 数据目录与旧测试包/未来正式通道分开；开发 NSIS 产品名也独立。旧包仍为 `GeiIt Workbench`，不能自动迁移其本地数据；可通过本地知识库加密备份有选择地迁移。备份检查点为 `0.1.0-dev.1`；回答功能已递增为 `0.1.0-dev.2`，后续发包继续递增。
 
 开发/正式 Web 仍按 origin 隔离存储，不能把两者挂在同一 origin 下不同 URL 路径就视为数据隔离。桌面 `tauri dev` 使用 localhost，与打包版 origin 也不相同；这两个开发入口不会自动共享浏览器存储。
 

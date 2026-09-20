@@ -6,6 +6,7 @@ import { DEFAULT_PROFILE, fingerprint, LIMITS, rank, readDocument, validateProfi
 import { commitIndex, loadIndex, MODEL_CACHE, SESSION_LOCK } from '@/localKnowledge/storage';
 import { LocalEmbeddingClient } from '@/localKnowledge/client';
 import LocalKnowledgeBackup from '@/components/workbench/LocalKnowledgeBackup';
+import LocalKnowledgeAnswer from '@/components/workbench/LocalKnowledgeAnswer';
 import '@/styles/local-knowledge.css';
 
 async function acquireSession(): Promise<() => void> {
@@ -30,6 +31,7 @@ export default function LocalKnowledgePage() {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searched, setSearched] = useState(false);
+  const [searchedQuestion, setSearchedQuestion] = useState('');
   const client = useRef<LocalEmbeddingClient | null>(null);
   const activeProfile = useRef<EmbeddingProfile>(DEFAULT_PROFILE);
   const release = useRef<(() => void) | null>(null);
@@ -107,7 +109,7 @@ export default function LocalKnowledgePage() {
     try {
       const vector = await client.current.query(query);
       if (run !== generation.current) return;
-      setHits(rank(index, activeProfile.current, vector)); setSearched(true); setStatus('检索完成，片段未发送给聊天模型');
+      setHits(rank(index, activeProfile.current, vector)); setSearchedQuestion(query); setSearched(true); setStatus('检索完成，片段未发送给聊天模型');
     } catch (e) { if (run === generation.current) setError(e instanceof Error ? e.message : '本地查询失败'); }
     finally { if (run === generation.current) setBusy(false); }
   }
@@ -136,7 +138,7 @@ export default function LocalKnowledgePage() {
     <header><span className="lk-eyebrow">ON YOUR DEVICE</span><h1><BookOpen />本地知识库</h1>
       <p>把你选择的文档留在本机，按内容查找相关片段。</p></header>
     <div className="lk-notice"><ShieldCheck size={21} /><div>本地文档、向量和设置独立保存，不上传到云端知识库。
-      <small>存储位于此浏览器或客户端的数据目录，当前未加密，同一设备配置下的账号共享。清除应用数据会丢失本地库，请保留原文件。此页提供检索，暂不生成回答。</small></div></div>
+      <small>存储位于此浏览器或客户端的数据目录，当前未加密，同一设备配置下的账号共享。清除应用数据会丢失本地库，请保留原文件。可在检索后选择生成模型；云端回答需要单独授权发送片段。</small></div></div>
     <div className="lk-layout"><section className="lk-card">
       <h2>1. 启用本地模型</h2><p>默认 multilingual-e5-small · 384 维 · CPU</p>
       <p className="lk-muted">首次启用下载约 129 MiB 模型资源，请预留至少 500 MiB 存储空间。加载时还需要额外内存。再次进入仍需手动启用，可复用完整缓存。</p>
@@ -171,6 +173,7 @@ export default function LocalKnowledgePage() {
       {!hits.length && <p className="lk-empty">{searched ? '没有可检索的片段' : '启用模型并添加文档后，试着提出一个问题。'}</p>}
       {hits.map((hit, n) => <article className="lk-hit" key={`${hit.documentId}-${hit.start}`}><div><strong>{n + 1}. {hit.name}</strong><span>相似度 {hit.score.toFixed(3)}</span></div>
         <small>字符 {hit.start + 1}–{hit.end} · 来源原文（UTF-16 位置）</small><pre>{hit.text}</pre></article>)}
+      {searched && hits.length > 0 && <LocalKnowledgeAnswer key={`${index?.revision}:${searchedQuestion}`} question={searchedQuestion} sources={hits} />}
     </section>
     <LocalKnowledgeBackup disabled={!loaded || ready || busy} onRestore={value => {
       setIndex(value); setDraft(JSON.stringify(value.profile, null, 2)); setHits([]); setSearched(false);

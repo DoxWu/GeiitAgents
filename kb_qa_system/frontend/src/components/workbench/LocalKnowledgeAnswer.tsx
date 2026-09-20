@@ -1,0 +1,76 @@
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
+import type { SearchHit } from '@/localKnowledge/core';
+
+export default function LocalKnowledgeAnswer({ question, sources }: { question: string; sources: SearchHit[] }) {
+  const store = useWorkbenchStore();
+  const [selected, setSelected] = useState(sources.map((_, i) => i));
+  const [profileId, setProfileId] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [answer, setAnswer] = useState<{ content: string; model: string; sources: SearchHit[] } | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const profile = store.profiles.find(p => p.id === profileId);
+  const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
+  const endpoint = profile?.baseUrl ?? (profileId === ACCOUNT_MODEL_ID ? '账号所配置的服务端模型供应商' : '尚未选择');
+  const signature = JSON.stringify([profileId, profile, store.accountModel]);
+  useEffect(() => {
+    setConsent(false); setAnswer(null); setError('');
+    controller.current?.abort(); setBusy(false);
+  }, [signature, store.unlocked]);
+  useEffect(() => () => controller.current?.abort(), []);
+  function resetSelection(next: number[]) { setSelected(next); setConsent(false); setAnswer(null); }
+  async function generate() {
+    const request = new AbortController(); controller.current = request;
+    setBusy(true); setError(''); setAnswer(null);
+    // Consent is per request and is never persisted or reused automatically.
+    const allowed = consent; setConsent(false);
+    const chosen = selected.map(i => sources[i]);
+    try {
+      const result = await store.answerKnowledge(profileId, question, chosen, allowed, request.signal);
+      if (!request.signal.aborted && controller.current === request) setAnswer({ ...result, sources: chosen });
+    } catch (e) {
+      if (controller.current === request) setError(request.signal.aborted ? '回答请求已停止。' : e instanceof Error ? e.message : '回答生成失败。');
+    } finally { if (controller.current === request) { controller.current = null; setBusy(false); } }
+  }
+  async function unlock() {
+    setError('');
+    try { await store.unlock(password); }
+    catch { setError('密钥库解锁失败，请检查口令。'); }
+    finally { setPassword(''); }
+  }
+  return <section className="lk-hit" aria-label="根据本地来源生成回答">
+    <h2>使用这些来源生成回答</h2>
+    <p>问题：{question}</p>
+    <p className="lk-muted">生成模型与本地向量模型独立。仅发送下方勾选的片段、文件名和当前问题，不发送整个知识库。回答仅在本页显示，不自动保存到对话。</p>
+    {!store.unlocked ? <div className="lk-backup-fields"><label>密钥库解锁口令<input type="password" value={password} maxLength={256} onChange={e => setPassword(e.target.value)} /></label>
+      <button disabled={password.length < 4} onClick={() => void unlock()}>解锁生成模型</button><Link to="/workbench">前往工作台创建密钥库/配置模型</Link></div> : <>
+      <fieldset disabled={busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
+        <label>回答生成模型<select aria-label="回答生成模型" value={profileId} onChange={e => setProfileId(e.target.value)}>
+          <option value="">请选择模型</option>
+          {store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.mode === 'local' ? '本机接口' : '云端转发'} · {p.model}</option>)}
+          {store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}
+        </select></label>
+        <div className="lk-actions"><button disabled={store.accountLoading} onClick={() => void store.refreshAccountModel()}>检查账号云端模型权限</button><Link to="/workbench">管理模型连接</Link></div>
+        {store.accountError && <p className="lk-muted">{store.accountError}</p>}
+        <p className="lk-muted">目标：{endpoint}</p>
+        {sources.map((source, i) => <label className="lk-source-choice" key={`${source.documentId}:${source.start}`}>
+          <input type="checkbox" checked={selected.includes(i)} onChange={e => resetSelection(e.target.checked ? [...selected, i].sort((a, b) => a - b) : selected.filter(n => n !== i))} />
+          来源 {i + 1}：{source.name}（字符 {source.start + 1}–{source.end}）</label>)}
+        {cloud && <label className="lk-source-choice"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
+          我允许本次将所选本地片段、文件名和问题，经应用服务端发送给上述云端模型</label>}
+        {profile?.mode === 'local' && <p className="lk-muted">请求发往上述本机接口；接口背后的模型是否完全离线取决于你自己的服务配置。</p>}
+        <button className="lk-primary" disabled={!profileId || !selected.length || !!cloud && !consent} onClick={() => void generate()}>根据所选来源生成回答</button>
+      </fieldset>
+      {busy && <div className="lk-actions"><span role="status">正在生成回答…</span><button onClick={() => controller.current?.abort()}>停止生成</button></div>}
+    </>}
+    {error && <p role="alert" className="lk-error">{error}</p>}
+    {answer && <article className="lk-answer"><h3>回答 · {answer.model}</h3><pre>{answer.content}</pre>
+      <p className="lk-muted">模型回答需核对原文，来源编号对应本次发送的片段：</p>
+      {answer.sources.map((source, i) => <details key={`${source.documentId}:${source.start}`}><summary>[{i + 1}] {source.name} · 字符 {source.start + 1}–{source.end}</summary><pre>{source.text}</pre></details>)}
+    </article>}
+  </section>;
+}
