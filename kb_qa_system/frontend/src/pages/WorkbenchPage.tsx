@@ -26,6 +26,7 @@ export default function WorkbenchPage() {
   const hasVault = localStorage.getItem(VAULT_STORAGE_KEY) !== null;
   const conversation = state.conversations.find((c) => c.id === state.currentId);
   const running = conversation ? state.running[conversation.id] : false;
+  const archive = conversation?.kind === 'knowledge-answer';
   const available = state.profiles.length > 0 || Boolean(state.accountModel);
   const selectedProfile = conversation?.profileId || (!state.profiles.length && state.accountModel ? ACCOUNT_MODEL_ID : "");
 
@@ -43,13 +44,13 @@ export default function WorkbenchPage() {
     setUnlocking(true);
     try {
       await state.unlock(password); setPassword(""); setConfirmation("");
-      if (!useWorkbenchStore.getState().profiles.length && !authenticated) setTab("models");
+      if (!useWorkbenchStore.getState().profiles.length && !useWorkbenchStore.getState().conversations.length && !authenticated) setTab("models");
     }
     catch (e) { setError(e instanceof Error ? e.message : "无法解锁。"); }
     finally { setUnlocking(false); }
   }
   async function send() {
-    if (!text.trim() || running) return;
+    if (!text.trim() || running || archive) return;
     const prompt = attach && document ? `${text.trim()}\n\n文件：${document.name}\n\n${document.content}` : text.trim();
     let id = state.currentId;
     if (!id) id = state.newConversation();
@@ -107,7 +108,7 @@ export default function WorkbenchPage() {
         </form></div> : tab === "models" ? <ModelConnections /> :
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-            <select aria-label="当前对话模型" className="work-input min-w-0 flex-1 sm:max-w-80" disabled={running} value={selectedProfile} onChange={(e) => { if (conversation) state.setProfile(conversation.id, e.target.value); else state.newConversation(e.target.value); }}>
+            <select aria-label="当前对话模型" className="work-input min-w-0 flex-1 sm:max-w-80" disabled={running || archive} value={archive ? '' : selectedProfile} onChange={(e) => { if (conversation) state.setProfile(conversation.id, e.target.value); else state.newConversation(e.target.value); }}>
               <option value="">选择模型连接</option>{state.profiles.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}
               {state.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {state.accountModel.model}</option>}
               {selectedProfile === ACCOUNT_MODEL_ID && !state.accountModel && <option value={ACCOUNT_MODEL_ID} disabled>账号云端模型不可用</option>}
@@ -129,14 +130,15 @@ export default function WorkbenchPage() {
               <div ref={endRef} />
             </div>
           </div>
-          <form className="border-t border-line bg-surface p-4" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+          {archive ? <div className="border-t border-line bg-surface p-4 text-sm text-ink-secondary">本地知识库回答 · 加密只读记录。来源是保存时的快照，不随原文件变化；此记录不能继续发送给模型。
+            <button className="work-command mt-3" onClick={() => state.newConversation()}>新建对话</button></div> : <form className="border-t border-line bg-surface p-4" onSubmit={(e) => { e.preventDefault(); void send(); }}>
             <div className="mx-auto max-w-3xl">
               {document && <label className="mb-2 flex items-center gap-2 text-xs text-ink-secondary"><input type="checkbox" checked={attach} onChange={(e) => setAttach(e.target.checked)} disabled={running} /><span className="truncate">将 {document.name} 发送给所选模型</span></label>}
               <div className="flex items-end gap-3"><textarea aria-label="消息" className="work-input min-h-24 resize-y" value={text} maxLength={100000} placeholder="输入任务或问题" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
                 {running ? <button type="button" className="work-icon mb-1" title="停止" aria-label="停止" onClick={() => conversation && state.cancel(conversation.id)}><Square size={18} /></button> : <button type="submit" className="work-icon mb-1 bg-brand text-white" title="发送" aria-label="发送" disabled={!text.trim() || !available || selectedProfile === ACCOUNT_MODEL_ID && !state.accountModel}><Send size={18} /></button>}
               </div>
             </div>
-          </form>
+          </form>}
         </div>}
     </main>
   </div>;

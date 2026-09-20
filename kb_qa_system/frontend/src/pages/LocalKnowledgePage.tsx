@@ -7,6 +7,7 @@ import { commitIndex, loadIndex, MODEL_CACHE, SESSION_LOCK } from '@/localKnowle
 import { LocalEmbeddingClient } from '@/localKnowledge/client';
 import LocalKnowledgeBackup from '@/components/workbench/LocalKnowledgeBackup';
 import LocalKnowledgeAnswer from '@/components/workbench/LocalKnowledgeAnswer';
+import EmbeddingProfileForm from '@/components/workbench/EmbeddingProfileForm';
 import '@/styles/local-knowledge.css';
 
 async function acquireSession(): Promise<() => void> {
@@ -143,9 +144,9 @@ export default function LocalKnowledgePage() {
       <h2>1. 启用本地模型</h2><p>默认 multilingual-e5-small · 384 维 · CPU</p>
       <p className="lk-muted">首次启用下载约 129 MiB 模型资源，请预留至少 500 MiB 存储空间。加载时还需要额外内存。再次进入仍需手动启用，可复用完整缓存。</p>
       <button className="lk-text-button" disabled={ready || busy} onClick={() => setAdvanced(!advanced)}>{advanced ? '收起' : '自定义兼容 ONNX 模型'}</button>
-      {advanced && <div className="lk-advanced"><label htmlFor="lk-profile">本地向量模型配置（JSON）</label>
+      {advanced && <div className="lk-advanced">
         <p className="lk-muted">仅支持公开 Hugging Face 仓库，固定 commit、单文件 q8/fp32 权重、mean/cls pooling，始终 L2 归一化；最大输入 512 tokens。权重 SHA-256 必填。修改后启用会完整重建本地索引，成功前保留原版本。</p>
-        <textarea id="lk-profile" value={draft} disabled={ready || busy} spellCheck={false} onChange={e => setDraft(e.target.value)} />
+        <EmbeddingProfileForm draft={draft} disabled={ready || busy} onChange={setDraft} />
         <div className="lk-actions"><button disabled={ready || busy} onClick={() => setDraft(JSON.stringify(DEFAULT_PROFILE, null, 2))}>恢复默认配置</button>
           {index && <button disabled={ready || busy} onClick={() => setDraft(JSON.stringify(index.profile, null, 2))}>使用原索引配置</button>}</div></div>}
       <div className="lk-actions">

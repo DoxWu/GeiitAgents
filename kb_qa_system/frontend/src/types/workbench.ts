@@ -17,6 +17,7 @@ export interface WorkMessage {
 }
 
 export interface WorkConversation {
+  kind?: 'knowledge-answer';
   id: string;
   title: string;
   profileId: string;

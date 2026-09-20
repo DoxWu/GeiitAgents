@@ -5,6 +5,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, VaultData, WorkConversation, WorkMessage } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages } from '@/localKnowledge/answer';
+import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -39,6 +40,7 @@ interface WorkbenchState {
   setProfile: (id: string, profileId: string) => void;
   send: (id: string, text: string) => Promise<void>;
   cancel: (id: string) => void;
+  saveKnowledgeAnswer: (answer: KnowledgeAnswerArtifact) => Promise<string>;
   answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal) => Promise<{ content: string; model: string }>;
 }
 
@@ -173,7 +175,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     void persist();
   },
   setProfile: (id, profileId) => {
-    if (get().running[id]) return;
+    if (get().running[id] || get().conversations.find(c => c.id === id)?.kind === 'knowledge-answer') return;
     set((state) => ({ conversations: state.conversations.map((c) => c.id === id ? { ...c, profileId } : c) }));
     void persist();
   },
@@ -184,6 +186,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const secret = secrets.find((item) => item.id === profile?.id);
     const useAccount = conversation?.profileId === ACCOUNT_MODEL_ID || (!conversation?.profileId && !get().profiles.length);
     if (!conversation) throw new Error("请先新建对话。");
+    if (conversation.kind === 'knowledge-answer') throw new Error('来源快照是只读记录，请新建对话。');
     if (useAccount) {
       if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error("当前账号没有可用的云端模型，请登录有权限的账号或添加模型连接。");
     } else if (!profile || !secret) throw new Error("请先选择已保存的模型连接。");
@@ -225,6 +228,22 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
   },
   cancel: (id) => { controllers.get(id)?.abort(); },
+  saveKnowledgeAnswer: async (answer) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const epoch = generation;
+    const id = `knowledge-answer:${answer.id}`;
+    if (!get().conversations.some(c => c.id === id)) {
+      const conversation: WorkConversation = { id, kind: 'knowledge-answer', profileId: '',
+        title: `知识回答 · ${answer.question.trim().slice(0, 28)}`, updatedAt: answer.createdAt,
+        messages: [{ id: answer.id, role: 'assistant', model: answer.model, createdAt: answer.createdAt, content: answerMarkdown(answer) }] };
+      set(state => ({ conversations: [conversation, ...state.conversations] }));
+    }
+    // Retry persists the same record. Keep the in-memory copy on storage failure for export/retry.
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请解锁后检查保存记录。');
+    set({ currentId: id });
+    return id;
+  },
   answerKnowledge: async (profileId, question, sources, allowCloud, signal) => {
     if (!get().unlocked) throw new Error('请先解锁本机密钥库。');
     const messages = buildKnowledgeMessages(question, sources);

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import type { SearchHit } from '@/localKnowledge/core';
+import { createAnswerArtifact, downloadAnswer, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
 
 export default function LocalKnowledgeAnswer({ question, sources }: { question: string; sources: SearchHit[] }) {
   const store = useWorkbenchStore();
@@ -11,7 +12,10 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [answer, setAnswer] = useState<{ content: string; model: string; sources: SearchHit[] } | null>(null);
+  const [answer, setAnswer] = useState<KnowledgeAnswerArtifact | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedId, setSavedId] = useState('');
+  const savingRef = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const profile = store.profiles.find(p => p.id === profileId);
   const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
@@ -31,7 +35,7 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
     const chosen = selected.map(i => sources[i]);
     try {
       const result = await store.answerKnowledge(profileId, question, chosen, allowed, request.signal);
-      if (!request.signal.aborted && controller.current === request) setAnswer({ ...result, sources: chosen });
+      if (!request.signal.aborted && controller.current === request) setAnswer(createAnswerArtifact(question, result, chosen));
     } catch (e) {
       if (controller.current === request) setError(request.signal.aborted ? '回答请求已停止。' : e instanceof Error ? e.message : '回答生成失败。');
     } finally { if (controller.current === request) { controller.current = null; setBusy(false); } }
@@ -42,13 +46,21 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
     catch { setError('密钥库解锁失败，请检查口令。'); }
     finally { setPassword(''); }
   }
+  async function saveAnswer() {
+    if (!answer || savingRef.current) return;
+    savingRef.current = true; setSaving(true); setError('');
+    try { setSavedId(await store.saveKnowledgeAnswer(answer)); }
+    catch (e) { setError(e instanceof Error ? e.message : '回答保存失败，请重试或导出。'); }
+    finally { savingRef.current = false; setSaving(false); }
+  }
+  const saved = !!answer && savedId === `knowledge-answer:${answer.id}`;
   return <section className="lk-hit" aria-label="根据本地来源生成回答">
     <h2>使用这些来源生成回答</h2>
     <p>问题：{question}</p>
     <p className="lk-muted">生成模型与本地向量模型独立。仅发送下方勾选的片段、文件名和当前问题，不发送整个知识库。回答仅在本页显示，不自动保存到对话。</p>
     {!store.unlocked ? <div className="lk-backup-fields"><label>密钥库解锁口令<input type="password" value={password} maxLength={256} onChange={e => setPassword(e.target.value)} /></label>
       <button disabled={password.length < 4} onClick={() => void unlock()}>解锁生成模型</button><Link to="/workbench">前往工作台创建密钥库/配置模型</Link></div> : <>
-      <fieldset disabled={busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
+      <fieldset disabled={busy || saving} style={{ border: 0, padding: 0, minWidth: 0 }}>
         <label>回答生成模型<select aria-label="回答生成模型" value={profileId} onChange={e => setProfileId(e.target.value)}>
           <option value="">请选择模型</option>
           {store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.mode === 'local' ? '本机接口' : '云端转发'} · {p.model}</option>)}
@@ -69,8 +81,14 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
     </>}
     {error && <p role="alert" className="lk-error">{error}</p>}
     {answer && <article className="lk-answer"><h3>回答 · {answer.model}</h3><pre>{answer.content}</pre>
+      <p className="lk-muted">导出文件含问题、回答和来源原文，文件本身不加密。保存到工作台后为本机加密的独立只读记录，不会再次发送给模型。</p>
+      <div className="lk-actions"><button onClick={() => {
+        try { downloadAnswer(answer); } catch { setError('导出失败，请检查下载设置后重试。'); }
+      }}>导出回答 Markdown</button>
+        <button disabled={saving || saved || !store.unlocked} onClick={() => void saveAnswer()}>{saving ? '正在加密保存…' : saved ? '已保存到工作台' : '保存为独立对话记录'}</button>
+        {saved && <Link to="/workbench" onClick={() => store.select(savedId)}>打开已保存记录</Link>}</div>
       <p className="lk-muted">模型回答需核对原文，来源编号对应本次发送的片段：</p>
-      {answer.sources.map((source, i) => <details key={`${source.documentId}:${source.start}`}><summary>[{i + 1}] {source.name} · 字符 {source.start + 1}–{source.end}</summary><pre>{source.text}</pre></details>)}
+      {answer.sources.map((source, i) => <details key={i}><summary>[{i + 1}] {source.name} · 字符 {source.start + 1}–{source.end}</summary><pre>{source.text}</pre></details>)}
     </article>}
   </section>;
 }

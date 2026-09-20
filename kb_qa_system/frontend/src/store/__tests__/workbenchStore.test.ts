@@ -6,6 +6,7 @@ import { useAuthStore } from "../authStore";
 import { completeModel, completeAccountModel, getAccountModel } from "@/services/workbenchModel";
 import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
+import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -136,4 +137,41 @@ it('aborts knowledge requests on vault lock and ignores late replies', async () 
   const rejected = expect(result).rejects.toThrow('取消');
   await vi.waitFor(() => expect(finish).toBeDefined());
   await store.getState().lock(); finish('late answer'); await rejected;
+});
+
+it('encrypts one read-only source archive across repeated saves and unlocks without any model request', async () => {
+  const answer = createAnswerArtifact('private question', { content: 'private answer [1]', model: 'fixture model' }, [source]);
+  const ids = await Promise.all([store.getState().saveKnowledgeAnswer(answer), store.getState().saveKnowledgeAnswer(answer)]);
+  expect(ids[0]).toBe(ids[1]);
+  expect(store.getState().conversations).toHaveLength(1);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/private question|private answer|测试资料/);
+  await store.getState().lock(); await store.getState().unlock(password);
+  const saved = store.getState().conversations[0];
+  expect(saved.kind).toBe('knowledge-answer');
+  expect(saved.messages[0].content).toContain('测试资料');
+  store.getState().setProfile(saved.id, profile.id);
+  expect(store.getState().conversations[0].profileId).toBe('');
+  await expect(store.getState().send(saved.id, 'continue')).rejects.toThrow('只读');
+  expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
+});
+
+it('reports quota failure and retries the same in-memory archive without duplicating it', async () => {
+  const answer = createAnswerArtifact('question', { content: 'answer', model: 'model' }, [source]);
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().saveKnowledgeAnswer(answer)).rejects.toThrow('保存失败');
+  expect(store.getState().storageError).toBeTruthy();
+  spy.mockRestore();
+  await store.getState().saveKnowledgeAnswer(answer);
+  expect(store.getState().storageError).toBeNull();
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().conversations).toHaveLength(1);
+});
+
+it('does not report save success or repopulate memory when locking during encryption', async () => {
+  const answer = createAnswerArtifact('question', { content: 'answer', model: 'model' }, [source]);
+  const pending = store.getState().saveKnowledgeAnswer(answer);
+  const rejected = expect(pending).rejects.toThrow('锁定');
+  await store.getState().lock(); await rejected;
+  expect(store.getState().conversations).toEqual([]);
+  await expect(store.getState().saveKnowledgeAnswer(answer)).rejects.toThrow('解锁');
 });

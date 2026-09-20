@@ -1,7 +1,7 @@
 // Explicitly authorized synthetic test only. Provider credentials stay in a Python subprocess.
 import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 const output = path.resolve('../../.tools/local-answer-qa');
 const mockOnly = process.env.LOCAL_ANSWER_MOCK === '1';
@@ -56,6 +56,17 @@ try {
   await page.getByLabel('确认口令', { exact: true }).fill('test-only-1234');
   await page.getByRole('button', { name: '创建', exact: true }).click();
   await page.getByRole('link', { name: '本地知识库', exact: true }).click();
+  await page.getByRole('button', { name: '自定义兼容 ONNX 模型' }).click();
+  await expect(page.getByLabel(/^Hugging Face 仓库/)).toHaveValue('Xenova/multilingual-e5-small');
+  await page.getByLabel(/^固定版本 commit/).fill('main');
+  await expect(page.getByRole('alert')).toContainText('配置尚未有效');
+  await page.getByRole('button', { name: '恢复默认配置' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(output, 'profile-form-mobile.png'), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1200, height: 1000 });
+  await page.getByRole('button', { name: '收起', exact: true }).click();
   console.log('Enabling real E5 retrieval.');
   await page.getByRole('button', { name: '启用模型 / 按配置重建' }).click();
   const progress = setInterval(async () => console.log('Local model:', await page.getByRole('status').first().textContent().catch(() => 'waiting')), 15000);
@@ -76,7 +87,7 @@ try {
   await expect(generate).toBeDisabled(); expect(sent).toHaveLength(0);
   await answer.getByLabel('我允许本次将所选本地片段', { exact: false }).check();
   await generate.click();
-  console.log('Explicit consent submitted; testing configured provider.');
+  console.log(`Explicit consent submitted; testing ${mockOnly ? 'mock generation' : 'configured provider'}.`);
   await Promise.race([
     expect(answer.locator('.lk-answer')).toBeVisible({ timeout: 130000 }),
     answer.getByRole('alert').waitFor({ state: 'visible', timeout: 130000 }).then(() => { throw new Error('Live answer failed; provider details suppressed'); }),
@@ -88,9 +99,31 @@ try {
   await expect(generate).toBeDisabled(); // no consent reuse
   await page.getByLabel('本地检索问题').fill('尚未重新检索的问题');
   await expect(answer.getByText('问题：报销需要哪些材料，何时提交？')).toBeVisible();
-  await page.screenshot({ path: path.join(output, 'live-answer.png'), fullPage: true });
+  const downloadEvent = page.waitForEvent('download');
+  await answer.getByRole('button', { name: '导出回答 Markdown' }).click();
+  const download = await downloadEvent;
+  const markdown = await readFile(await download.path(), 'utf8');
+  expect(markdown).toContain('来源快照'); expect(markdown).toContain(content);
+  expect(markdown).toContain('测试报销制度.md'); expect(markdown).not.toContain('尚未重新检索的问题');
+  expect(markdown).not.toMatch(/vector|apiKey|synthetic-test-session/);
+  await answer.getByRole('button', { name: '保存为独立对话记录' }).click();
+  await expect(answer.getByRole('button', { name: '已保存到工作台' })).toBeDisabled();
+  expect(await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'))).not.toContain('主管审批记录');
+  await page.screenshot({ path: path.join(output, mockOnly ? 'mock-answer-saved.png' : 'live-answer.png'), fullPage: true });
+  await answer.getByRole('link', { name: '打开已保存记录' }).click();
+  await expect(page.getByText(/此记录不能继续发送给模型/)).toBeVisible();
+  await expect(page.getByLabel('当前对话模型')).toBeDisabled();
+  await expect(page.getByLabel('消息', { exact: true })).toHaveCount(0);
+  await page.reload();
+  await page.getByLabel('解锁口令', { exact: true }).fill('test-only-1234');
+  await page.getByRole('button', { name: '解锁', exact: true }).click();
+  await expect(page.getByText(/此记录不能继续发送给模型/)).toBeVisible();
+  await expect(page.locator('main article')).toContainText('主管审批记录');
+  expect(sent).toHaveLength(1);
+  await page.screenshot({ path: path.join(output, 'saved-answer-reopened.png'), fullPage: true });
   expect(errors).toEqual([]);
   await writeFile(path.join(output, mockOnly ? 'mock-result.json' : 'result.json'), JSON.stringify({ passed: true, providerRequests: mockOnly ? 0 : sent.length, citedSource: content.includes('[1]'),
-    scope: mockOnly ? 'Real E5/WASM retrieval; mocked generation and account auth; consent/citation UI only.' : 'Real E5/WASM retrieval + real backend complete_private/provider; synthetic account auth/availability; fixture document only; no credentials written.' }, null, 2));
-  console.log(`Real E5 retrieval, explicit cloud consent, ${mockOnly ? 'MOCKED' : 'LIVE'} answer with source citation, per-request consent and query snapshot passed.`);
+    artifactChecks: ['model form', 'Markdown download', 'encrypted archive', 'reload/unlock', 'read-only no extra request'],
+    scope: mockOnly ? 'Real E5/WASM retrieval; mocked generation and account auth; form, consent and artifact UI.' : 'Real E5/WASM retrieval + real backend complete_private/provider; synthetic account auth/availability; fixture document only; no credentials written.' }, null, 2));
+  console.log(`Real E5 retrieval, explicit cloud consent, ${mockOnly ? 'MOCKED' : 'LIVE'} answer, export, encrypted read-only archive and reload passed.`);
 } finally { await context.close(); }
