@@ -175,3 +175,105 @@ it('does not report save success or repopulate memory when locking during encryp
   expect(store.getState().conversations).toEqual([]);
   await expect(store.getState().saveKnowledgeAnswer(answer)).rejects.toThrow('解锁');
 });
+
+const documentInput = { title: '项目周报', instruction: '整理进展、风险和下周计划', sourceName: 'notes.txt', sourceContent: '已完成登录模块，等待安全评审。' };
+it('persists document TaskRun, ToolRun and Artifact encrypted and restores them without another request', async () => {
+  vi.mocked(completeModel).mockResolvedValue('```markdown\n# 项目周报\n\n## 进展\n\n已完成登录模块。\n```');
+  const id = await store.getState().startDocumentTask(profile.id, documentInput, false);
+  const task = store.getState().taskRuns.find(item => item.id === id)!;
+  const tool = store.getState().toolRuns.find(item => item.taskId === id)!;
+  const artifact = store.getState().artifacts.find(item => item.taskId === id)!;
+  expect(task).toMatchObject({ status: 'succeeded', artifactIds: [artifact.id], toolRunIds: [tool.id] });
+  expect(tool).toMatchObject({ status: 'succeeded', model: 'test' });
+  expect(artifact.content).toBe('# 项目周报\n\n## 进展\n\n已完成登录模块。\n');
+  expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/项目周报|登录模块|fixture-key/);
+  expect(completeModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.arrayContaining([
+    expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' }),
+  ]), expect.any(AbortSignal));
+  await store.getState().lock(); vi.mocked(completeModel).mockClear(); await store.getState().unlock(password);
+  expect(store.getState().taskRuns[0].status).toBe('succeeded');
+  expect(store.getState().artifacts[0].content).toContain('已完成登录模块');
+  expect(completeModel).not.toHaveBeenCalled();
+});
+
+it('requires per-request cloud consent before creating a document task', async () => {
+  const cloud = { ...profile, id: 'cloud-task', mode: 'relay' as const, baseUrl: 'https://provider.example/v1' };
+  await store.getState().saveProfile(cloud, 'cloud-fixture-key');
+  await expect(store.getState().startDocumentTask(cloud.id, documentInput, false)).rejects.toThrow('授权');
+  expect(store.getState().taskRuns).toHaveLength(0); expect(completeModel).not.toHaveBeenCalled();
+  vi.mocked(completeModel).mockResolvedValue('# 文档');
+  await store.getState().startDocumentTask(cloud.id, documentInput, true);
+  expect(store.getState().taskRuns[0].status).toBe('succeeded');
+  expect(completeAccountModel).not.toHaveBeenCalled();
+});
+
+it('records an explicit cancellation and keeps no partial artifact', async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().startDocumentTask(profile.id, documentInput, false);
+  await vi.waitFor(() => { expect(store.getState().taskRuns[0]?.status).toBe('running'); expect(finish).toBeTypeOf('function'); });
+  const id = store.getState().taskRuns[0].id; store.getState().cancelTask(id); finish('# late');
+  await expect(pending).rejects.toThrow('取消');
+  expect(store.getState().taskRuns[0]).toMatchObject({ status: 'cancelled', artifactIds: [] });
+  expect(store.getState().toolRuns[0].status).toBe('cancelled'); expect(store.getState().artifacts).toEqual([]);
+});
+
+it('marks a persisted running task interrupted after vault lock and unlock', async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().startDocumentTask(profile.id, documentInput, false);
+  await vi.waitFor(() => { expect(store.getState().taskRuns[0]?.status).toBe('running'); expect(finish).toBeTypeOf('function'); });
+  await store.getState().lock(); finish('# late'); await expect(pending).rejects.toThrow('取消');
+  await store.getState().unlock(password);
+  expect(store.getState().taskRuns[0]).toMatchObject({ status: 'interrupted', artifactIds: [] });
+  expect(store.getState().toolRuns[0].status).toBe('interrupted'); expect(store.getState().artifacts).toEqual([]);
+});
+
+it('deletes a completed task with its tools and artifacts, but not a running task', async () => {
+  vi.mocked(completeModel).mockResolvedValue('# done');
+  const id = await store.getState().startDocumentTask(profile.id, documentInput, false);
+  await store.getState().removeTask(id);
+  expect(store.getState().taskRuns).toEqual([]); expect(store.getState().toolRuns).toEqual([]); expect(store.getState().artifacts).toEqual([]);
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().startDocumentTask(profile.id, documentInput, false);
+  await vi.waitFor(() => { expect(store.getState().taskRuns[0]?.status).toBe('running'); expect(finish).toBeTypeOf('function'); });
+  await expect(store.getState().removeTask(store.getState().taskRuns[0].id)).rejects.toThrow('取消');
+  store.getState().cancelTask(store.getState().taskRuns[0].id); finish('# late'); await expect(pending).rejects.toThrow();
+});
+
+it('does not call a model when the initial encrypted task record cannot be saved', async () => {
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().startDocumentTask(profile.id, documentInput, false)).rejects.toThrow('保存失败');
+  expect(completeModel).not.toHaveBeenCalled();
+  expect(store.getState().taskRuns[0]).toMatchObject({ status: 'failed', error: '任务记录未能保存，模型尚未调用。' });
+  expect(store.getState().artifacts).toEqual([]);
+  spy.mockRestore();
+});
+
+it('reserves the shared three-request limit before asynchronous task persistence', async () => {
+  vi.mocked(completeModel).mockResolvedValue('# done');
+  const runs = [0, 1, 2].map(index => store.getState().startDocumentTask(profile.id, { ...documentInput, title: `task ${index}` }, false));
+  await expect(store.getState().startDocumentTask(profile.id, { ...documentInput, title: 'task 4' }, false)).rejects.toThrow('最多同时');
+  await Promise.all(runs);
+  expect(completeModel).toHaveBeenCalledTimes(3);
+  expect(store.getState().taskRuns.every(task => task.status === 'succeeded')).toBe(true);
+});
+
+it('cancels during initial persistence without dispatching a model request', async () => {
+  const pending = store.getState().startDocumentTask(profile.id, documentInput, false);
+  store.getState().cancelTask(store.getState().taskRuns[0].id);
+  await expect(pending).rejects.toThrow('取消');
+  expect(completeModel).not.toHaveBeenCalled();
+  expect(store.getState().taskRuns[0].status).toBe('cancelled');
+});
+
+it('does not dispatch or restore memory if locked during initial task persistence', async () => {
+  const pending = store.getState().startDocumentTask(profile.id, documentInput, false);
+  const rejected = expect(pending).rejects.toThrow('锁定');
+  await store.getState().lock(); await rejected;
+  expect(completeModel).not.toHaveBeenCalled(); expect(store.getState().taskRuns).toEqual([]);
+  await store.getState().unlock(password);
+  expect(store.getState().taskRuns[0].status).toBe('interrupted');
+});

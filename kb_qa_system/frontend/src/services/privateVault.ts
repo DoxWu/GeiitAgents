@@ -52,7 +52,7 @@ export class PrivateVault {
       if (password.length < 4) throw new Error("解锁口令至少需要 4 个字符。");
       salt = crypto.getRandomValues(new Uint8Array(16));
       key = await derive(password, salt);
-      data = { profiles: [], conversations: [] };
+      data = { profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [] };
     } else {
       try {
         const envelope: Envelope = JSON.parse(stored);
@@ -64,7 +64,10 @@ export class PrivateVault {
           { name: "AES-GCM", iv: decode(envelope.iv), additionalData: context }, key, decode(envelope.ciphertext),
         );
         data = JSON.parse(new TextDecoder().decode(plaintext));
-        if (!Array.isArray(data.profiles) || !Array.isArray(data.conversations)) throw new Error();
+        if (!Array.isArray(data.profiles) || !Array.isArray(data.conversations)
+          || data.taskRuns !== undefined && !Array.isArray(data.taskRuns)
+          || data.toolRuns !== undefined && !Array.isArray(data.toolRuns)
+          || data.artifacts !== undefined && !Array.isArray(data.artifacts)) throw new Error();
       } catch {
         throw new Error("口令错误或本机密钥库已损坏。");
       }

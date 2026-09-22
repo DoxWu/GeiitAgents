@@ -2,10 +2,11 @@ import { create } from "zustand";
 import { PrivateVault } from "@/services/privateVault";
 import { completeModel, completeAccountModel, getAccountModel, validateProfile } from "@/services/workbenchModel";
 import { useAuthStore } from "@/store/authStore";
-import type { ModelProfile, VaultData, WorkConversation, WorkMessage } from "@/types/workbench";
+import type { ModelProfile, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConversation, WorkMessage } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
+import { buildDocumentMessages, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -20,6 +21,9 @@ interface WorkbenchState {
   unlocked: boolean;
   profiles: ModelProfile[];
   conversations: WorkConversation[];
+  taskRuns: TaskRun[];
+  toolRuns: ToolRun[];
+  artifacts: WorkArtifact[];
   currentId: string | null;
   running: Record<string, boolean>;
   errors: Record<string, string>;
@@ -41,6 +45,9 @@ interface WorkbenchState {
   send: (id: string, text: string) => Promise<void>;
   cancel: (id: string) => void;
   saveKnowledgeAnswer: (answer: KnowledgeAnswerArtifact) => Promise<string>;
+  startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
+  cancelTask: (id: string) => void;
+  removeTask: (id: string) => Promise<void>;
   answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal) => Promise<{ content: string; model: string }>;
 }
 
@@ -52,7 +59,8 @@ async function persist(required = false) {
   if (!vault || !useWorkbenchStore.getState().unlocked) return;
   const epoch = generation;
   try {
-    await vault.save({ profiles: secrets, conversations: useWorkbenchStore.getState().conversations });
+    const state = useWorkbenchStore.getState();
+    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts });
     if (epoch === generation) useWorkbenchStore.setState({ storageError: null });
   } catch {
     const message = "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
@@ -68,11 +76,11 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], currentId: null, running: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {} });
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
-  unlocked: false, profiles: [], conversations: [], currentId: null, running: {}, errors: {}, storageError: null,
+  unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -102,14 +110,20 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (epoch !== generation) { candidate.lock(); return; }
     vault = candidate;
     secrets = data.profiles;
-    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations,
+    const unlockedAt = new Date().toISOString();
+    const taskRuns = (data.taskRuns ?? []).map(task => task.status === 'running' ? { ...task, status: 'interrupted' as const, updatedAt: unlockedAt,
+      error: '客户端在任务完成前关闭或锁定，结果未生成。' } : task);
+    const toolRuns = (data.toolRuns ?? []).map(tool => tool.status === 'running' ? { ...tool, status: 'interrupted' as const, finishedAt: unlockedAt,
+      error: '客户端在工具调用完成前关闭或锁定。' } : tool);
+    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [],
       currentId: data.conversations[0]?.id ?? null, running: {}, errors: {}, storageError: null });
+    if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index])) await persist();
   },
   lock: async () => {
     const epoch = ++generation;
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
-    set({ unlocked: false, profiles: [], conversations: [], currentId: null, running: {}, errors: {} });
+    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
@@ -137,6 +151,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (Object.keys(get().running).some((cid) => get().running[cid] && get().conversations.find((c) => c.id === cid)?.profileId === id)) {
       throw new Error("此连接仍有运行中的对话。");
     }
+    if (get().taskRuns.some(task => task.profileId === id && task.status === 'running')) throw new Error('此连接仍有运行中的文档任务。');
     if (!vault) return;
     const next = secrets.filter((profile) => profile.id !== id);
     secrets = next;
@@ -190,7 +205,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (useAccount) {
       if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error("当前账号没有可用的云端模型，请登录有权限的账号或添加模型连接。");
     } else if (!profile || !secret) throw new Error("请先选择已保存的模型连接。");
-    if (Object.values(get().running).filter(Boolean).length >= 3) throw new Error("最多同时运行 3 个对话。");
+    if (controllers.size >= 3) throw new Error("最多同时运行 3 个模型请求。");
     if (text.length > 100000 || conversation.messages.length >= 98 || conversation.messages.reduce((n, m) => n + m.content.length, text.length) > 200000) {
       throw new Error("对话内容已达上限，请新建对话或缩短材料。");
     }
@@ -243,6 +258,74 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请解锁后检查保存记录。');
     set({ currentId: id });
     return id;
+  },
+  startDocumentTask: async (profileId, input, allowCloud) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个办公任务，请先删除旧任务。');
+    const clean = validateDocumentTask(input);
+    const messages = buildDocumentMessages(clean);
+    const profile = get().profiles.find(item => item.id === profileId);
+    const secret = secrets.find(item => item.id === profileId);
+    const account = profileId === ACCOUNT_MODEL_ID;
+    if (account) {
+      if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error('当前账号没有可用的云端模型，请先检查账号权限。');
+    } else if (!profile || !secret) throw new Error('请选择已保存的生成模型连接。');
+    if ((account || profile?.mode === 'relay') && !allowCloud) throw new Error('发送任务要求和参考材料到云端前需要明确授权。');
+    if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型请求。');
+    const id = crypto.randomUUID(), toolId = crypto.randomUUID(), now = new Date().toISOString();
+    const controller = new AbortController(), token = `task:${id}`, epoch = generation;
+    controllers.set(token, controller); if (account || profile?.mode === 'relay') accountRequests.add(token);
+    const task: TaskRun = { id, type: 'document.generate-markdown', title: clean.title, profileId, instruction: clean.instruction,
+      ...(clean.sourceName ? { sourceName: clean.sourceName } : {}), ...(clean.sourceContent ? { sourceContent: clean.sourceContent } : {}),
+      status: 'running', createdAt: now, updatedAt: now, toolRunIds: [toolId], artifactIds: [] };
+    const tool: ToolRun = { id: toolId, taskId: id, tool: 'model.complete', status: 'running', startedAt: now };
+    set(state => ({ taskRuns: [task, ...state.taskRuns], toolRuns: [tool, ...state.toolRuns] }));
+    try { await persist(true); }
+    catch (error) {
+      controllers.delete(token); accountRequests.delete(token);
+      const failedAt = new Date().toISOString();
+      set(state => ({ taskRuns: state.taskRuns.map(item => item.id === id ? { ...item, status: 'failed', updatedAt: failedAt, error: '任务记录未能保存，模型尚未调用。' } : item),
+        toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'failed', finishedAt: failedAt, error: '任务记录未能保存。' } : item) }));
+      throw error;
+    }
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    try {
+      if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
+      const result = account ? await completeAccountModel(messages, controller.signal) : {
+        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal), model: profile!.model,
+      };
+      if (controller.signal.aborted || epoch !== generation) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
+      const content = normalizeDocumentMarkdown(result.content), completedAt = new Date().toISOString();
+      const artifact: WorkArtifact = { id: crypto.randomUUID(), taskId: id, kind: 'markdown', version: 1,
+        name: `${clean.title.replace(/[<>:"/\\|?*]/g, '_') || 'document'}.md`, mimeType: 'text/markdown', content,
+        sha256: await sha256Text(content), createdAt: completedAt };
+      if (controller.signal.aborted || epoch !== generation) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
+      set(state => ({ artifacts: [artifact, ...state.artifacts],
+        taskRuns: state.taskRuns.map(item => item.id === id ? { ...item, status: 'succeeded', updatedAt: completedAt, artifactIds: [artifact.id], error: undefined } : item),
+        toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'succeeded', model: result.model, finishedAt: completedAt, error: undefined } : item) }));
+      await persist(true);
+      if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请解锁后检查任务成果。');
+      return id;
+    } catch (error) {
+      if (epoch === generation && !get().taskRuns.find(item => item.id === id)?.artifactIds.length) {
+        const stoppedAt = new Date().toISOString(), cancelled = controller.signal.aborted;
+        const message = cancelled ? '任务已取消或超时。' : error instanceof Error ? error.message : '文档生成失败。';
+        set(state => ({ taskRuns: state.taskRuns.map(item => item.id === id ? { ...item, status: cancelled ? 'cancelled' : 'failed', updatedAt: stoppedAt, error: message } : item),
+          toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: cancelled ? 'cancelled' : 'failed', finishedAt: stoppedAt, error: message } : item) }));
+        await persist();
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token);
+    }
+  },
+  cancelTask: (id) => { controllers.get(`task:${id}`)?.abort(); },
+  removeTask: async (id) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (get().taskRuns.find(task => task.id === id)?.status === 'running') throw new Error('请先取消运行中的任务。');
+    set(state => ({ taskRuns: state.taskRuns.filter(task => task.id !== id), toolRuns: state.toolRuns.filter(tool => tool.taskId !== id),
+      artifacts: state.artifacts.filter(artifact => artifact.taskId !== id) }));
+    await persist(true);
   },
   answerKnowledge: async (profileId, question, sources, allowCloud, signal) => {
     if (!get().unlocked) throw new Error('请先解锁本机密钥库。');

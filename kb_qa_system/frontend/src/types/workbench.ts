@@ -25,9 +25,53 @@ export interface WorkConversation {
   updatedAt: string;
 }
 
+export type TaskStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface TaskRun {
+  id: string;
+  type: 'document.generate-markdown';
+  title: string;
+  profileId: string;
+  instruction: string;
+  sourceName?: string;
+  sourceContent?: string;
+  status: TaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
+  toolRunIds: string[];
+  artifactIds: string[];
+}
+
+export interface ToolRun {
+  id: string;
+  taskId: string;
+  tool: 'model.complete';
+  status: TaskStatus;
+  model?: string;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface WorkArtifact {
+  id: string;
+  taskId: string;
+  kind: 'markdown';
+  version: number;
+  name: string;
+  mimeType: 'text/markdown';
+  content: string;
+  sha256: string;
+  createdAt: string;
+}
+
 export interface VaultData {
   profiles: (Omit<ModelProfile, "hasKey"> & { apiKey: string })[];
   conversations: WorkConversation[];
+  taskRuns?: TaskRun[];
+  toolRuns?: ToolRun[];
+  artifacts?: WorkArtifact[];
 }
 
 export interface LocalDocument {
