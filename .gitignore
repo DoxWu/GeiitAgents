@@ -197,6 +197,7 @@ secrets.json
 kb_qa_system/frontend/src-tauri/target/
 kb_qa_system/frontend/src-tauri/target-dev/
 kb_qa_system/frontend/dist-desktop-dev/
+kb_qa_system/frontend/dist-benchmark/
 kb_qa_system/frontend/src-tauri/gen/
 .tools/
 secret_key.txt

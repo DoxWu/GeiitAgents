@@ -28,6 +28,7 @@ describe('local embedding contract', () => {
   it('rejects dimension mismatch, non-finite values and zero output', () => {
     expect(() => validateVector([1], 2)).toThrow();
     expect(() => validateVector([NaN, 1], 2)).toThrow();
+    expect(() => validateVector([Number.MAX_VALUE, Number.MAX_VALUE], 2)).toThrow();
     expect(() => validateVector([0, 0], 2)).toThrow();
     expect(validateVector([3, 4], 2)).toEqual([0.6, 0.8]);
   });
@@ -38,5 +39,24 @@ describe('local embedding contract', () => {
       chunks: [{ documentId: 'd1', start: 0, end: 1, text: 'a', vector: [1, 0] }, { documentId: 'd1', start: 1, end: 3, text: 'bc', vector: [0, 1] }] };
     expect(rank(index, profile, [1, 0])[0]).toMatchObject({ name: 'policy.md', text: 'a', score: 1 });
     expect(() => rank(index, { ...profile, passagePrefix: '' }, [1, 0])).toThrow('不匹配');
+  });
+  it('matches full cosine sorting for non-unit vectors and preserves ties without mutating the index', () => {
+    const profile = { ...DEFAULT_PROFILE, dimensions: 2 };
+    const index: LocalIndex = { version: 1, revision: 'test', updatedAt: '', profile, fingerprint: fingerprint(profile),
+      documents: [{ id: 'd', name: 'source.txt', text: '', bytes: 0 }],
+      chunks: [[-2, 0], [3, 4], [6, 8], [5, 0], [0, 2], [8, 1], [1, -1], [-1, -1]].map((vector, start) => ({ documentId: 'd', text: String(start), start, end: start + 1, vector })) };
+    const before = JSON.stringify(index);
+    const expected = index.chunks.map(c => ({ text: c.text, score: c.vector[0] / Math.hypot(...c.vector) })).sort((a, b) => b.score - a.score).slice(0, 5);
+    const hits = rank(index, profile, [10, 0]);
+    expect(hits.map(h => h.text)).toEqual(expected.map(h => h.text));
+    hits.forEach((hit, i) => expect(hit.score).toBeCloseTo(expected[i].score, 12));
+    expect(JSON.stringify(index)).toBe(before);
+  });
+  it.each([[1], [NaN, 1], [Infinity, 0], [0, 0], [Number.MAX_VALUE, 1]])('rejects corrupt vectors even outside the top five: %s', (...vector) => {
+    const profile = { ...DEFAULT_PROFILE, dimensions: 2 };
+    const index: LocalIndex = { version: 1, revision: 'test', updatedAt: '', profile, fingerprint: fingerprint(profile), documents: [],
+      chunks: [...Array.from({ length: 5 }, (_, start) => ({ documentId: 'd', start, end: start + 1, text: 'a', vector: [1, 0] })),
+        { documentId: 'd', start: 5, end: 6, text: 'bad', vector }] };
+    expect(() => rank(index, profile, [1, 0])).toThrow();
   });
 });

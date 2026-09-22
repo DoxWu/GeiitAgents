@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "benchmark:local-knowledge": "node scripts/benchmark-local-knowledge.mjs",
     "desktop:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "desktop:build": "node scripts/build-desktop.mjs dev",
     "desktop:build:release": "node scripts/build-desktop.mjs release",

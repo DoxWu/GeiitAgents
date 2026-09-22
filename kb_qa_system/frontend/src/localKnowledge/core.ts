@@ -38,7 +38,7 @@ export function fingerprint(profile: EmbeddingProfile): string {
 export function validateVector(vector: number[], dimensions: number): number[] {
   if (vector.length !== dimensions || vector.some(v => !Number.isFinite(v))) throw new Error('模型输出维度或数值不兼容。');
   const norm = Math.sqrt(vector.reduce((n, v) => n + v * v, 0));
-  if (norm < 1e-8) throw new Error('模型输出了空向量。');
+  if (norm < 1e-8 || !Number.isFinite(norm)) throw new Error('模型输出了空向量或无效范数。');
   return vector.map(v => v / norm);
 }
 // Count the actual prefixed input, including special tokens. Preserve exact UTF-16 source offsets.
@@ -63,11 +63,25 @@ export function splitText(text: string, profile: EmbeddingProfile, count: (text:
 export function rank(index: LocalIndex, profile: EmbeddingProfile, vector: number[]): SearchHit[] {
   if (index.fingerprint !== fingerprint(profile)) throw new Error('模型与索引不匹配，请重建本地索引。');
   const query = validateVector(vector, profile.dimensions);
-  return index.chunks.map(chunk => {
-    const values = validateVector(chunk.vector, profile.dimensions);
-    return { ...chunk, name: index.documents.find(d => d.id === chunk.documentId)?.name ?? '未知文件',
-      score: values.reduce((sum, v, i) => sum + v * query[i], 0) };
-  }).sort((a, b) => b.score - a.score).slice(0, 5);
+  const names = new Map(index.documents.map(document => [document.id, document.name]));
+  const best: { chunk: Chunk; score: number }[] = [];
+  for (const chunk of index.chunks) {
+    if (chunk.vector.length !== profile.dimensions) throw new Error('模型输出维度或数值不兼容。');
+    let dot = 0, squaredNorm = 0;
+    for (let i = 0; i < chunk.vector.length; i++) {
+      const value = chunk.vector[i];
+      if (!Number.isFinite(value)) throw new Error('模型输出维度或数值不兼容。');
+      dot += value * query[i]; squaredNorm += value * value;
+    }
+    const norm = Math.sqrt(squaredNorm);
+    if (norm < 1e-8 || !Number.isFinite(norm)) throw new Error('模型向量范数无效。');
+    const score = dot / norm;
+    const position = best.findIndex(hit => score > hit.score);
+    if (position >= 0) best.splice(position, 0, { chunk, score });
+    else if (best.length < 5) best.push({ chunk, score });
+    if (best.length > 5) best.pop();
+  }
+  return best.map(({ chunk, score }) => ({ ...chunk, name: names.get(chunk.documentId) ?? '未知文件', score }));
 }
 export async function readDocument(file: File): Promise<LocalDocument> {
   if (!/\.(md|markdown|txt)$/i.test(file.name) || file.size > LIMITS.fileBytes || file.size === 0) throw new Error('仅支持非空 UTF-8 Markdown/TXT 文件，每个不超过 2 MiB。');
