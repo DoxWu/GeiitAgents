@@ -7,6 +7,9 @@ import { completeModel, completeAccountModel, getAccountModel } from "@/services
 import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
+import { exportDocx } from '@/officeTasks/docxClient';
+
+vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -14,6 +17,7 @@ const password = "test-passphrase-1234";
 beforeEach(async () => {
   vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("TextEncoder", TextEncoder); vi.stubGlobal("TextDecoder", TextDecoder);
   localStorage.clear(); vi.mocked(completeModel).mockReset();
+  vi.mocked(exportDocx).mockReset();
   vi.mocked(completeAccountModel).mockReset(); vi.mocked(getAccountModel).mockReset();
   useAuthStore.setState({ user: null, isAuthenticated: false });
   store.setState({ accountModel: null });
@@ -276,4 +280,93 @@ it('does not dispatch or restore memory if locked during initial task persistenc
   expect(completeModel).not.toHaveBeenCalled(); expect(store.getState().taskRuns).toEqual([]);
   await store.getState().unlock(password);
   expect(store.getState().taskRuns[0].status).toBe('interrupted');
+});
+
+async function documentArtifact() {
+  vi.mocked(completeModel).mockResolvedValue('# 原始文档\n');
+  await store.getState().startDocumentTask(profile.id, documentInput, false);
+  vi.mocked(completeModel).mockClear();
+  return store.getState().artifacts[0];
+}
+
+it('keeps immutable parent versions, exact edits and their tool provenance across unlock', async () => {
+  const original = await documentArtifact(), edited = '```md\n原样保留围栏\n```\n\n';
+  const id = await store.getState().saveArtifactVersion(original.id, edited);
+  expect(store.getState().artifacts[0]).toEqual(original);
+  expect(store.getState().artifacts[1]).toMatchObject({ id, parentArtifactId: original.id, version: 2, content: edited });
+  expect(store.getState().toolRuns[1]).toMatchObject({ tool: 'document.edit', sourceArtifactId: original.id, outputArtifactId: id });
+  await expect(store.getState().saveArtifactVersion(original.id, 'stale edit')).rejects.toThrow('更新版本');
+  expect(await store.getState().saveArtifactVersion(id, edited)).toBe(id);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain('原样保留');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts).toHaveLength(2); expect(store.getState().artifacts[1].content).toBe(edited);
+  expect(completeModel).not.toHaveBeenCalled();
+});
+
+it('reserves revision work before hashing and rejects concurrent edits and removal', async () => {
+  const original = await documentArtifact();
+  const pending = store.getState().saveArtifactVersion(original.id, '# changed');
+  await expect(store.getState().saveArtifactVersion(original.id, '# another')).rejects.toThrow('正在保存');
+  await expect(store.getState().removeTask(original.taskId)).rejects.toThrow('正在保存');
+  await pending; expect(store.getState().artifacts).toHaveLength(2);
+});
+
+it('retains a failed-save revision for download and retries without duplicating history', async () => {
+  const original = await documentArtifact();
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().saveArtifactVersion(original.id, '# edited')).rejects.toThrow('保存失败');
+  expect(store.getState().storageError).toBeTruthy(); expect(store.getState().artifacts).toHaveLength(2);
+  spy.mockRestore(); await store.getState().saveArtifactVersion(original.id, '# edited');
+  expect(store.getState().artifacts).toHaveLength(2); expect(store.getState().storageError).toBeNull();
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts).toHaveLength(2);
+});
+
+it('does not insert an edited version after a lock during hashing', async () => {
+  const original = await documentArtifact();
+  const pending = store.getState().saveArtifactVersion(original.id, '# edited');
+  const rejected = expect(pending).rejects.toThrow('锁定');
+  await store.getState().lock(); await rejected;
+  expect(store.getState().artifacts).toEqual([]);
+  await store.getState().unlock(password); expect(store.getState().artifacts).toHaveLength(1);
+});
+
+it('exports the selected old version and stores only provenance and a hash, never binary', async () => {
+  const original = await documentArtifact();
+  await store.getState().saveArtifactVersion(original.id, '# new version');
+  const bytes = new TextEncoder().encode('synthetic docx bytes').buffer;
+  vi.mocked(exportDocx).mockResolvedValue({ bytes, warnings: ['test warning'], converterVersion: 'fixture/1' });
+  const result = await store.getState().exportArtifactDocx(original.id);
+  expect(result).toMatchObject({ bytes, name: expect.stringMatching(/-v1\.docx$/), warnings: ['test warning'] });
+  expect(exportDocx).toHaveBeenCalledWith(original.content, documentInput.title, expect.any(AbortSignal));
+  expect(store.getState().toolRuns.at(-1)).toMatchObject({ tool: 'document.export-docx', status: 'succeeded', sourceArtifactId: original.id, outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/), converterVersion: 'fixture/1' });
+  expect(JSON.stringify(store.getState())).not.toContain('synthetic docx bytes');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts).toHaveLength(2); expect(store.getState().toolRuns.at(-1)?.status).toBe('succeeded');
+  expect(completeModel).not.toHaveBeenCalled();
+});
+
+it('fails export before conversion on initial persistence failure and leaves the document intact', async () => {
+  const original = await documentArtifact();
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().exportArtifactDocx(original.id)).rejects.toThrow('保存失败');
+  spy.mockRestore(); expect(exportDocx).not.toHaveBeenCalled();
+  expect(store.getState().taskRuns[0].status).toBe('succeeded'); expect(store.getState().artifacts[0]).toEqual(original);
+  expect(store.getState().toolRuns.at(-1)?.status).toBe('failed');
+});
+
+it('aborts an export on lock and repairs only its running tool on unlock', async () => {
+  const original = await documentArtifact();
+  let finish!: (value: Awaited<ReturnType<typeof exportDocx>>) => void;
+  vi.mocked(exportDocx).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().exportArtifactDocx(original.id);
+  const rejected = expect(pending).rejects.toThrow('锁定');
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  await store.getState().lock();
+  expect(vi.mocked(exportDocx).mock.calls[0][2].aborted).toBe(true);
+  finish({ bytes: new ArrayBuffer(0), warnings: [], converterVersion: 'test' }); await rejected;
+  expect(store.getState().artifacts).toEqual([]);
+  await store.getState().unlock(password);
+  expect(store.getState().toolRuns.at(-1)?.status).toBe('interrupted');
+  expect(store.getState().taskRuns[0].status).toBe('succeeded');
 });

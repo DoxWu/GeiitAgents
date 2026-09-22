@@ -3,6 +3,7 @@ import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import JSZip from 'jszip';
 
 const output = path.resolve('../../.tools/document-task-qa');
 const liveProvider = process.env.DOCUMENT_TASK_LIVE === '1';
@@ -80,6 +81,41 @@ try {
   const downloaded = await downloadEvent, markdown = await readFile(await downloaded.path(), 'utf8');
   expect(markdown.length).toBeGreaterThan(30); expect(markdown).not.toMatch(/^```(?:markdown|md)/i);
   if (!liveProvider) { expect(markdown).toContain('# 项目周报'); expect(markdown).toContain('安全评审待完成'); }
+  // Office conversion is local: generation remains at exactly one API request.
+  expect(requests.some(url => /docx(?:\.worker|Client)/.test(url))).toBe(false);
+  await page.getByRole('button', { name: '编辑新版本' }).click();
+  const revision = '# 项目周报\n\n## 进展\n\n**登录模块**已完成，安全评审已通过。\n\n## 下周计划\n\n3. 测试验收\n4. 发布确认\n\n- [x] 代码评审\n- [ ] 验收测试\n\n| 事项 | 负责人 | 状态 |\n| --- | --- | --- |\n| 登录模块 | 项目组 | 完成 |\n| 发布 | 测试组 | 待确认 |\n\n```text\n复核数据 <safe>\n```\n\n![示意图](https://example.test/never-fetch.png)\n\n[说明](https://example.test/never-fetch)\n';
+  await page.getByLabel('编辑 Markdown', { exact: true }).fill(revision);
+  await expect(page.getByRole('button', { name: '导出 DOCX', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '保存新版本', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('版本已保存');
+  await expect(page.getByRole('article', { name: '文档成果' })).toContainText('版本 2');
+  await expect(page.getByLabel('成果版本')).toHaveCount(1);
+  expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
+  const exportedEvent = page.waitForEvent('download', { timeout: 40000 }).catch(error => error);
+  await page.getByRole('button', { name: '导出 DOCX', exact: true }).click();
+  const exported = await exportedEvent;
+  if (exported instanceof Error) {
+    console.error('Export failure', await page.getByRole('alert').allTextContents(), errors);
+    throw exported;
+  }
+  expect(exported.suggestedFilename()).toMatch(/-v2\.docx$/);
+  await exported.saveAs(path.join(output, 'revision-v2.docx'));
+  const zip = await JSZip.loadAsync(await readFile(await exported.path()));
+  const xml = await zip.file('word/document.xml').async('string');
+  expect(xml).toContain('安全评审已通过'); expect(xml).toContain('w:tblHeader');
+  expect(xml).toContain('w:pStyle w:val="Title"');
+  await expect(page.getByRole('status')).toContainText('未下载或嵌入图片');
+  expect(requests.some(url => url.includes('example.test/never-fetch'))).toBe(false);
+  expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
+  const newEncrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  expect(newEncrypted).not.toContain('安全评审已通过');
+  await page.getByLabel('成果版本').selectOption({ label: '版本 1 · 模型生成' });
+  await expect(page.getByRole('button', { name: '编辑新版本' })).toBeDisabled();
+  const originalEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '下载 Markdown' }).click();
+  expect(await readFile(await (await originalEvent).path(), 'utf8')).toBe(markdown);
+  await page.getByLabel('成果版本').selectOption({ label: '版本 2 · 手动编辑' });
   await page.screenshot({ path: path.join(output, 'completed-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(output, 'completed-mobile.png'), fullPage: true });
@@ -92,6 +128,10 @@ try {
   await page.getByRole('tab', { name: '任务' }).click();
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('项目周报');
   await expect(page.getByRole('button', { name: '下载 Markdown' })).toBeVisible();
+  await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(2);
+  await expect(page.getByRole('article', { name: '文档成果' })).toContainText('安全评审已通过');
+  await page.getByText('执行记录 · 3', { exact: true }).click();
+  await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.export-docx · 已完成 · 源版本 2');
   await page.getByLabel('文档标题', { exact: true }).fill('取消测试');
   await page.getByLabel('生成要求', { exact: true }).fill('生成一份不会被保存的测试文档。');
   await page.getByLabel('参考材料（可选）', { exact: true }).fill('仅用于取消流程。');
@@ -105,5 +145,5 @@ try {
   expect(sent).toHaveLength(2);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'markdown download', 'reload/unlock', 'cancel without artifact', '390px layout'], providerRequests: liveProvider ? 1 : 0 }, null, 2));
+    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'original markdown preserved', 'lazy DOCX worker', 'DOCX download and OOXML', 'no external images or model calls during export', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
 } finally { releaseSecond?.(); await context.close(); }

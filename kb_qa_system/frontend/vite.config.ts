@@ -2,9 +2,15 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 import { visualizer } from "rollup-plugin-visualizer";
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 // https://vite.dev/config/
 export default defineConfig({
+  // The default browser entry uses document.createElement, which cannot run in
+  // the DOCX Worker. The table-based entry also works in the main page and dev.
+  resolve: { alias: { 'decode-named-character-reference': require.resolve('decode-named-character-reference') } },
   worker: { format: 'es' },
   server: {
     // Rust outputs can be locked while linking on Windows; never watch them.

@@ -14,6 +14,7 @@ let vault: PrivateVault | null = null;
 let secrets: VaultData["profiles"] = [];
 let generation = 0;
 const controllers = new Map<string, AbortController>();
+const artifactOperations = new Map<string, AbortController>();
 const accountRequests = new Set<string>();
 let accountLookup: AbortController | null = null;
 
@@ -48,6 +49,9 @@ interface WorkbenchState {
   startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
   cancelTask: (id: string) => void;
   removeTask: (id: string) => Promise<void>;
+  saveArtifactVersion: (sourceId: string, content: string) => Promise<string>;
+  exportArtifactDocx: (sourceId: string) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
+  retryStorage: () => Promise<void>;
   answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal) => Promise<{ content: string; model: string }>;
 }
 
@@ -56,7 +60,10 @@ function publicProfiles(): ModelProfile[] {
 }
 
 async function persist(required = false) {
-  if (!vault || !useWorkbenchStore.getState().unlocked) return;
+  if (!vault || !useWorkbenchStore.getState().unlocked) {
+    if (required) throw new Error('请先解锁本机密钥库。');
+    return;
+  }
   const epoch = generation;
   try {
     const state = useWorkbenchStore.getState();
@@ -73,6 +80,8 @@ function eraseMemory() {
   generation++;
   for (const controller of controllers.values()) controller.abort();
   controllers.clear();
+  for (const controller of artifactOperations.values()) controller.abort();
+  artifactOperations.clear();
   secrets = [];
   vault?.lock();
   vault = null;
@@ -117,12 +126,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
     set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [],
       currentId: data.conversations[0]?.id ?? null, running: {}, errors: {}, storageError: null });
-    if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index])) await persist();
+    if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index])) await persist();
   },
   lock: async () => {
     const epoch = ++generation;
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
+    for (const controller of artifactOperations.values()) controller.abort();
     set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
@@ -320,8 +330,73 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
   },
   cancelTask: (id) => { controllers.get(`task:${id}`)?.abort(); },
+  retryStorage: async () => {
+    const epoch = generation;
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+  },
+  saveArtifactVersion: async (sourceId, content) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const source = get().artifacts.find(item => item.id === sourceId);
+    const task = get().taskRuns.find(item => item.id === source?.taskId);
+    if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
+    if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
+    // User edits must be preserved exactly; unlike model output, do not strip a surrounding code fence.
+    if (!content.trim() || content.length > 1_000_000 || content.includes('\0')) throw new Error('成果需要非空文本，最多 1000000 个字符。');
+    const latest = get().artifacts.filter(item => item.taskId === task.id).sort((a, b) => b.version - a.version)[0];
+    const retry = latest?.parentArtifactId === source.id && latest.content === content;
+    if (latest?.id !== source.id && !retry) throw new Error('已有更新版本，请先选择最新版本再编辑。旧版本仍可查看和导出。');
+    if (content === source.content || retry) { await get().retryStorage(); return retry ? latest.id : source.id; }
+    if (task.artifactIds.length >= 50) throw new Error('每个任务最多保留 50 个版本，请新建任务。');
+    const controller = new AbortController(), epoch = generation;
+    artifactOperations.set(task.id, controller);
+    try {
+      const sha256 = await sha256Text(content);
+      if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+      const id = crypto.randomUUID(), toolId = crypto.randomUUID(), now = new Date().toISOString();
+      const artifact: WorkArtifact = { ...source, id, parentArtifactId: source.id, version: source.version + 1, content, sha256, createdAt: now };
+      set(state => ({ artifacts: [...state.artifacts, artifact],
+        toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: 'document.edit', status: 'succeeded', sourceArtifactId: source.id, outputArtifactId: id, startedAt: now, finishedAt: now }],
+        taskRuns: state.taskRuns.map(item => item.id === task.id ? { ...item, updatedAt: now, artifactIds: [...item.artifactIds, id], toolRunIds: [...item.toolRunIds, toolId] } : item) }));
+      await persist(true);
+      if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+      return id;
+    } finally { if (artifactOperations.get(task.id) === controller) artifactOperations.delete(task.id); }
+  },
+  exportArtifactDocx: async (sourceId) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const source = get().artifacts.find(item => item.id === sourceId);
+    const task = get().taskRuns.find(item => item.id === source?.taskId);
+    if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
+    if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
+    if (get().toolRuns.filter(item => item.taskId === task.id && item.tool === 'document.export-docx').length >= 100) throw new Error('每个任务最多保留 100 次 DOCX 导出记录。');
+    const controller = new AbortController(), epoch = generation, toolId = crypto.randomUUID(), now = new Date().toISOString();
+    artifactOperations.set(task.id, controller);
+    const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new Error('导出已取消或密钥库已锁定。'); };
+    set(state => ({ toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: 'document.export-docx', status: 'running', sourceArtifactId: source.id, startedAt: now }],
+      taskRuns: state.taskRuns.map(item => item.id === task.id ? { ...item, toolRunIds: [...item.toolRunIds, toolId] } : item) }));
+    try {
+      await persist(true); guard();
+      const { exportDocx } = await import('@/officeTasks/docxClient'); guard();
+      const result = await exportDocx(source.content, task.title, controller.signal); guard();
+      const hash = await crypto.subtle.digest('SHA-256', result.bytes); guard();
+      const sha256 = Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, '0')).join('');
+      const safeName = Array.from(source.name.replace(/\.md$/i, '')).map(char => char.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char).join('').slice(0, 100);
+      const name = `${safeName}-v${source.version}.docx`;
+      set(state => ({ toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'succeeded', finishedAt: new Date().toISOString(), outputSha256: sha256, outputName: name, converterVersion: result.converterVersion, warnings: result.warnings } : item) }));
+      await persist(true); guard();
+      return { bytes: result.bytes, name, warnings: result.warnings };
+    } catch (error) {
+      if (epoch === generation && get().unlocked) {
+        set(state => ({ toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'failed', finishedAt: new Date().toISOString(), error: 'DOCX 未能完成导出，请检查错误后重试。' } : item) }));
+        await persist();
+      }
+      throw error;
+    } finally { if (artifactOperations.get(task.id) === controller) artifactOperations.delete(task.id); }
+  },
   removeTask: async (id) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (artifactOperations.has(id)) throw new Error('此任务正在保存或导出，请稍后删除。');
     if (get().taskRuns.find(task => task.id === id)?.status === 'running') throw new Error('请先取消运行中的任务。');
     set(state => ({ taskRuns: state.taskRuns.filter(task => task.id !== id), toolRuns: state.toolRuns.filter(tool => tool.taskId !== id),
       artifacts: state.artifacts.filter(artifact => artifact.taskId !== id) }));

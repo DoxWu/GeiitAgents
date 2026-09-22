@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ClipboardList, Download, FileUp, Loader2, Play, RotateCcw, Square, Trash2, XCircle } from 'lucide-react';
-import { PrivateMarkdown } from './LocalMarkdown';
+import { CheckCircle2, ClipboardList, FileUp, Loader2, Play, RotateCcw, Square, Trash2, XCircle } from 'lucide-react';
+import { DocumentArtifact } from './DocumentArtifact';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
-import type { TaskRun, WorkArtifact } from '@/types/workbench';
+import type { TaskRun } from '@/types/workbench';
 
 const statusText: Record<TaskRun['status'], string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
-function download(artifact: WorkArtifact) {
-  const url = URL.createObjectURL(new Blob([artifact.content], { type: `${artifact.mimeType};charset=utf-8` }));
-  const link = document.createElement('a'); link.href = url; link.download = artifact.name; link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 export function DocumentTasks() {
   const store = useWorkbenchStore();
@@ -24,7 +19,7 @@ export function DocumentTasks() {
   const [error, setError] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const task = store.taskRuns.find(item => item.id === selectedId) ?? store.taskRuns[0];
-  const artifact = task ? store.artifacts.find(item => task.artifactIds.includes(item.id)) : undefined;
+  const artifacts = task ? store.artifacts.filter(item => task.artifactIds.includes(item.id)) : [];
   const tools = task ? store.toolRuns.filter(item => item.taskId === task.id) : [];
   const profile = store.profiles.find(item => item.id === profileId);
   const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
@@ -96,10 +91,11 @@ export function DocumentTasks() {
             {task.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(task.id)}><Square size={15} />停止</button> : <button className="work-command" onClick={() => reuse(task)}><RotateCcw size={15} />复用输入</button>}
             <button className="work-icon" title="删除任务" aria-label="删除任务" disabled={task.status === 'running'} onClick={() => { if (window.confirm('删除此任务、工具记录和成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}><Trash2 size={16} /></button></div>
           {task.error && <p className="mt-3 text-sm text-danger">{task.error}</p>}
-          <details className="mt-4 text-sm"><summary className="cursor-pointer">执行记录 · {tools.length}</summary>{tools.map(tool => <p className="mt-2 text-xs text-ink-secondary" key={tool.id}>{tool.tool} · {statusText[tool.status]}{tool.model ? ` · ${tool.model}` : ''}</p>)}</details>
-          {artifact && <article className="mt-6 border-t border-line pt-5"><div className="flex items-center gap-3"><div className="min-w-0 flex-1"><h3 className="truncate font-semibold">{artifact.name}</h3><p className="mt-1 text-xs text-ink-secondary">版本 {artifact.version} · SHA-256 {artifact.sha256.slice(0, 12)}…</p></div>
-            <button className="work-command" onClick={() => download(artifact)}><Download size={16} />下载 Markdown</button></div>
-            <div className="mt-5"><PrivateMarkdown content={artifact.content} /></div></article>}
+          <details className="mt-4 text-sm"><summary className="cursor-pointer">执行记录 · {tools.length}</summary>{tools.map(tool => <div className="mt-2 break-words text-xs text-ink-secondary" key={tool.id}>
+            <p>{tool.tool} · {statusText[tool.status]}{tool.model ? ` · ${tool.model}` : ''}{tool.sourceArtifactId ? ` · 源版本 ${artifacts.find(item => item.id === tool.sourceArtifactId)?.version ?? '未知'}` : ''}</p>
+            {tool.outputName && <p>{tool.outputName} · SHA-256 {tool.outputSha256?.slice(0, 12)}…</p>}{tool.error && <p>{tool.error}</p>}{tool.warnings?.map(warning => <p key={warning}>{warning}</p>)}</div>)}</details>
+          {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
+          {!!artifacts.length && <DocumentArtifact key={task.id} versions={artifacts} />}
         </section>}
       </div>
     </div>
