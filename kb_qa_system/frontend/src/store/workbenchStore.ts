@@ -50,6 +50,7 @@ interface WorkbenchState {
   cancelTask: (id: string) => void;
   removeTask: (id: string) => Promise<void>;
   saveArtifactVersion: (sourceId: string, content: string) => Promise<string>;
+  restoreArtifactVersion: (sourceId: string, expectedLatestId: string) => Promise<string>;
   exportArtifactDocx: (sourceId: string) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
   retryStorage: () => Promise<void>;
   answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal) => Promise<{ content: string; model: string }>;
@@ -86,6 +87,43 @@ function eraseMemory() {
   vault?.lock();
   vault = null;
   useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {} });
+}
+
+// Edits and restores share the same task lock, immutable append and persistence semantics.
+async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; content: string } | { kind: 'restore'; expectedLatestId: string }): Promise<string> {
+  const get = useWorkbenchStore.getState, set = useWorkbenchStore.setState;
+  if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+  const source = get().artifacts.find(item => item.id === sourceId);
+  const task = get().taskRuns.find(item => item.id === source?.taskId);
+  if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
+  if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
+  const content = change.kind === 'edit' ? change.content : source.content;
+  if (!content.trim() || content.length > 1_000_000 || content.includes('\0')) throw new Error('成果需要非空文本，最多 1000000 个字符。');
+  const latest = get().artifacts.filter(item => item.taskId === task.id).sort((a, b) => b.version - a.version)[0];
+  const expectedId = change.kind === 'edit' ? source.id : change.expectedLatestId;
+  const retry = latest?.parentArtifactId === expectedId && latest.content === content
+    && (change.kind === 'restore' ? latest.restoredFromArtifactId === source.id : !latest.restoredFromArtifactId);
+  if (latest?.id !== expectedId && !retry) throw new Error('已有更新版本，请重新查看最新版本后再操作。');
+  const unchanged = content === latest.content || retry;
+  if (!unchanged && task.artifactIds.length >= 50) throw new Error('每个任务最多保留 50 个版本，请新建任务。');
+  const controller = new AbortController(), epoch = generation;
+  artifactOperations.set(task.id, controller);
+  try {
+    if (unchanged) { await get().retryStorage(); return latest.id; }
+    const sha256 = await sha256Text(content);
+    if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+    const id = crypto.randomUUID(), toolId = crypto.randomUUID(), now = new Date().toISOString();
+    const artifact: WorkArtifact = { id, taskId: task.id, kind: 'markdown', name: latest.name, mimeType: 'text/markdown',
+      parentArtifactId: latest.id, version: latest.version + 1, content, sha256, createdAt: now,
+      ...(change.kind === 'restore' ? { restoredFromArtifactId: source.id } : {}) };
+    set(state => ({ artifacts: [...state.artifacts, artifact],
+      toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: change.kind === 'restore' ? 'document.restore' : 'document.edit',
+        status: 'succeeded', sourceArtifactId: source.id, previousArtifactId: latest.id, outputArtifactId: id, startedAt: now, finishedAt: now }],
+      taskRuns: state.taskRuns.map(item => item.id === task.id ? { ...item, updatedAt: now, artifactIds: [...item.artifactIds, id], toolRunIds: [...item.toolRunIds, toolId] } : item) }));
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+    return id;
+  } finally { if (artifactOperations.get(task.id) === controller) artifactOperations.delete(task.id); }
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
@@ -335,34 +373,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
   },
-  saveArtifactVersion: async (sourceId, content) => {
-    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
-    const source = get().artifacts.find(item => item.id === sourceId);
-    const task = get().taskRuns.find(item => item.id === source?.taskId);
-    if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
-    if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
-    // User edits must be preserved exactly; unlike model output, do not strip a surrounding code fence.
-    if (!content.trim() || content.length > 1_000_000 || content.includes('\0')) throw new Error('成果需要非空文本，最多 1000000 个字符。');
-    const latest = get().artifacts.filter(item => item.taskId === task.id).sort((a, b) => b.version - a.version)[0];
-    const retry = latest?.parentArtifactId === source.id && latest.content === content;
-    if (latest?.id !== source.id && !retry) throw new Error('已有更新版本，请先选择最新版本再编辑。旧版本仍可查看和导出。');
-    if (content === source.content || retry) { await get().retryStorage(); return retry ? latest.id : source.id; }
-    if (task.artifactIds.length >= 50) throw new Error('每个任务最多保留 50 个版本，请新建任务。');
-    const controller = new AbortController(), epoch = generation;
-    artifactOperations.set(task.id, controller);
-    try {
-      const sha256 = await sha256Text(content);
-      if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
-      const id = crypto.randomUUID(), toolId = crypto.randomUUID(), now = new Date().toISOString();
-      const artifact: WorkArtifact = { ...source, id, parentArtifactId: source.id, version: source.version + 1, content, sha256, createdAt: now };
-      set(state => ({ artifacts: [...state.artifacts, artifact],
-        toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: 'document.edit', status: 'succeeded', sourceArtifactId: source.id, outputArtifactId: id, startedAt: now, finishedAt: now }],
-        taskRuns: state.taskRuns.map(item => item.id === task.id ? { ...item, updatedAt: now, artifactIds: [...item.artifactIds, id], toolRunIds: [...item.toolRunIds, toolId] } : item) }));
-      await persist(true);
-      if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
-      return id;
-    } finally { if (artifactOperations.get(task.id) === controller) artifactOperations.delete(task.id); }
-  },
+  saveArtifactVersion: (sourceId, content) => appendArtifactVersion(sourceId, { kind: 'edit', content }),
+  restoreArtifactVersion: (sourceId, expectedLatestId) => appendArtifactVersion(sourceId, { kind: 'restore', expectedLatestId }),
   exportArtifactDocx: async (sourceId) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const source = get().artifacts.find(item => item.id === sourceId);

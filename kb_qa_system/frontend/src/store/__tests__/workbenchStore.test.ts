@@ -370,3 +370,78 @@ it('aborts an export on lock and repairs only its running tool on unlock', async
   expect(store.getState().toolRuns.at(-1)?.status).toBe('interrupted');
   expect(store.getState().taskRuns[0].status).toBe('succeeded');
 });
+
+it('restores old content as a new head with both parent and recovery source, encrypted across unlock', async () => {
+  const original = await documentArtifact();
+  const secondId = await store.getState().saveArtifactVersion(original.id, '# revised\r\n\n');
+  const second = store.getState().artifacts[1];
+  const thirdId = await store.getState().restoreArtifactVersion(original.id, secondId);
+  expect(store.getState().artifacts.slice(0, 2)).toEqual([original, second]);
+  expect(store.getState().artifacts[2]).toMatchObject({ id: thirdId, version: 3, parentArtifactId: secondId, restoredFromArtifactId: original.id, content: original.content, sha256: original.sha256 });
+  expect(store.getState().toolRuns.at(-1)).toMatchObject({ tool: 'document.restore', sourceArtifactId: original.id, previousArtifactId: secondId, outputArtifactId: thirdId });
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain('原始文档');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts[2].restoredFromArtifactId).toBe(original.id);
+  expect(store.getState().taskRuns[0].artifactIds).toEqual([original.id, secondId, thirdId]);
+  expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
+  const fourthId = await store.getState().saveArtifactVersion(thirdId, '# edited after restore');
+  expect(store.getState().artifacts.at(-1)).toMatchObject({ id: fourthId, parentArtifactId: thirdId, version: 4 });
+  expect(store.getState().artifacts.at(-1)?.restoredFromArtifactId).toBeUndefined();
+});
+
+it('rejects stale recovery confirmation, missing sources and another task head', async () => {
+  const original = await documentArtifact();
+  const second = await store.getState().saveArtifactVersion(original.id, '# two');
+  const third = await store.getState().saveArtifactVersion(second, '# three');
+  await expect(store.getState().restoreArtifactVersion(original.id, second)).rejects.toThrow('更新版本');
+  await expect(store.getState().restoreArtifactVersion('missing', third)).rejects.toThrow('源成果');
+  vi.mocked(completeModel).mockResolvedValue('# unrelated');
+  const otherTask = await store.getState().startDocumentTask(profile.id, { ...documentInput, title: 'other task' }, false);
+  const other = store.getState().artifacts.find(item => item.taskId === otherTask)!;
+  await expect(store.getState().restoreArtifactVersion(other.id, third)).rejects.toThrow('更新版本');
+  expect(store.getState().artifacts).toHaveLength(4);
+});
+
+it('retries failed recovery persistence without duplicate versions and treats identical content as no-op', async () => {
+  const original = await documentArtifact();
+  const second = await store.getState().saveArtifactVersion(original.id, '# two');
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().restoreArtifactVersion(original.id, second)).rejects.toThrow('保存失败');
+  spy.mockRestore();
+  const third = store.getState().artifacts[2].id;
+  expect(await store.getState().restoreArtifactVersion(original.id, second)).toBe(third);
+  expect(await store.getState().restoreArtifactVersion(original.id, third)).toBe(third);
+  expect(store.getState().artifacts).toHaveLength(3); expect(store.getState().toolRuns).toHaveLength(3);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts.at(-1)?.id).toBe(third);
+});
+
+it('uses the shared lock for restore, edit, export and delete and drops late recovery on vault lock', async () => {
+  const original = await documentArtifact();
+  const second = await store.getState().saveArtifactVersion(original.id, '# two');
+  const pending = store.getState().restoreArtifactVersion(original.id, second);
+  const rejected = expect(pending).rejects.toThrow('锁定');
+  const conflicts = [store.getState().saveArtifactVersion(second, '# concurrent'), store.getState().exportArtifactDocx(second), store.getState().removeTask(original.taskId)];
+  await store.getState().lock();
+  for (const conflict of conflicts) await expect(conflict).rejects.toThrow('正在保存');
+  await rejected;
+  expect(store.getState().artifacts).toEqual([]);
+  await store.getState().unlock(password); expect(store.getState().artifacts).toHaveLength(2);
+});
+
+it('rejects recovery at the version limit without changing history', async () => {
+  const original = await documentArtifact();
+  const versions = Array.from({ length: 50 }, (_, index) => ({ ...original, id: `version-${index}`, version: index + 1, content: `# ${index}` }));
+  store.setState({ artifacts: versions, taskRuns: [{ ...store.getState().taskRuns[0], artifactIds: versions.map(item => item.id) }] });
+  await expect(store.getState().restoreArtifactVersion(versions[0].id, versions[49].id)).rejects.toThrow('50 个版本');
+  expect(store.getState().artifacts).toHaveLength(50);
+});
+
+it('holds the task lock while retrying an already-created recovery snapshot', async () => {
+  const original = await documentArtifact();
+  const second = await store.getState().saveArtifactVersion(original.id, '# two');
+  const third = await store.getState().restoreArtifactVersion(original.id, second);
+  const retry = store.getState().restoreArtifactVersion(original.id, second);
+  await expect(store.getState().saveArtifactVersion(third, '# racing edit')).rejects.toThrow('正在保存');
+  expect(await retry).toBe(third);
+});

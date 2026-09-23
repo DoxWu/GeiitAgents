@@ -46,8 +46,9 @@ export interface TaskRun {
 export interface ToolRun {
   id: string;
   taskId: string;
-  tool: 'model.complete' | 'document.edit' | 'document.export-docx';
+  tool: 'model.complete' | 'document.edit' | 'document.restore' | 'document.export-docx';
   sourceArtifactId?: string;
+  previousArtifactId?: string;
   outputArtifactId?: string;
   outputSha256?: string;
   outputName?: string;
@@ -66,6 +67,7 @@ export interface WorkArtifact {
   kind: 'markdown';
   version: number;
   parentArtifactId?: string;
+  restoredFromArtifactId?: string;
   name: string;
   mimeType: 'text/markdown';
   content: string;

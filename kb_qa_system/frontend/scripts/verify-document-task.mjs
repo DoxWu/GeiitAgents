@@ -91,6 +91,10 @@ try {
   await expect(page.getByRole('status')).toContainText('版本已保存');
   await expect(page.getByRole('article', { name: '文档成果' })).toContainText('版本 2');
   await expect(page.getByLabel('成果版本')).toHaveCount(1);
+  await page.getByRole('button', { name: '对比版本', exact: true }).click();
+  await expect(page.getByRole('region', { name: '版本对比' })).toContainText('版本 1 → 版本 2');
+  await expect(page.getByLabel('差异行')).toContainText('安全评审已通过');
+  await expect(page.getByRole('region', { name: '版本对比' })).toContainText('新增');
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
   const exportedEvent = page.waitForEvent('download', { timeout: 40000 }).catch(error => error);
   await page.getByRole('button', { name: '导出 DOCX', exact: true }).click();
@@ -115,10 +119,37 @@ try {
   const originalEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: '下载 Markdown' }).click();
   expect(await readFile(await (await originalEvent).path(), 'utf8')).toBe(markdown);
+  await page.getByRole('button', { name: '恢复为新版本', exact: true }).click();
+  await expect(page.getByRole('region', { name: '确认版本恢复' })).toContainText('版本 1 的完整内容恢复为版本 3');
+  await page.getByRole('button', { name: '取消恢复', exact: true }).click();
+  await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(2);
+  await page.getByRole('button', { name: '恢复为新版本', exact: true }).click();
+  await page.getByRole('button', { name: '确认恢复', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('已将版本 1');
+  await expect(page.getByLabel('成果版本').locator('option:checked')).toHaveText('版本 3 · 恢复自版本 1');
+  await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(3);
+  const restoredEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '下载 Markdown' }).click();
+  expect(await readFile(await (await restoredEvent).path(), 'utf8')).toBe(markdown);
+  const restoredWordEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出 DOCX', exact: true }).click();
+  const restoredWord = await restoredWordEvent;
+  expect(restoredWord.suggestedFilename()).toMatch(/-v3\.docx$/);
+  const restoredZip = await JSZip.loadAsync(await readFile(await restoredWord.path()));
+  const restoredXml = await restoredZip.file('word/document.xml').async('string');
+  expect(restoredXml).not.toContain('安全评审已通过');
+  if (!liveProvider) expect(restoredXml).toContain('安全评审待完成');
+  await page.getByLabel('对比基准').selectOption({ label: '版本 1' });
+  await expect(page.getByRole('region', { name: '版本对比' })).toContainText('两个版本内容完全相同');
+  expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
   await page.getByLabel('成果版本').selectOption({ label: '版本 2 · 手动编辑' });
+  await expect(page.getByRole('region', { name: '版本对比' })).toContainText('版本 1 → 版本 2');
+  await page.getByRole('region', { name: '版本对比' }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'completed-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(output, 'completed-mobile.png'), fullPage: true });
+  await page.getByLabel('差异行').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'diff-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 900 });
 
@@ -128,10 +159,16 @@ try {
   await page.getByRole('tab', { name: '任务' }).click();
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('项目周报');
   await expect(page.getByRole('button', { name: '下载 Markdown' })).toBeVisible();
-  await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(2);
-  await expect(page.getByRole('article', { name: '文档成果' })).toContainText('安全评审已通过');
-  await page.getByText('执行记录 · 3', { exact: true }).click();
+  await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(3);
+  await expect(page.getByLabel('成果版本').locator('option:checked')).toHaveText('版本 3 · 恢复自版本 1');
+  await page.getByText('执行记录 · 5', { exact: true }).click();
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.export-docx · 已完成 · 源版本 2');
+  await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.restore · 已完成 · 源版本 1');
+  await expect(page.getByRole('region', { name: '任务详情' })).toContainText('基于版本 2 · 生成版本 3');
+  await page.getByLabel('成果版本').selectOption({ label: '版本 1 · 模型生成' });
+  await expect(page.getByRole('button', { name: '恢复为新版本', exact: true })).toBeDisabled();
+  await page.getByLabel('成果版本').selectOption({ label: '版本 2 · 手动编辑' });
+  await expect(page.getByRole('article', { name: '文档成果' })).toContainText('安全评审已通过');
   await page.getByLabel('文档标题', { exact: true }).fill('取消测试');
   await page.getByLabel('生成要求', { exact: true }).fill('生成一份不会被保存的测试文档。');
   await page.getByLabel('参考材料（可选）', { exact: true }).fill('仅用于取消流程。');
@@ -145,5 +182,5 @@ try {
   expect(sent).toHaveLength(2);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'original markdown preserved', 'lazy DOCX worker', 'DOCX download and OOXML', 'no external images or model calls during export', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
+    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'lazy DOCX worker', 'DOCX download and OOXML', 'no external images or model calls during export/compare/restore', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
 } finally { releaseSecond?.(); await context.close(); }

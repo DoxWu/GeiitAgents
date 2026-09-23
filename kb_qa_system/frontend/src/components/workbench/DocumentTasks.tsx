@@ -93,6 +93,7 @@ export function DocumentTasks() {
           {task.error && <p className="mt-3 text-sm text-danger">{task.error}</p>}
           <details className="mt-4 text-sm"><summary className="cursor-pointer">执行记录 · {tools.length}</summary>{tools.map(tool => <div className="mt-2 break-words text-xs text-ink-secondary" key={tool.id}>
             <p>{tool.tool} · {statusText[tool.status]}{tool.model ? ` · ${tool.model}` : ''}{tool.sourceArtifactId ? ` · 源版本 ${artifacts.find(item => item.id === tool.sourceArtifactId)?.version ?? '未知'}` : ''}</p>
+            {tool.outputArtifactId && <p>{tool.previousArtifactId ? `基于版本 ${artifacts.find(item => item.id === tool.previousArtifactId)?.version ?? '未知'} · ` : ''}生成版本 {artifacts.find(item => item.id === tool.outputArtifactId)?.version ?? '未知'}</p>}
             {tool.outputName && <p>{tool.outputName} · SHA-256 {tool.outputSha256?.slice(0, 12)}…</p>}{tool.error && <p>{tool.error}</p>}{tool.warnings?.map(warning => <p key={warning}>{warning}</p>)}</div>)}</details>
           {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
           {!!artifacts.length && <DocumentArtifact key={task.id} versions={artifacts} />}
