@@ -5,7 +5,7 @@ import { useWorkbenchStore, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from "@/store/
 import { useAuthStore } from "@/store/authStore";
 import { LocalMarkdown, PrivateMarkdown } from "@/components/workbench/LocalMarkdown";
 import { ModelConnections } from "@/components/workbench/ModelConnections";
-import { DocumentTasks } from "@/components/workbench/DocumentTasks";
+import { OfficeTasks } from "@/components/workbench/OfficeTasks";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import type { LocalDocument } from "@/types/workbench";
 import "@/styles/workbench.css";
@@ -106,7 +106,7 @@ export default function WorkbenchPage() {
           {!hasVault && <><label className="work-label">确认口令<input className="work-input" type="password" required minLength={4} autoComplete="new-password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></label><p className="text-xs text-ink-secondary">至少 4 个字符。口令不上传；遗失后无法恢复本机密钥和对话。</p></>}
           <button className="work-command justify-center bg-brand text-white" disabled={unlocking}>{unlocking ? "处理中..." : hasVault ? "解锁" : "创建"}</button>
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-        </form></div> : tab === "models" ? <ModelConnections /> : tab === "tasks" ? <DocumentTasks /> :
+        </form></div> : tab === "models" ? <ModelConnections /> : tab === "tasks" ? <OfficeTasks /> :
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
             <select aria-label="当前对话模型" className="work-input min-w-0 flex-1 sm:max-w-80" disabled={running || archive} value={archive ? '' : selectedProfile} onChange={(e) => { if (conversation) state.setProfile(conversation.id, e.target.value); else state.newConversation(e.target.value); }}>

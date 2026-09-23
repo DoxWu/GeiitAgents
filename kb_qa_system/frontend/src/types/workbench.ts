@@ -29,7 +29,8 @@ export type TaskStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'int
 
 export interface TaskRun {
   id: string;
-  type: 'document.generate-markdown';
+  type: 'document.generate-markdown' | 'chart.generate';
+  chartInput?: import('@/officeTasks/chart').ChartInput;
   title: string;
   profileId: string;
   instruction: string;
@@ -46,7 +47,7 @@ export interface TaskRun {
 export interface ToolRun {
   id: string;
   taskId: string;
-  tool: 'model.complete' | 'document.edit' | 'document.restore' | 'document.export-docx';
+  tool: 'model.complete' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'chart.check' | 'chart.render';
   sourceArtifactId?: string;
   previousArtifactId?: string;
   outputArtifactId?: string;
@@ -64,12 +65,12 @@ export interface ToolRun {
 export interface WorkArtifact {
   id: string;
   taskId: string;
-  kind: 'markdown';
+  kind: 'markdown' | 'svg';
   version: number;
   parentArtifactId?: string;
   restoredFromArtifactId?: string;
   name: string;
-  mimeType: 'text/markdown';
+  mimeType: 'text/markdown' | 'image/svg+xml';
   content: string;
   sha256: string;
   createdAt: string;

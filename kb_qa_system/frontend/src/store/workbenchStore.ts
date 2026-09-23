@@ -7,6 +7,7 @@ import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { buildDocumentMessages, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
+import type { ChartInput } from '@/officeTasks/chart';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -47,6 +48,7 @@ interface WorkbenchState {
   cancel: (id: string) => void;
   saveKnowledgeAnswer: (answer: KnowledgeAnswerArtifact) => Promise<string>;
   startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
+  startChartTask: (input: ChartInput, requestId: string) => Promise<string>;
   cancelTask: (id: string) => void;
   removeTask: (id: string) => Promise<void>;
   saveArtifactVersion: (sourceId: string, content: string) => Promise<string>;
@@ -96,6 +98,7 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
   const source = get().artifacts.find(item => item.id === sourceId);
   const task = get().taskRuns.find(item => item.id === source?.taskId);
   if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
+  if (source.kind !== 'markdown' || task.type !== 'document.generate-markdown') throw new Error('仅 Markdown 文档支持版本编辑和恢复。');
   if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
   const content = change.kind === 'edit' ? change.content : source.content;
   if (!content.trim() || content.length > 1_000_000 || content.includes('\0')) throw new Error('成果需要非空文本，最多 1000000 个字符。');
@@ -368,6 +371,52 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
   },
   cancelTask: (id) => { controllers.get(`task:${id}`)?.abort(); },
+  startChartTask: async (input, requestId) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (!/^[a-f0-9-]{36}$/i.test(requestId)) throw new Error('图表任务标识无效。');
+    const id = `chart:${requestId}`, snapshot = { ...input }, epoch = generation;
+    if (artifactOperations.has(id)) throw new Error('图表任务正在处理。');
+    if (artifactOperations.size >= 3) throw new Error('最多同时运行 3 个本地成果操作。');
+    const existing = get().taskRuns.find(task => task.id === id);
+    if (existing) {
+      if (JSON.stringify(existing.chartInput) !== JSON.stringify(snapshot)) throw new Error('重试内容已改变，请新建图表任务。');
+      if (!existing.artifactIds.length) throw new Error('该图表任务未完成，请重新检查并创建任务。');
+      const controller = new AbortController(); artifactOperations.set(id, controller);
+      try { await get().retryStorage(); return id; }
+      finally { if (artifactOperations.get(id) === controller) artifactOperations.delete(id); }
+    }
+    if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个任务，请先删除不需要的记录。');
+    const controller = new AbortController(); artifactOperations.set(id, controller);
+    const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new Error('图表任务已取消或密钥库已锁定。'); };
+    let created = false;
+    try {
+      const { checkChart, renderChartSvg, CHART_RENDERER_VERSION } = await import('@/officeTasks/chart'); guard();
+      const checked = checkChart(snapshot), now = new Date().toISOString(), checkId = crypto.randomUUID(), renderId = crypto.randomUUID();
+      // Recheck after dynamic import: multiple tasks may have filled capacity.
+      if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个任务，请先删除不需要的记录。');
+      set(state => ({ taskRuns: [{ id, type: 'chart.generate', chartInput: snapshot, title: checked.input.title, profileId: '', instruction: '本地 CSV 校验与图表生成', status: 'running', createdAt: now, updatedAt: now, artifactIds: [], toolRunIds: [checkId, renderId] }, ...state.taskRuns],
+        toolRuns: [...state.toolRuns, { id: checkId, taskId: id, tool: 'chart.check', status: 'succeeded', startedAt: now, finishedAt: now, warnings: checked.warnings },
+          { id: renderId, taskId: id, tool: 'chart.render', status: 'running', startedAt: now, converterVersion: CHART_RENDERER_VERSION }] }));
+      created = true;
+      await persist(true); guard();
+      const content = renderChartSvg(checked), sha256 = await sha256Text(content); guard();
+      const finishedAt = new Date().toISOString(), artifactId = crypto.randomUUID();
+      const name = Array.from(checked.input.title).map(char => '<>:"/\\|?*'.includes(char) ? '_' : char).join('') + '.svg';
+      const artifact: WorkArtifact = { id: artifactId, taskId: id, kind: 'svg', version: 1, name, mimeType: 'image/svg+xml', content, sha256, createdAt: finishedAt };
+      set(state => ({ artifacts: [artifact, ...state.artifacts],
+        taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, status: 'succeeded', updatedAt: finishedAt, artifactIds: [artifactId] } : task),
+        toolRuns: state.toolRuns.map(tool => tool.id === renderId ? { ...tool, status: 'succeeded', finishedAt, outputArtifactId: artifactId, outputName: name, outputSha256: sha256 } : tool) }));
+      await persist(true); guard(); return id;
+    } catch (error) {
+      if (created && epoch === generation && get().unlocked && !get().taskRuns.find(task => task.id === id)?.artifactIds.length) {
+        const finishedAt = new Date().toISOString();
+        set(state => ({ taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, status: 'failed', updatedAt: finishedAt, error: '本地图表生成或保存失败，请重新检查后再试。' } : task),
+          toolRuns: state.toolRuns.map(tool => tool.taskId === id && tool.status === 'running' ? { ...tool, status: 'failed', finishedAt } : tool) }));
+        await persist();
+      }
+      throw error;
+    } finally { if (artifactOperations.get(id) === controller) artifactOperations.delete(id); }
+  },
   retryStorage: async () => {
     const epoch = generation;
     await persist(true);
@@ -380,6 +429,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const source = get().artifacts.find(item => item.id === sourceId);
     const task = get().taskRuns.find(item => item.id === source?.taskId);
     if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
+    if (source.kind !== 'markdown' || task.type !== 'document.generate-markdown') throw new Error('仅 Markdown 文档支持 DOCX 导出。');
     if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
     if (get().toolRuns.filter(item => item.taskId === task.id && item.tool === 'document.export-docx').length >= 100) throw new Error('每个任务最多保留 100 次 DOCX 导出记录。');
     const controller = new AbortController(), epoch = generation, toolId = crypto.randomUUID(), now = new Date().toISOString();

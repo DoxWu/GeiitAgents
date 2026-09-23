@@ -18,8 +18,9 @@ export function DocumentTasks() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const input = useRef<HTMLInputElement>(null);
-  const task = store.taskRuns.find(item => item.id === selectedId) ?? store.taskRuns[0];
-  const artifacts = task ? store.artifacts.filter(item => task.artifactIds.includes(item.id)) : [];
+  const documentTasks = store.taskRuns.filter(item => item.type === 'document.generate-markdown');
+  const task = documentTasks.find(item => item.id === selectedId) ?? documentTasks[0];
+  const artifacts = task ? store.artifacts.filter(item => item.kind === 'markdown' && task.artifactIds.includes(item.id)) : [];
   const tools = task ? store.toolRuns.filter(item => item.taskId === task.id) : [];
   const profile = store.profiles.find(item => item.id === profileId);
   const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
@@ -56,8 +57,8 @@ export function DocumentTasks() {
   return <section className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]" aria-label="文档任务">
     <aside className="max-h-56 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
       <div className="mb-2 flex items-center gap-2 px-2"><ClipboardList size={17} /><h2 className="text-sm font-semibold">文档任务</h2></div>
-      {!store.taskRuns.length && <p className="px-2 py-6 text-sm text-ink-tertiary">尚无任务记录</p>}
-      {store.taskRuns.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${task?.id === item.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => setSelectedId(item.id)}>
+      {!documentTasks.length && <p className="px-2 py-6 text-sm text-ink-tertiary">尚无任务记录</p>}
+      {documentTasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${task?.id === item.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => setSelectedId(item.id)}>
         <span className="block truncate text-sm font-medium">{item.title}</span><span className="mt-1 flex items-center gap-1 text-xs text-ink-secondary">
           {item.status === 'running' ? <Loader2 size={12} className="animate-spin" /> : item.status === 'succeeded' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{statusText[item.status]}</span>
       </button>)}

@@ -8,6 +8,7 @@ import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { exportDocx } from '@/officeTasks/docxClient';
+import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart';
 
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 
@@ -444,4 +445,55 @@ it('holds the task lock while retrying an already-created recovery snapshot', as
   const retry = store.getState().restoreArtifactVersion(original.id, second);
   await expect(store.getState().saveArtifactVersion(third, '# racing edit')).rejects.toThrow('正在保存');
   expect(await retry).toBe(third);
+});
+
+const chartInput: ChartInput = { title: '本地销售图', csv: '月份,销售额\n一月,120\n二月,-40', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '元' };
+it('persists chart input, two tool runs, warnings and a hashed SVG without any model request', async () => {
+  const requestId = crypto.randomUUID();
+  const id = await store.getState().startChartTask(chartInput, requestId);
+  expect(store.getState().taskRuns[0]).toMatchObject({ id, type: 'chart.generate', chartInput, status: 'succeeded', profileId: '' });
+  expect(store.getState().toolRuns.map(tool => tool.tool)).toEqual(['chart.check', 'chart.render']);
+  expect(store.getState().toolRuns[0].warnings?.join(' ')).toContain('负值');
+  const svg = store.getState().artifacts[0];
+  expect(svg).toMatchObject({ kind: 'svg', mimeType: 'image/svg+xml', sha256: expect.stringMatching(/^[a-f0-9]{64}$/), content: renderChartSvg(checkChart(chartInput)) });
+  expect(store.getState().toolRuns[1].outputArtifactId).toBe(svg.id);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/本地销售图|一月|<svg/);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts[0]).toEqual(svg);
+  expect(await store.getState().startChartTask(chartInput, requestId)).toBe(id);
+  expect(store.getState().taskRuns).toHaveLength(1);
+  expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
+});
+it('blocks invalid data and request reuse with changed chart inputs', async () => {
+  await expect(store.getState().startChartTask({ ...chartInput, csv: 'a,b\nx,' }, crypto.randomUUID())).rejects.toThrow('数值');
+  expect(store.getState().taskRuns).toHaveLength(0);
+  const id = crypto.randomUUID(); await store.getState().startChartTask(chartInput, id);
+  await expect(store.getState().startChartTask({ ...chartInput, title: 'changed' }, id)).rejects.toThrow('内容已改变');
+  const artifact = store.getState().artifacts[0];
+  await expect(store.getState().saveArtifactVersion(artifact.id, '# incorrect')).rejects.toThrow('仅 Markdown');
+  await expect(store.getState().restoreArtifactVersion(artifact.id, artifact.id)).rejects.toThrow('仅 Markdown');
+  await expect(store.getState().exportArtifactDocx(artifact.id)).rejects.toThrow('仅 Markdown');
+  await store.getState().removeTask(artifact.taskId);
+  expect(store.getState().taskRuns).toEqual([]); expect(store.getState().artifacts).toEqual([]); expect(store.getState().toolRuns).toEqual([]);
+});
+it('does not render an artifact when initial encrypted chart persistence fails', async () => {
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().startChartTask(chartInput, crypto.randomUUID())).rejects.toThrow('保存失败');
+  spy.mockRestore(); expect(store.getState().artifacts).toEqual([]); expect(store.getState().taskRuns[0].status).toBe('failed');
+});
+it('keeps final-save-failed chart output and retries the same request without duplicate artifacts', async () => {
+  const id = crypto.randomUUID(), originalWrite = localStorage.setItem.bind(localStorage); let writes = 0;
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementation((key, value) => { if (++writes === 2) throw new DOMException('quota', 'QuotaExceededError'); originalWrite(key, value); });
+  await expect(store.getState().startChartTask(chartInput, id)).rejects.toThrow('保存失败');
+  expect(store.getState().storageError).toBeTruthy(); expect(store.getState().artifacts).toHaveLength(1);
+  spy.mockRestore(); await store.getState().startChartTask(chartInput, id);
+  expect(store.getState().storageError).toBeNull(); expect(store.getState().artifacts).toHaveLength(1); expect(store.getState().toolRuns).toHaveLength(2);
+  await store.getState().lock(); await store.getState().unlock(password); expect(store.getState().artifacts).toHaveLength(1);
+});
+it('rejects duplicate in-flight chart tasks and cancels loading on lock', async () => {
+  const id = crypto.randomUUID();
+  const pending = store.getState().startChartTask(chartInput, id);
+  const rejected = expect(pending).rejects.toThrow('锁定');
+  await expect(store.getState().startChartTask(chartInput, id)).rejects.toThrow('正在处理');
+  await store.getState().lock(); await rejected; expect(store.getState().artifacts).toEqual([]);
 });
