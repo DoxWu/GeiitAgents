@@ -98,107 +98,107 @@ describe("DocumentPreview 组件", () => {
     localStorage.clear();
   });
 
-  it("未打开时不渲染", () => {
+  it("未打开时不渲染", async () => {
     const { container } = render(<DocumentPreview />);
     expect(container.firstChild).toBeNull();
   });
 
-  it("打开时渲染文档详情面板", () => {
+  it("打开时渲染文档详情面板", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc();
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("文档详情")).toBeInTheDocument();
     expect(screen.getByText("test.pdf")).toBeInTheDocument();
   });
 
-  it("渲染文件类型信息", () => {
+  it("渲染文件类型信息", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({ file_type: ".pdf" });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText(".PDF")).toBeInTheDocument();
   });
 
-  it("渲染文件大小信息", () => {
+  it("渲染文件大小信息", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({ file_size: 1048576 });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     // formatFileSize(1048576) 返回 "1.0 MB"
     expect(screen.getByText("1.0 MB")).toBeInTheDocument();
   });
 
-  it("渲染状态徽章 - 已完成", () => {
+  it("渲染状态徽章 - 已完成", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({ status: "completed" });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("已完成")).toBeInTheDocument();
   });
 
-  it("渲染状态徽章 - 处理中", () => {
+  it("渲染状态徽章 - 处理中", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({ status: "processing" });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("处理中")).toBeInTheDocument();
   });
 
-  it("处理中状态显示进度条", () => {
+  it("处理中状态显示进度条", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       status: "processing",
       processing_progress: 75,
       processing_step: "解析文档",
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("解析文档")).toBeInTheDocument();
     expect(screen.getByText("75%")).toBeInTheDocument();
   });
 
-  it("处理失败状态显示错误信息", () => {
+  it("处理失败状态显示错误信息", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       status: "failed",
       error_message: "文件解析失败",
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     // "处理失败" 出现两次：状态徽章 + 错误信息标题，使用 getAllByText
     expect(screen.getAllByText("处理失败")).toHaveLength(2);
     expect(screen.getByText("文件解析失败")).toBeInTheDocument();
   });
 
-  it("处理失败状态显示重新处理按钮", () => {
+  it("处理失败状态显示重新处理按钮", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       status: "failed",
       error_message: "文件解析失败",
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("重新处理")).toBeInTheDocument();
   });
 
-  it("质量评分展示 - 高分", () => {
+  it("质量评分展示 - 高分", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       quality_score: 90,
       quality_issues: null,
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText(/90 \/ 100/)).toBeInTheDocument();
   });
 
-  it("质量评分展示 - 质量问题", () => {
+  it("质量评分展示 - 质量问题", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       quality_score: 45,
       quality_issues: ["内容过短", "格式混乱"],
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText(/45 \/ 100/)).toBeInTheDocument();
     expect(screen.getByText(/内容过短、格式混乱/)).toBeInTheDocument();
   });
 
-  it("无质量评分时不显示质量信息", () => {
+  it("无质量评分时不显示质量信息", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({ quality_score: null });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.queryByText("质量评分")).not.toBeInTheDocument();
   });
 
@@ -206,7 +206,7 @@ describe("DocumentPreview 组件", () => {
     const user = userEvent.setup();
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc();
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await user.click(screen.getByLabelText("关闭预览"));
     expect(mockDocStore.closePreview).toHaveBeenCalledTimes(1);
   });
@@ -216,7 +216,7 @@ describe("DocumentPreview 组件", () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc();
     mockDocStore.removeDocument.mockResolvedValueOnce(undefined);
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await user.click(screen.getByText("删除文档"));
     await waitFor(() => {
       expect(mockDocStore.removeDocument).toHaveBeenCalledWith(1);
@@ -229,7 +229,7 @@ describe("DocumentPreview 组件", () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc();
     mockDocStore.removeDocument.mockRejectedValueOnce(new Error("无权限"));
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await user.click(screen.getByText("删除文档"));
     await waitFor(() => {
       expect(mockToastStore.apiError).toHaveBeenCalledWith("删除失败", expect.objectContaining({ message: "无权限" }));
@@ -244,7 +244,7 @@ describe("DocumentPreview 组件", () => {
       error_message: "失败",
     });
     mockDocStore.reprocessDocument.mockResolvedValueOnce(undefined);
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await user.click(screen.getByText("重新处理"));
     await waitFor(() => {
       expect(mockDocStore.reprocessDocument).toHaveBeenCalledWith(1);
@@ -260,7 +260,7 @@ describe("DocumentPreview 组件", () => {
       error_message: "失败",
     });
     mockDocStore.reprocessDocument.mockRejectedValueOnce(new Error("服务不可用"));
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await user.click(screen.getByText("重新处理"));
     await waitFor(() => {
       expect(mockToastStore.apiError).toHaveBeenCalledWith("操作失败", expect.objectContaining({ message: "服务不可用" }));
@@ -280,7 +280,7 @@ describe("DocumentPreview 组件", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await waitFor(() => {
       expect(screen.getByText("这是文件内容")).toBeInTheDocument();
     });
@@ -307,7 +307,7 @@ describe("DocumentPreview 组件", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     await waitFor(() => {
       expect(screen.getByText("预览内容加载失败")).toBeInTheDocument();
     });
@@ -359,54 +359,54 @@ describe("DocumentPreview 组件", () => {
     expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
-  it("不支持预览的文件类型显示提示", () => {
+  it("不支持预览的文件类型显示提示", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       file_type: ".zip",
       status: "completed",
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("该文件类型暂不支持在线预览")).toBeInTheDocument();
     expect(screen.getByText(/(.zip)/)).toBeInTheDocument();
   });
 
-  it("未完成状态不显示内容预览区", () => {
+  it("未完成状态不显示内容预览区", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       status: "processing",
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.queryByText("内容预览")).not.toBeInTheDocument();
   });
 
-  it("渲染分块数量和 Token 数", () => {
+  it("渲染分块数量和 Token 数", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       chunk_count: 10,
       total_tokens: 5000,
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("10")).toBeInTheDocument();
     expect(screen.getByText("5,000")).toBeInTheDocument();
   });
 
-  it("无分块和 Token 时显示占位符", () => {
+  it("无分块和 Token 时显示占位符", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       chunk_count: 0,
       total_tokens: 0,
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  it("title 与 file_name 不同时显示 title", () => {
+  it("title 与 file_name 不同时显示 title", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       title: "自定义标题",
       file_name: "original_name.pdf",
     });
-    render(<DocumentPreview />);
+    await act(async () => { render(<DocumentPreview />); });
     expect(screen.getByText("自定义标题")).toBeInTheDocument();
     expect(screen.getByText("original_name.pdf")).toBeInTheDocument();
   });

@@ -476,6 +476,25 @@ it('blocks invalid data and request reuse with changed chart inputs', async () =
   await store.getState().removeTask(artifact.taskId);
   expect(store.getState().taskRuns).toEqual([]); expect(store.getState().artifacts).toEqual([]); expect(store.getState().toolRuns).toEqual([]);
 });
+it('snapshots multi-series selection before async work and restores the same encrypted chart', async () => {
+  const valueColumns = [2, 1];
+  const multi = { ...chartInput, csv: '月份,收入,成本\n一月,100,30\n二月,200,-40', valueColumn: 2, valueColumns };
+  const requestId = crypto.randomUUID();
+  const pending = store.getState().startChartTask(multi, requestId);
+  valueColumns.reverse();
+  const id = await pending;
+  const task = store.getState().taskRuns.find(item => item.id === id)!;
+  expect(task.chartInput?.valueColumns).toEqual([2, 1]);
+  const svg = store.getState().artifacts[0];
+  expect(svg.content).toContain('成本 · 二月: -40');
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/成本|一月|<svg/);
+  expect(store.getState().toolRuns.find(tool => tool.tool === 'chart.render')?.converterVersion).toBe('local-chart/2');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().taskRuns[0].chartInput?.valueColumns).toEqual([2, 1]);
+  expect(store.getState().artifacts[0]).toEqual(svg);
+  await expect(store.getState().startChartTask(multi, requestId)).rejects.toThrow('内容已改变');
+  expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
+});
 it('does not render an artifact when initial encrypted chart persistence fails', async () => {
   const spy = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
   await expect(store.getState().startChartTask(chartInput, crypto.randomUUID())).rejects.toThrow('保存失败');

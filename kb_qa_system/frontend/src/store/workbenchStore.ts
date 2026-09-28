@@ -404,7 +404,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   startChartTask: async (input, requestId) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     if (!/^[a-f0-9-]{36}$/i.test(requestId)) throw new Error('图表任务标识无效。');
-    const id = `chart:${requestId}`, snapshot = { ...input }, epoch = generation;
+    const id = `chart:${requestId}`, snapshot = { ...input, ...(input.valueColumns !== undefined ? { valueColumns: [...input.valueColumns] } : {}) }, epoch = generation;
     if (artifactOperations.has(id)) throw new Error('图表任务正在处理。');
     if (artifactOperations.size >= 3) throw new Error('最多同时运行 3 个本地成果操作。');
     const existing = get().taskRuns.find(task => task.id === id);

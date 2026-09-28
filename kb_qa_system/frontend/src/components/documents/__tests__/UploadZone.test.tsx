@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const { mockDocStore } = vi.hoisted(() => ({
   mockDocStore: {
@@ -127,7 +127,7 @@ describe("UploadZone 组件", () => {
       expect.any(AbortSignal),
     );
     // 等待异步完成
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(mockToastStore.success).toHaveBeenCalledWith(
         "上传成功",
         "test.pdf",
@@ -149,7 +149,7 @@ describe("UploadZone 组件", () => {
     uploadFile(input, file);
 
     // 等待上传状态出现
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(screen.getByText("0%")).toBeInTheDocument();
     });
 
@@ -158,7 +158,7 @@ describe("UploadZone 组件", () => {
     fireEvent.click(cancelButton);
 
     // 验证状态变为"已取消"
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(screen.getByText("已取消")).toBeInTheDocument();
     });
   });
@@ -173,7 +173,7 @@ describe("UploadZone 组件", () => {
     const file = new File(["content"], "test.txt", { type: "text/plain" });
     uploadFile(input, file);
 
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(mockToastStore.apiError).toHaveBeenCalledWith(
         "上传失败",
         expect.objectContaining({ message: "网络错误" }),

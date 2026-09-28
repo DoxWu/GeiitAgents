@@ -1,0 +1,73 @@
+// Production-browser QA with synthetic CSV only. Start `vite preview --port 1425` first.
+import { chromium, expect } from '@playwright/test';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const output = path.resolve('../../.tools/chart-series-qa');
+await mkdir(output, { recursive: true });
+const browser = await chromium.launch({ headless: true });
+const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1280, height: 1000 } });
+const page = await context.newPage(), errors = [], requests = [];
+page.on('pageerror', error => errors.push(error.message));
+context.on('request', request => requests.push(request.url()));
+await context.route('**/api/v1/**', route => route.fulfill({ status: 200, json: {} }));
+await context.routeWebSocket('**/ws/notifications', () => {});
+async function download(button) {
+  const pending = page.waitForEvent('download'); await page.getByRole('button', { name: button, exact: true }).click();
+  return pending;
+}
+try {
+  await page.goto(process.env.CHART_QA_URL || 'http://127.0.0.1:1425/workbench');
+  await page.getByLabel('解锁口令', { exact: true }).fill('chart-qa-fixture');
+  await page.getByLabel('确认口令', { exact: true }).fill('chart-qa-fixture');
+  await page.getByRole('button', { name: '创建', exact: true }).click();
+  await page.getByRole('tab', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: '图表工具' }).click();
+  const requestCount = requests.filter(url => url.includes('/api/')).length;
+  await page.getByLabel('图表标题', { exact: true }).fill('季度收入与成本');
+  await page.getByLabel('选择图表 CSV 文件').setInputFiles({ name: 'series.csv', mimeType: 'text/csv', buffer: Buffer.from('季度,收入,成本\n第一季度,120,60\n第二季度,180,-30\n第三季度,240,80') });
+  await page.getByRole('checkbox', { name: '数值列：成本' }).check();
+  await page.getByRole('button', { name: '检查并预览' }).click();
+  await expect(page.getByText(/检查通过.*2 个系列/)).toBeVisible();
+  await expect(page.getByText(/成本：存在负值/)).toBeVisible();
+  await page.getByText('查看完整数值', { exact: true }).click();
+  await expect(page.getByRole('table', { name: '图表完整数据' })).toContainText('成本（元）');
+  await page.getByRole('button', { name: '保存图表任务' }).click();
+  await expect(page.getByRole('status')).toContainText('已保存');
+  const svgDownload = await download('下载 SVG'), svg = await readFile(await svgDownload.path(), 'utf8');
+  expect(svg).toContain('成本 · 第二季度: -30');
+  expect(svg.match(/<rect /g)).toHaveLength(7);
+  await svgDownload.saveAs(path.join(output, 'series-bar.svg'));
+  const pngDownload = await download('下载 PNG'); await pngDownload.saveAs(path.join(output, 'series-bar.png'));
+  expect((await readFile(await pngDownload.path())).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  expect(encrypted).not.toMatch(/季度收入|第一季度|<svg|成本/);
+  await page.getByRole('region', { name: '图表任务详情' }).locator('img').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'desktop.png') });
+  await page.reload();
+  await page.getByLabel('解锁口令', { exact: true }).fill('chart-qa-fixture');
+  await page.getByRole('button', { name: '解锁', exact: true }).click();
+  await page.getByRole('tab', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: '图表工具' }).click();
+  await expect(page.getByRole('region', { name: '图表任务详情' })).toContainText('2 个系列');
+  const restored = await download('下载 SVG'); expect(await readFile(await restored.path(), 'utf8')).toBe(svg);
+  await page.getByRole('button', { name: '复用图表输入' }).click();
+  await expect(page.getByRole('checkbox', { name: '数值列：成本' })).toBeChecked();
+  await page.getByLabel('图表类型').selectOption('line');
+  await page.getByRole('button', { name: '检查并预览' }).click();
+  await page.getByRole('button', { name: '保存图表任务' }).click();
+  await expect(page.getByRole('status')).toContainText('已保存');
+  const line = await download('下载 SVG'), lineSvg = await readFile(await line.path(), 'utf8');
+  expect(lineSvg.match(/<polyline /g)).toHaveLength(2); expect(lineSvg.match(/<circle /g)).toHaveLength(6);
+  await line.saveAs(path.join(output, 'series-line.svg'));
+  await (await download('下载 PNG')).saveAs(path.join(output, 'series-line.png'));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('region', { name: '图表任务详情' }).locator('img').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'mobile.png') });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(requests.filter(url => url.includes('/api/')).length).toBe(requestCount);
+  expect(requests.some(url => /onnx|embedding|chat\/completions|private-models\/.*complete/.test(url))).toBe(false);
+  expect(errors).toEqual([]);
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, svgBytes: Buffer.byteLength(svg), noModelRequests: true, encryptedRestore: true, mobileWidth: 390, pageErrors: errors }, null, 2));
+  console.log('Multi-series CSV, grouped bars, lines, SVG/PNG, encrypted restore, and 390px layout passed.');
+} finally { await context.close(); await browser.close(); }

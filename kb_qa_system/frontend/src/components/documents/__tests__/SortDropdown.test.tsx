@@ -94,6 +94,21 @@ describe("SortDropdown 组件", () => {
     expect(mockDocStore.setSort).toHaveBeenCalledWith("created_at", "asc");
   });
 
+  it("keeps sort selection and direction as separate keyboard controls", async () => {
+    const user = userEvent.setup();
+    render(<SortDropdown />);
+    const select = screen.getByRole('button', { name: '创建时间' });
+    const direction = screen.getByRole('button', { name: '切换为升序' });
+    expect(select.contains(direction)).toBe(false);
+    await user.tab(); expect(select).toHaveFocus();
+    await user.tab(); expect(direction).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(mockDocStore.setSort).toHaveBeenCalledTimes(1);
+    expect(mockDocStore.setSort).toHaveBeenCalledWith('created_at', 'asc');
+    expect(select).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('修改时间')).not.toBeInTheDocument();
+  });
+
   it("点击外部关闭下拉菜单", async () => {
     const user = userEvent.setup();
     render(

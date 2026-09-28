@@ -21,6 +21,61 @@ it('checks selected columns and preserves duplicate rows without aggregation or 
   for (const column of [-1, 3, 0.5]) expect(() => checkChart({ ...input, valueColumn: column })).toThrow('有效');
   expect(() => checkChart({ ...input, valueColumn: 0 })).toThrow('不能相同');
 });
+it('supports multiple numeric series while preserving the legacy first-series fields', () => {
+  const result = checkChart({ ...input, csv: '月份,收入,成本\n一月,10,4\n二月,20,8', valueColumns: [1, 2] });
+  expect(result.input.valueColumn).toBe(1);
+  expect(result.input.valueColumns).toEqual([1, 2]);
+  expect(result.valueLabels).toEqual(['收入', '成本']);
+  expect(result.series.map(series => series.points.map(point => point.value))).toEqual([[10, 20], [4, 8]]);
+  expect(result.warnings).toContain('所有系列共用单位和坐标轴，请确认量纲一致；数值不自动堆叠或汇总。');
+  const doc = new DOMParser().parseFromString(renderChartSvg(result), 'image/svg+xml');
+  expect(doc.querySelectorAll('rect')).toHaveLength(5);
+  expect(doc.querySelectorAll('line[stroke-width="3"]')).toHaveLength(2);
+  expect(Array.from(doc.querySelectorAll('rect title'), node => node.textContent)).toEqual(['收入 · 一月: 10', '收入 · 二月: 20', '成本 · 一月: 4', '成本 · 二月: 8']);
+  expect(renderChartSvg(result)).not.toMatch(/NaN|Infinity/);
+});
+it('rejects more than six series and selections that include the category column', () => {
+  const csv = ['类别', 'a', 'b', 'c', 'd', 'e', 'f', 'g'].join(',') + '\nx,1,2,3,4,5,6,7';
+  expect(() => checkChart({ ...input, csv, valueColumns: [1, 2, 3, 4, 5, 6, 7] })).toThrow('1–6');
+  expect(() => checkChart({ ...input, csv, valueColumns: [0, 1] })).toThrow('不能相同');
+});
+it('rejects empty, duplicate and invalid series selections instead of falling back', () => {
+  for (const valueColumns of [[], [1, 1], [2], [-1], [NaN], [1.5]]) expect(() => checkChart({ ...input, valueColumns })).toThrow();
+  const selection = [2, 1];
+  const checked = checkChart({ ...input, csv: '分类,收入,支出\n一,20,10', valueColumns: selection });
+  selection.reverse();
+  expect(checked.input.valueColumns).toEqual([2, 1]);
+  expect(checked.series.map(series => series.label)).toEqual(['支出', '收入']);
+});
+it('validates secondary series and flags cross-series scale differences', () => {
+  const csv = '分类,收入,支出\n一,1000000,1\n二,2000000,2';
+  expect(checkChart({ ...input, csv, valueColumns: [1, 2] }).warnings.join(' ')).toContain('系列之间');
+  expect(() => checkChart({ ...input, csv: '分类,收入,支出\n一,20,=1+1', valueColumns: [1, 2] })).toThrow('「支出」数值缺失');
+  expect(() => checkChart({ ...input, csv: '分类,收入,支出\n一,20,1e999', valueColumns: [1, 2] })).toThrow('「支出」数值超出');
+});
+it('uses a shared linear scale and keeps series colors for negative values', () => {
+  const chart = checkChart({ ...input, csv: '分类,收入,支出\n一,10,20\n二,0,-10', valueColumns: [1, 2] });
+  const doc = new DOMParser().parseFromString(renderChartSvg(chart), 'image/svg+xml');
+  const bars = Array.from(doc.querySelectorAll('rect')).slice(1);
+  expect(Number(bars[2].getAttribute('height')) / Number(bars[0].getAttribute('height'))).toBeCloseTo(2);
+  expect(Number(bars[2].getAttribute('x'))).toBeGreaterThan(Number(bars[0].getAttribute('x')) + Number(bars[0].getAttribute('width')));
+  expect(bars[2].getAttribute('fill')).toBe(bars[3].getAttribute('fill'));
+  expect(bars[0].getAttribute('fill')).not.toBe(bars[2].getAttribute('fill'));
+  const line = new DOMParser().parseFromString(renderChartSvg({ ...chart, input: { ...chart.input, chartType: 'line' } }), 'image/svg+xml');
+  const lines = Array.from(line.querySelectorAll('polyline'));
+  expect(lines).toHaveLength(2);
+  expect(lines.map(node => node.getAttribute('points')?.split(' ').map(pair => pair.split(',')[0]))[0]).toEqual(lines[1].getAttribute('points')?.split(' ').map(pair => pair.split(',')[0]));
+  expect(line.querySelectorAll('circle')).toHaveLength(4);
+});
+it('escapes series titles and keeps six series at fifty rows within PNG bounds', () => {
+  const headers = Array.from({ length: 6 }, (_, i) => `<script${i}>` + '长'.repeat(40));
+  const csv = ['分类,' + headers.join(','), ...Array.from({ length: 50 }, (_, i) => `分类${i},1,2,3,4,5,6`)].join('\n');
+  const doc = new DOMParser().parseFromString(renderChartSvg(checkChart({ ...input, csv, valueColumns: [1, 2, 3, 4, 5, 6] })), 'image/svg+xml');
+  expect(doc.querySelector('parsererror,script,image,a')).toBeNull();
+  expect(doc.querySelectorAll('rect title')).toHaveLength(300);
+  expect(doc.documentElement.textContent).toContain(headers[5]);
+  expect(Number(doc.documentElement.getAttribute('width')) * Number(doc.documentElement.getAttribute('height'))).toBeLessThanOrEqual(2_500_000);
+});
 it('explains zero values, missing units, negative values, large dynamic range and categorical lines', () => {
   const zero = checkChart({ ...input, csv: '分类,数值\n一月,0', chartType: 'line', unit: '' });
   expect(zero.warnings).toHaveLength(4);

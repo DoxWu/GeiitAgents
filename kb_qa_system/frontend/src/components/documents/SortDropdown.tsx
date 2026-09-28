@@ -53,26 +53,28 @@ export function SortDropdown() {
   }
 
   /** 切换升降序 */
-  function toggleOrder(e: React.MouseEvent) {
-    e.stopPropagation();
+  function toggleOrder() {
     setSort(sortBy, sortOrder === "asc" ? "desc" : "asc");
   }
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className={cn(
-          "flex h-9 items-center gap-1.5 rounded-md border border-line bg-surface px-3",
-          "text-sm text-ink-secondary transition-colors hover:bg-muted",
-        )}
-      >
-        <ArrowDownUp className="h-3.5 w-3.5" />
-        <span>{currentLabel}</span>
+      <div className="flex h-9 items-center rounded-md border border-line bg-surface text-sm text-ink-secondary">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          className="flex h-full items-center gap-1.5 rounded-l-md px-3 transition-colors hover:bg-muted"
+        >
+          <ArrowDownUp className="h-3.5 w-3.5" />
+          <span>{currentLabel}</span>
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+        </button>
         {/* 升降序指示器 */}
         <button
+          type="button"
           onClick={toggleOrder}
-          className="ml-0.5 rounded p-0.5 hover:bg-line"
+          className="flex h-full items-center rounded-r-md border-l border-line px-2 hover:bg-muted"
           aria-label={sortOrder === "asc" ? "切换为降序" : "切换为升序"}
           title={sortOrder === "asc" ? "升序" : "降序"}
         >
@@ -82,13 +84,7 @@ export function SortDropdown() {
             <ArrowDown className="h-3.5 w-3.5" />
           )}
         </button>
-        <ChevronDown
-          className={cn(
-            "h-3.5 w-3.5 transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </button>
+      </div>
 
       {/* 下拉菜单 */}
       {open && (

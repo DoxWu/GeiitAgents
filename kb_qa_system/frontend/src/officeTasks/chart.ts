@@ -3,12 +3,23 @@ export interface ChartInput {
   csv: string;
   categoryColumn: number;
   valueColumn: number;
+  /** Optional multi-series selection. valueColumn remains the legacy first series. */
+  valueColumns?: number[];
   chartType: 'bar' | 'line';
   unit: string;
 }
 export interface ChartData { headers: string[]; rows: string[][] }
-export interface CheckedChart { input: ChartInput; points: { label: string; value: number }[]; warnings: string[]; valueLabel: string }
-export const CHART_RENDERER_VERSION = 'local-chart/1';
+export interface ChartSeries { label: string; points: { label: string; value: number }[] }
+export interface CheckedChart {
+  input: ChartInput;
+  points: { label: string; value: number }[];
+  series: ChartSeries[];
+  warnings: string[];
+  valueLabel: string;
+  valueLabels: string[];
+}
+export const CHART_RENDERER_VERSION = 'local-chart/2';
+export const MAX_CHART_SERIES = 6;
 
 function hasControl(value: string): boolean {
   return Array.from(value).some(char => char.charCodeAt(0) < 32 && !'\r\n\t'.includes(char));
@@ -56,30 +67,54 @@ export function parseChartCsv(source: string): ChartData {
 }
 
 export function checkChart(input: ChartInput): CheckedChart {
-  const clean = { ...input, title: input.title.trim(), unit: input.unit.trim() };
+  const clean: ChartInput = { ...input, title: input.title.trim(), unit: input.unit.trim() };
   if (!clean.title || clean.title.length > 80 || clean.unit.length > 20 || /[\r\n\t]/.test(clean.title + clean.unit) || hasControl(clean.title + clean.unit)) throw new Error('图表标题需要 1–80 字符，单位最多 20 字符，不能包含换行或控制字符。');
   if (!['bar', 'line'].includes(clean.chartType)) throw new Error('请选择柱状图或折线图。');
   const data = parseChartCsv(clean.csv);
-  for (const column of [clean.categoryColumn, clean.valueColumn]) if (!Number.isInteger(column) || column < 0 || column >= data.headers.length) throw new Error('请选择有效的分类列和数值列。');
-  if (clean.categoryColumn === clean.valueColumn) throw new Error('分类列和数值列不能相同。');
-  const points = data.rows.map((row, index) => {
-    const label = row[clean.categoryColumn].trim(), raw = row[clean.valueColumn].trim();
+  const requestedColumns = clean.valueColumns === undefined ? [clean.valueColumn] : clean.valueColumns;
+  if (!Array.isArray(requestedColumns) || requestedColumns.length < 1 || requestedColumns.length > MAX_CHART_SERIES) throw new Error(`请选择 1–${MAX_CHART_SERIES} 个数值系列。`);
+  const valueColumns = [...requestedColumns];
+  if (new Set(valueColumns).size !== valueColumns.length) throw new Error('数值列不能重复选择。');
+  if (valueColumns.some(column => !Number.isInteger(column) || column < 0 || column >= data.headers.length)) throw new Error('请选择有效的分类列和数值列。');
+  if (valueColumns.includes(clean.categoryColumn)) throw new Error('分类列和数值列不能相同。');
+  clean.valueColumn = valueColumns[0];
+  clean.valueColumns = valueColumns;
+  if (!Number.isInteger(clean.categoryColumn) || clean.categoryColumn < 0 || clean.categoryColumn >= data.headers.length) throw new Error('请选择有效的分类列和数值列。');
+  const labels = data.rows.map((row, index) => {
+    const label = row[clean.categoryColumn].trim();
     if (!label || label.length > 60 || /[\r\n\t]/.test(label)) throw new Error(`第 ${index + 1} 条分类标签需要 1–60 个字符且不换行。`);
-    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw)) throw new Error(`第 ${index + 1} 条数值缺失或格式无效；仅接受小数点数字，不接受公式、百分号或千位分隔符。`);
-    const value = Number(raw);
-    if (!Number.isFinite(value) || Math.abs(value) > 1e12 || value !== 0 && Math.abs(value) < 1e-9 || value === 0 && /[1-9]/.test(raw.split(/[eE]/)[0])) throw new Error(`第 ${index + 1} 条数值超出支持范围（绝对值 1e-9 至 1e12，或 0）。`);
-    return { label, value: Object.is(value, -0) ? 0 : value };
+    return label;
   });
+  const parseSeries = (column: number): ChartSeries => ({
+    label: data.headers[column],
+    points: data.rows.map((row, index) => {
+      const raw = row[column].trim();
+      if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw)) throw new Error(`第 ${index + 1} 条「${data.headers[column]}」数值缺失或格式无效；仅接受小数点数字，不接受公式、百分号或千位分隔符。`);
+      const value = Number(raw);
+      if (!Number.isFinite(value) || Math.abs(value) > 1e12 || value !== 0 && Math.abs(value) < 1e-9 || value === 0 && /[1-9]/.test(raw.split(/[eE]/)[0])) throw new Error(`第 ${index + 1} 条「${data.headers[column]}」数值超出支持范围（绝对值 1e-9 至 1e12，或 0）。`);
+      return { label: labels[index], value: Object.is(value, -0) ? 0 : value };
+    }),
+  });
+  const series = valueColumns.map(parseSeries);
+  const points = series[0].points;
   const warnings: string[] = [];
   if (new Set(points.map(point => point.label)).size !== points.length) warnings.push('分类标签有重复：各行独立绘制，没有自动汇总。');
-  if (points.every(point => point.value === 0)) warnings.push('全部数值为 0，图形无法呈现数量差异。');
-  if (points.some(point => point.value < 0)) warnings.push('存在负值，请确认业务含义；坐标轴保留零基线。');
+  series.forEach((current) => {
+    const prefix = series.length > 1 ? `${current.label}：` : '';
+    if (current.points.every(point => point.value === 0)) warnings.push(`${prefix}全部数值为 0，图形无法呈现数量差异。`);
+    if (current.points.some(point => point.value < 0)) warnings.push(`${prefix}存在负值，请确认业务含义；坐标轴保留零基线。`);
+    const nonzero = current.points.map(point => Math.abs(point.value)).filter(Boolean);
+    if (nonzero.length && Math.max(...nonzero) / Math.min(...nonzero) > 1000) warnings.push(`${prefix}数值跨度超过 1000 倍，小值可能难以看清；可查看下方完整数据。`);
+    if (clean.chartType === 'line' && current.points.length === 1) warnings.push(`${prefix}只有一个数据点，无法表达趋势。`);
+  });
   if (!clean.unit) warnings.push('尚未填写单位，请确认数值量纲。');
+  if (series.length > 1) {
+    warnings.push('所有系列共用单位和坐标轴，请确认量纲一致；数值不自动堆叠或汇总。');
+    const nonzero = series.flatMap(current => current.points.map(point => Math.abs(point.value))).filter(Boolean);
+    if (nonzero.length && Math.max(...nonzero) / Math.min(...nonzero) > 1000) warnings.push('系列之间的数值跨度超过 1000 倍，小值可能难以看清；建议拆成不同图表。');
+  }
   if (clean.chartType === 'line') warnings.push('折线按输入行顺序、等间距连接；请确认顺序有意义，日期间隔不会自动换算。');
-  if (points.length === 1 && clean.chartType === 'line') warnings.push('只有一个数据点，无法表达趋势。');
-  const nonzero = points.map(point => Math.abs(point.value)).filter(Boolean);
-  if (nonzero.length && Math.max(...nonzero) / Math.min(...nonzero) > 1000) warnings.push('数值跨度超过 1000 倍，小值可能难以看清；可查看下方完整数据。');
-  return { input: clean, points, warnings, valueLabel: data.headers[clean.valueColumn] };
+  return { input: clean, points, series, warnings, valueLabel: data.headers[clean.valueColumn], valueLabels: valueColumns.map(column => data.headers[column]) };
 }
 
 function escapeXml(value: string): string {
@@ -88,33 +123,51 @@ function escapeXml(value: string): string {
 const numberText = (value: number) => value === 0 ? '0' : Math.abs(value) >= 1e6 || Math.abs(value) < 0.001 ? value.toExponential(2) : Number(value.toPrecision(5)).toString();
 
 export function renderChartSvg(chart: CheckedChart): string {
-  const { input, points, valueLabel } = chart;
-  const width = Math.max(800, points.length * 74 + 160, Array.from(input.title).length * 23 + 160, (valueLabel.length + input.unit.length + 10) * 14 + 160), height = 590;
+  const { input, points, series, valueLabels } = chart;
+  const colors = ['#2563eb', '#d97706', '#059669', '#9333ea', '#dc2626', '#0891b2'];
+  const width = Math.max(800, points.length * 74 + 160, Array.from(input.title).length * 23 + 160, (Math.max(...valueLabels.map(label => label.length)) + input.unit.length + 10) * 14 + 160);
+  const height = 644;
   const left = 110, right = width - 40, top = 110, bottom = 430;
-  let low = Math.min(0, ...points.map(point => point.value)), high = Math.max(0, ...points.map(point => point.value));
+  const allPoints = series.flatMap(current => current.points);
+  let low = Math.min(0, ...allPoints.map(point => point.value)), high = Math.max(0, ...allPoints.map(point => point.value));
   if (low === high) high = 1;
   const span = high - low; high += span * 0.08; if (low < 0) low -= span * 0.08;
   const y = (value: number) => bottom - (value - low) / (high - low) * (bottom - top);
   const slot = (right - left) / points.length, x = (index: number) => left + slot * (index + 0.5);
   const tag = (x: number, y: number, text: string, attrs = '') => `<text x="${x}" y="${y}" ${attrs}>${escapeXml(text)}</text>`;
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-description">`,
-    `<title id="chart-title">${escapeXml(input.title)}</title><desc id="chart-description">${escapeXml(points.map(point => `${point.label}: ${point.value}`).join('；'))}</desc>`,
+    `<title id="chart-title">${escapeXml(input.title)}</title><desc id="chart-description">${escapeXml(series.map(current => `${current.label}: ${current.points.map(point => `${point.label} ${point.value}`).join('，')}`).join('；'))}</desc>`,
     '<rect width="100%" height="100%" fill="#ffffff"/>', '<g font-family="Microsoft YaHei, Arial, sans-serif" font-size="13" fill="#243449">',
-    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${valueLabel}${input.unit ? `（${input.unit}）` : ''} · ${input.chartType === 'bar' ? '柱状图' : '折线图'}`)];
+    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${input.chartType === 'bar' ? '柱状图' : '折线图'}`)];
   for (let tick = 0; tick <= 4; tick++) {
     const value = low + (high - low) * tick / 4, yy = y(value);
     parts.push(`<line x1="${left}" x2="${right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/>`, tag(left - 12, yy + 4, numberText(value), 'text-anchor="end"'));
   }
   parts.push(`<line x1="${left}" x2="${right}" y1="${y(0)}" y2="${y(0)}" stroke="#64748b" stroke-width="1.5"/>`);
-  if (input.chartType === 'line') parts.push(`<polyline points="${points.map((point, index) => `${x(index)},${y(point.value)}`).join(' ')}" fill="none" stroke="#2563eb" stroke-width="2.5"/>`);
+  series.forEach((current, seriesIndex) => {
+    const color = colors[seriesIndex % colors.length];
+    if (input.chartType === 'line') parts.push(`<polyline data-series="${escapeXml(current.label)}" points="${current.points.map((point, index) => `${x(index)},${y(point.value)}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2.5"/>`);
+    current.points.forEach((point, index) => {
+      const xx = x(index), yy = y(point.value);
+      if (input.chartType === 'bar') {
+        const groupWidth = slot * .78, barWidth = groupWidth / series.length * .82;
+        const barX = xx - groupWidth / 2 + seriesIndex * groupWidth / series.length + (groupWidth / series.length - barWidth) / 2;
+        parts.push(`<rect x="${barX}" y="${Math.min(yy, y(0))}" width="${barWidth}" height="${Math.abs(yy - y(0))}" fill="${color}"><title>${escapeXml(`${current.label} · ${point.label}: ${point.value}`)}</title></rect>`);
+      } else parts.push(`<circle cx="${xx}" cy="${yy}" r="4" fill="${color}"><title>${escapeXml(`${current.label} · ${point.label}: ${point.value}`)}</title></circle>`);
+      if (series.length === 1) parts.push(tag(xx, point.value < 0 ? yy + 18 : yy - 10, numberText(point.value), 'text-anchor="middle" font-size="11"'));
+    });
+  });
   points.forEach((point, index) => {
-    const xx = x(index), yy = y(point.value);
-    if (input.chartType === 'bar') parts.push(`<rect x="${xx - slot * .28}" y="${Math.min(yy, y(0))}" width="${slot * .56}" height="${Math.abs(yy - y(0))}" fill="${point.value < 0 ? '#b45309' : '#2563eb'}"><title>${escapeXml(`${point.label}: ${point.value}`)}</title></rect>`);
-    else parts.push(`<circle cx="${xx}" cy="${yy}" r="4" fill="#2563eb"><title>${escapeXml(`${point.label}: ${point.value}`)}</title></circle>`);
-    parts.push(tag(xx, point.value < 0 ? yy + 18 : yy - 10, numberText(point.value), 'text-anchor="middle" font-size="11"'));
+    const xx = x(index);
     const label = Array.from(point.label); const clipped = label.length > 10 ? label.slice(0, 9).join('') + '…' : point.label;
     parts.push(tag(xx, bottom + 24, clipped, `text-anchor="end" transform="rotate(-40 ${xx} ${bottom + 24})"`));
   });
-  parts.push(tag(left, 555, '按输入顺序绘制 · 标签和数值可能缩写，完整数据见数据表'), '</g></svg>');
+  series.forEach((current, index) => {
+    const legendX = left + (index % 3) * 220, legendY = bottom + 125 + Math.floor(index / 3) * 28;
+    const label = Array.from(current.label);
+    parts.push(`<line x1="${legendX}" x2="${legendX + 18}" y1="${legendY}" y2="${legendY}" stroke="${colors[index]}" stroke-width="3"/>`,
+      `<g><title>${escapeXml(current.label)}</title>${tag(legendX + 24, legendY + 4, label.length > 13 ? `${label.slice(0, 12).join('')}…` : current.label)}</g>`);
+  });
+  parts.push(tag(left, height - 24, '按输入顺序绘制 · 完整数值见数据表或点位标题'), '</g></svg>');
   return parts.join('');
 }
