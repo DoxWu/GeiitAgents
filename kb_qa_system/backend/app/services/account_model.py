@@ -1,6 +1,7 @@
 """Account access to the existing server-managed text provider."""
 import asyncio
 from contextlib import aclosing
+from collections.abc import AsyncGenerator
 
 from app.schemas.private_model import AccountCompletion
 from app.services.private_model import PrivateModelError
@@ -46,6 +47,29 @@ async def complete_account(request: AccountCompletion) -> dict:
             if not content.strip():
                 raise ValueError
             return {"content": content, "model": client.config.model}
+    except PrivateModelError:
+        raise
+    except Exception:
+        raise PrivateModelError(502, "账号云端模型暂不可用，请稍后重试。") from None
+
+
+async def stream_account(request: AccountCompletion) -> AsyncGenerator[str, None]:
+    """Yield chunks from the existing account-managed provider."""
+    try:
+        async with asyncio.timeout(120):
+            client = await asyncio.to_thread(select_account_client)
+            size = 0
+            emitted = False
+            async with aclosing(client.astream(model_messages(request))) as stream:
+                async for chunk in stream:
+                    size += len(chunk.encode("utf-8"))
+                    if size > 2 * 1024 * 1024:
+                        raise PrivateModelError(502, "模型响应超过大小限制。")
+                    if chunk:
+                        emitted = True
+                        yield chunk
+            if not emitted:
+                raise PrivateModelError(502, "账号云端模型暂不可用，请稍后重试。")
     except PrivateModelError:
         raise
     except Exception:

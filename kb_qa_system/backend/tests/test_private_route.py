@@ -44,6 +44,18 @@ def test_authenticated_route_validation_no_cache_and_key_header():
         assert oversized.status_code == 413
         assert completion.await_count == 1
 
+    async def private_chunks(data, api_key):
+        assert api_key == "fixture-private-key"
+        yield "one"
+        yield "two"
+
+    with patch.object(module, "stream_private", private_chunks):
+        response = client.post("/api/v1/private-models/complete/stream", json=body, headers={"X-Model-Api-Key": "fixture-private-key"})
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert '"type": "chunk"' in response.text
+        assert '"content": "onetwo"' in response.text
+
     status = AsyncMock(return_value={"available": True, "model": "server-model"})
     account_completion = AsyncMock(return_value={"content": "cloud reply", "model": "server-model"})
     with patch.object(module, "account_model_status", status), patch.object(module, "complete_account", account_completion):
@@ -63,3 +75,13 @@ def test_authenticated_route_validation_no_cache_and_key_header():
         assert response.json()["content"] == "cloud reply"
         assert client.post(account_url + "/complete", json=body).status_code == 422
         assert account_completion.await_count == 1
+
+    async def account_chunks(data):
+        yield "账号"
+        yield "回答"
+
+    with patch.object(module, "stream_account", account_chunks):
+        response = client.post(account_url + "/complete/stream", json={"messages": body["messages"]})
+        assert response.status_code == 200
+        assert '"content": "账号"' in response.text
+        assert '"content": "回答"' in response.text

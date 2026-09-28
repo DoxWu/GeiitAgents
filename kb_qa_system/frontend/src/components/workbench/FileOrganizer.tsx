@@ -1,14 +1,14 @@
 import { useMemo, useRef, useState } from 'react';
 import { Download, FolderOpen, RefreshCw } from 'lucide-react';
+import { applyRenamePlan, type OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { makeRenamePlan, planMarkdown, type LocalFileEntry, type RenamePlan } from '@/fileOrganizer/plan';
 
-interface DirectoryHandle { values(): AsyncIterable<{ kind: string; name: string; getFile(): Promise<File> }>; removeEntry(name: string): Promise<void> }
-declare global { interface Window { showDirectoryPicker?: () => Promise<DirectoryHandle> } }
+declare global { interface Window { showDirectoryPicker?: () => Promise<OrganizerDirectoryHandle> } }
 function download(content: string, name: string, type: string) { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 export function FileOrganizer() {
   const [files, setFiles] = useState<LocalFileEntry[]>([]), [prefix, setPrefix] = useState('归档'), [plan, setPlan] = useState<RenamePlan[]>([]), [error, setError] = useState('');
-  const [directory, setDirectory] = useState<DirectoryHandle | null>(null), input = useRef<HTMLInputElement>(null);
+  const [directory, setDirectory] = useState<OrganizerDirectoryHandle | null>(null), input = useRef<HTMLInputElement>(null);
   const load = async (list: FileList | File[]) => { const entries: LocalFileEntry[] = []; for (const file of Array.from(list)) { if (file.name.startsWith('.')) continue; entries.push({ path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name, name: file.name, size: file.size, modifiedAt: file.lastModified, type: file.type }); if (entries.length >= 500) break; } setFiles(entries); setPlan([]); };
   const ready = useMemo(() => plan.filter(item => item.status === 'ready'), [plan]);
   async function pickDirectory() {
@@ -21,14 +21,7 @@ export function FileOrganizer() {
     if (!directory || !ready.length) return;
     setError('');
     try {
-      const names = new Set(files.map(file => file.name));
-      if (ready.some(item => names.has(item.target) && item.target !== item.source)) throw new Error('检测到目标文件名冲突，请重新读取目录后再试。');
-      // File System Access API has no atomic multi-rename. Apply only a prechecked
-      // flat directory plan and create temporary names to avoid cycles.
-      const entries = new Map<string, { file: File }>();
-      for await (const entry of directory.values()) if (entry.kind === 'file') entries.set(entry.name, { file: await entry.getFile() });
-      const handles = directory as unknown as { getFileHandle(name: string, options?: { create?: boolean }): Promise<{ createWritable(): Promise<{ write(data: Blob): Promise<void>; close(): Promise<void> }> }> };
-      for (const item of ready) { const source = entries.get(item.source); if (!source) throw new Error(`目录内容已改变：${item.source}`); const target = await handles.getFileHandle(item.target, { create: true }); const writer = await target.createWritable(); await writer.write(source.file); await writer.close(); await directory.removeEntry(item.source); }
+      await applyRenamePlan(directory, plan);
       setFiles(files.map(file => { const item = plan.find(entry => entry.source === file.name); return item?.status === 'ready' ? { ...file, name: item.target, path: item.target } : file; })); setPlan([]);
     } catch (e) { setError(e instanceof Error ? e.message : '应用整理计划失败；未能确认全部结果。'); }
   }

@@ -263,6 +263,8 @@ def test_monitor_revision_check_does_not_load_application_secrets():
     import sys
     from app.ops.recovery import expected_heads
     expected_heads.cache_clear()
+    heads = expected_heads()
+    expected_heads.cache_clear()
     with patch.dict(sys.modules, {"app.core.config": None}):
-        assert expected_heads() == {"20260715_0006"}
+        assert expected_heads() == heads
     expected_heads.cache_clear()

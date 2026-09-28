@@ -34,9 +34,19 @@ export async function completeModel(
     if (!getStoredTokens()?.access_token) throw new Error("请先登录知识库账号，再使用云端转发。");
     if (!apiKey) throw new Error("此连接尚未填写 API Key。");
     try {
-      const result = await apiClient.post<{ content: string }>("/private-models/complete", {
-        base_url: profile.baseUrl, model: profile.model, messages, max_tokens: profile.maxTokens,
-      }, { headers: { "X-Model-Api-Key": apiKey }, signal, cache: "no-store", redirect: "error" });
+      const body = { base_url: profile.baseUrl, model: profile.model, messages, ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) };
+      if (onChunk) {
+        let content = "";
+        let failure = "";
+        await apiClient.streamPost("/private-models/complete/stream", body, {
+          onChunk: (chunk) => { content += chunk; onChunk(chunk); },
+          onError: (message) => { failure = message; },
+        }, signal, { headers: { "X-Model-Api-Key": apiKey } });
+        if (failure) throw new Error(failure);
+        if (!content.trim()) throw new Error("模型没有返回有效内容。");
+        return content;
+      }
+      const result = await apiClient.post<{ content: string }>("/private-models/complete", body, { headers: { "X-Model-Api-Key": apiKey }, signal, cache: "no-store", redirect: "error" });
       return result.content;
     } catch (error) {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
@@ -119,6 +129,20 @@ export async function getAccountModel(signal: AbortSignal): Promise<{ model: str
   return result.available && result.model ? { model: result.model } : null;
 }
 
-export async function completeAccountModel(messages: { role: string; content: string }[], signal: AbortSignal): Promise<{ content: string; model: string }> {
-  return apiClient.post("/private-models/account/complete", { messages }, { signal, cache: "no-store", redirect: "error" });
+export async function completeAccountModel(
+  messages: { role: string; content: string }[], signal: AbortSignal,
+  onChunk?: (chunk: string) => void,
+): Promise<{ content: string; model: string }> {
+  if (!onChunk) return apiClient.post("/private-models/account/complete", { messages }, { signal, cache: "no-store", redirect: "error" });
+  let content = "";
+  let model = "账号云端模型";
+  let failure = "";
+  await apiClient.streamPost("/private-models/account/complete/stream", { messages }, {
+    onChunk: (chunk) => { content += chunk; onChunk(chunk); },
+    onDone: (data) => { if (typeof data.content === "string" && data.content) content = data.content; if (data.model) model = data.model; },
+    onError: (message) => { failure = message; },
+  }, signal);
+  if (failure) throw new Error(failure);
+  if (!content.trim()) throw new Error("模型没有返回有效内容。");
+  return { content, model };
 }

@@ -84,7 +84,7 @@ it("uses the authorized account model when no personal connection exists", async
   expect(store.getState().conversations[0].profileId).toBe(ACCOUNT_MODEL_ID);
   await store.getState().send(id, "hello");
   expect(completeModel).not.toHaveBeenCalled();
-  expect(completeAccountModel).toHaveBeenCalledWith([{ role: "user", content: "hello" }], expect.any(AbortSignal));
+  expect(completeAccountModel).toHaveBeenCalledWith([{ role: "user", content: "hello" }], expect.any(AbortSignal), expect.any(Function));
   expect(store.getState().conversations[0].messages[1]).toMatchObject({ content: "cloud reply", model: "actual-server-model" });
 });
 

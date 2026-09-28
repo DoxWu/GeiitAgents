@@ -66,6 +66,7 @@ sys.modules.setdefault("celery.utils.log", _celery_utils_log)
 
 # Mock app.core.database（避免 create_engine 需要 psycopg 驱动）
 # 作用：SessionLocal 在测试中会被 patch 替换，此处仅提供占位
+_previous_database_module = sys.modules.get("app.core.database")
 _db_module = types.ModuleType("app.core.database")
 _db_module.SessionLocal = MagicMock()
 sys.modules.setdefault("app.core.database", _db_module)
@@ -81,6 +82,10 @@ _spec = importlib.util.spec_from_file_location("app.tasks.cleanup_tasks", _clean
 cleanup_module = importlib.util.module_from_spec(_spec)
 sys.modules["app.tasks.cleanup_tasks"] = cleanup_module
 _spec.loader.exec_module(cleanup_module)
+# cleanup_tasks has captured the mocked SessionLocal; do not leak this test-only
+# module into later tests that need the real SQLAlchemy Base/get_db exports.
+if _previous_database_module is None:
+    sys.modules.pop("app.core.database", None)
 
 
 class TestCleanupExpiredData(unittest.TestCase):

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.core.privacy import filter_monitoring_event
 from app.schemas.private_model import PrivateCompletion
-from app.services.private_model import PrivateModelError, complete_private, public_endpoint
+from app.services.private_model import PrivateModelError, complete_private, public_endpoint, stream_private
 
 
 def payload(**changes):
@@ -124,6 +124,24 @@ def test_optional_output_limit_is_omitted_or_forwarded(limit):
             return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
         with patch("app.services.private_model.public_endpoint", AsyncMock(return_value=("https://1.1.1.1/v1/chat/completions", "models.example", "models.example"))), relay_mock(handler):
             await complete_private(payload(max_tokens=limit), "fixture-key")
+    asyncio.run(run())
+
+
+def test_stream_private_forwards_only_text_deltas_and_omits_credentials_from_body():
+    async def run():
+        def handler(request):
+            body = json.loads(request.content)
+            assert body["stream"] is True
+            assert "api_key" not in body
+            return httpx.Response(200, content=(
+                b'data: {"choices":[{"delta":{"content":"one"}}]}\n\n'
+                b'data: {"choices":[{"delta":{"content":"two"}}]}\n\n'
+                b'data: [DONE]\n\n'
+            ), headers={"content-type": "text/event-stream"})
+        with patch.object(app.services.private_model, "public_endpoint", AsyncMock(return_value=("https://1.1.1.1/v1/chat/completions", "models.example", "models.example"))), relay_mock(handler):
+            chunks = [chunk async for chunk in stream_private(payload(max_tokens=100), "fixture-key")]
+        assert chunks == ["one", "two"]
+    import app.services.private_model
     asyncio.run(run())
 
 

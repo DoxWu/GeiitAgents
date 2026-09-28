@@ -305,7 +305,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     try {
       if (epoch !== generation || controller.signal.aborted) return;
       const input = messages.map(({ role, content }) => ({ role, content }));
-      const result = useAccount ? await completeAccountModel(input, controller.signal) : {
+      const result = useAccount ? await completeAccountModel(input, controller.signal, chunk => set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }))) : {
         content: await completeModel(profile!, secret!.apiKey, input, controller.signal, chunk => set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }))), model: profile!.model,
       };
       if (epoch !== generation || controller.signal.aborted) return;

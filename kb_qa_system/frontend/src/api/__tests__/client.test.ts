@@ -145,6 +145,20 @@ describe("apiClient.get", () => {
   });
 });
 
+describe("apiClient.streamPost", () => {
+  beforeEach(() => { localStorage.clear(); mockFetch.mockReset(); });
+
+  it("merges request-specific headers into an SSE request", async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValueOnce(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(encoder.encode('data: {"type":"done","content":"ok"}\n\n')); controller.close(); },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    await apiClient.streamPost("/private-models/complete/stream", { messages: [] }, {}, undefined, { headers: { "X-Model-Api-Key": "fixture-key" } });
+    expect(mockFetch.mock.calls[0][1].headers).toMatchObject({ "X-Model-Api-Key": "fixture-key", "Content-Type": "application/json" });
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).not.toHaveProperty("api_key");
+  });
+});
+
 describe("apiClient.post", () => {
   beforeEach(() => {
     localStorage.clear();

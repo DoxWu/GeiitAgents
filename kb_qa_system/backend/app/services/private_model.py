@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import json
 import socket
+from collections.abc import AsyncGenerator
 from urllib.parse import urlsplit
 
 import httpx
@@ -49,8 +50,7 @@ async def public_endpoint(base_url: str) -> tuple[str, str, str]:
 
 
 async def complete_private(request: PrivateCompletion, api_key: str) -> dict:
-    if not api_key or len(api_key) > 4096 or not api_key.isascii() or any(ord(c) < 33 for c in api_key):
-        raise PrivateModelError(400, "API Key 格式无效。")
+    _validate_api_key(api_key)
     url, host, tls_name = await public_endpoint(request.base_url)
     body = {
         "model": request.model,
@@ -90,4 +90,62 @@ async def complete_private(request: PrivateCompletion, api_key: str) -> dict:
         raise
     except Exception:
         # Unexpected provider/transport errors must not reach traceback exporters.
+        raise PrivateModelError(502, "模型连接超时或返回格式无效。") from None
+
+
+def _validate_api_key(api_key: str) -> None:
+    if not api_key or len(api_key) > 4096 or not api_key.isascii() or any(ord(c) < 33 for c in api_key):
+        raise PrivateModelError(400, "API Key 格式无效。")
+
+
+async def stream_private(request: PrivateCompletion, api_key: str) -> AsyncGenerator[str, None]:
+    """Yield provider SSE text deltas without exposing the provider response body."""
+    _validate_api_key(api_key)
+    url, host, tls_name = await public_endpoint(request.base_url)
+    body = {
+        "model": request.model,
+        "messages": [message.model_dump() for message in request.messages],
+        "stream": True,
+    }
+    if request.max_tokens is not None:
+        body["max_tokens"] = request.max_tokens
+    total = 0
+    emitted = False
+    try:
+        async with asyncio.timeout(120):
+            async with httpx.AsyncClient(
+                follow_redirects=False, trust_env=False, timeout=httpx.Timeout(90, connect=10),
+            ) as client:
+                async with client.stream(
+                    "POST", url, headers={"Authorization": f"Bearer {api_key}", "Host": host},
+                    json=body, extensions={"sni_hostname": tls_name},
+                ) as response:
+                    if response.status_code != 200:
+                        code = response.status_code
+                        if code in (401, 403):
+                            raise PrivateModelError(502, "模型服务拒绝认证，请检查 API Key 和模型权限。")
+                        if code == 429:
+                            raise PrivateModelError(429, "模型服务额度或速率已达上限。")
+                        raise PrivateModelError(502, "模型服务请求失败，请检查接口地址和模型名称。")
+                    async for line in response.aiter_lines():
+                        total += len(line.encode("utf-8"))
+                        if total > 2 * 1024 * 1024:
+                            raise PrivateModelError(502, "模型响应超过大小限制。")
+                        if not line.startswith("data:"):
+                            continue
+                        value = line[5:].strip()
+                        if not value or value == "[DONE]":
+                            continue
+                        try:
+                            delta = json.loads(value).get("choices", [{}])[0].get("delta", {}).get("content")
+                        except (IndexError, TypeError, ValueError, AttributeError):
+                            raise PrivateModelError(502, "模型连接超时或返回格式无效。") from None
+                        if isinstance(delta, str) and delta:
+                            emitted = True
+                            yield delta
+        if not emitted:
+            raise PrivateModelError(502, "模型连接超时或返回格式无效。")
+    except PrivateModelError:
+        raise
+    except Exception:
         raise PrivateModelError(502, "模型连接超时或返回格式无效。") from None

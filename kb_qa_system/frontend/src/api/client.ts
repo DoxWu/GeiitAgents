@@ -285,6 +285,7 @@ interface ApiClient {
     body: unknown,
     callbacks: StreamCallbacks,
     signal?: AbortSignal,
+    options?: Pick<RequestOptions, "headers" | "auth">,
   ): Promise<void>;
 }
 
@@ -297,6 +298,7 @@ export interface StreamCallbacks {
   /** 收到 done 事件（流结束，携带完整回答） */
   onDone?: (data: {
     content: string;
+    model?: string;
     metrics?: unknown;
     degraded?: boolean;
     /** 对话ID（文档对话后端在 done 事件中返回，用于刷新侧边栏对话列表） */
@@ -599,11 +601,14 @@ export const apiClient: ApiClient = {
     body: unknown,
     callbacks: StreamCallbacks,
     signal?: AbortSignal,
+    options?: Pick<RequestOptions, "headers" | "auth">,
   ): Promise<void> {
     const url = `${API_BASE_URL}${endpoint}`;
     const headers = buildHeaders({
       method: "POST",
       body: JSON.stringify(body),
+      headers: options?.headers,
+      auth: options?.auth,
     });
 
     let response: Response;
@@ -666,6 +671,7 @@ export const apiClient: ApiClient = {
           case "done":
             callbacks.onDone?.({
               content: data.content || "",
+              model: data.model,
               metrics: data.metrics,
               degraded: data.degraded,
               conversation_id: data.conversation_id,
