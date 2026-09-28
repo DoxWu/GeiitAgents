@@ -5,6 +5,7 @@ import { useWorkbenchStore as store, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from 
 import { useAuthStore } from "../authStore";
 import { completeModel, completeAccountModel, getAccountModel } from "@/services/workbenchModel";
 import { discoverModels } from '@/services/modelDiscovery';
+import { completeToolModel } from '@/services/officeToolModel';
 import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
@@ -13,6 +14,7 @@ import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart
 
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 vi.mock('@/services/modelDiscovery', () => ({ discoverModels: vi.fn() }));
+vi.mock('@/services/officeToolModel', () => ({ completeToolModel: vi.fn() }));
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -22,6 +24,7 @@ beforeEach(async () => {
   localStorage.clear(); vi.mocked(completeModel).mockReset();
   vi.mocked(exportDocx).mockReset();
   vi.mocked(discoverModels).mockReset();
+  vi.mocked(completeToolModel).mockReset();
   vi.mocked(completeAccountModel).mockReset(); vi.mocked(getAccountModel).mockReset();
   useAuthStore.setState({ user: null, isAuthenticated: false });
   store.setState({ accountModel: null });
@@ -615,4 +618,65 @@ it('rejects duplicate in-flight chart tasks and cancels loading on lock', async 
   const rejected = expect(pending).rejects.toThrow('锁定');
   await expect(store.getState().startChartTask(chartInput, id)).rejects.toThrow('正在处理');
   await store.getState().lock(); await rejected; expect(store.getState().artifacts).toEqual([]);
+});
+
+const officeInput = { title: '工具报告', instruction: '写报告', sourceContent: '仅限本次任务的参考材料' };
+const documentToolReply = { content: null, tool_calls: [{ id: 'doc-call', type: 'function' as const, function: { name: 'create_document' as const, arguments: JSON.stringify({ title: '结果', markdown: '# 结果\n\n正文。' }) } }] };
+it('persists multi-step artifacts and tool records encrypted, then restores without rerunning the model', async () => {
+  vi.mocked(completeToolModel).mockResolvedValueOnce(documentToolReply).mockResolvedValueOnce({ content: '已完成。', tool_calls: [] });
+  const id = await store.getState().startOfficeToolTask(profile.id, officeInput, false);
+  expect(store.getState().taskRuns.find(task => task.id === id)).toMatchObject({ type: 'office.tools', status: 'succeeded', summary: '已完成。' });
+  expect(store.getState().toolRuns.filter(tool => tool.taskId === id)).toHaveLength(3);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/参考材料|正文|fixture-key/);
+  expect(completeToolModel).toHaveBeenCalledTimes(2);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts.find(artifact => artifact.taskId === id)?.content).toContain('正文');
+  expect(completeToolModel).toHaveBeenCalledTimes(2);
+});
+
+it('stops after failed checkpoint persistence and preserves the artifact without rerunning tools', async () => {
+  vi.mocked(completeToolModel).mockResolvedValueOnce(documentToolReply).mockResolvedValueOnce({ content: '已完成。', tool_calls: [] });
+  const original = localStorage.setItem.bind(localStorage);
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementation((key, value) => {
+    if (store.getState().artifacts.length) throw new DOMException('quota', 'QuotaExceededError');
+    original(key, value);
+  });
+  await expect(store.getState().startOfficeToolTask(profile.id, officeInput, false)).rejects.toThrow('保存失败');
+  expect(store.getState().artifacts).toHaveLength(1);
+  expect(store.getState().taskRuns[0].status).toBe('failed');
+  expect(completeToolModel).toHaveBeenCalledTimes(1);
+  spy.mockRestore(); await store.getState().retryStorage();
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts).toHaveLength(1);
+  expect(completeToolModel).toHaveBeenCalledTimes(1);
+});
+
+it('blocks multi-round cloud traffic until consent and cancels it on account change', async () => {
+  login();
+  await store.getState().saveProfile({ ...profile, mode: 'relay', baseUrl: 'https://models.example/v1' }, 'new-fixture-key');
+  await expect(store.getState().startOfficeToolTask(profile.id, officeInput, false)).rejects.toThrow('明确授权');
+  expect(completeToolModel).not.toHaveBeenCalled();
+  let finish!: (value: typeof documentToolReply) => void;
+  vi.mocked(completeToolModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().startOfficeToolTask(profile.id, officeInput, true);
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  useAuthStore.setState({ user: null, isAuthenticated: false });
+  expect(vi.mocked(completeToolModel).mock.calls[0][3].aborted).toBe(true);
+  finish(documentToolReply); await rejected;
+  expect(store.getState().artifacts).toHaveLength(0);
+  expect(store.getState().taskRuns[0].status).toBe('cancelled');
+});
+
+it('keeps completed tool outputs but marks an interrupted task on vault lock, with no automatic resume', async () => {
+  let finish!: (value: { content: string; tool_calls: [] }) => void;
+  vi.mocked(completeToolModel).mockResolvedValueOnce(documentToolReply).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().startOfficeToolTask(profile.id, officeInput, false);
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await store.getState().lock(); finish({ content: 'late', tool_calls: [] }); await rejected;
+  expect(store.getState().taskRuns).toHaveLength(0);
+  await store.getState().unlock(password);
+  expect(store.getState().taskRuns[0].status).toBe('interrupted'); expect(store.getState().artifacts).toHaveLength(1);
+  expect(completeToolModel).toHaveBeenCalledTimes(2);
 });

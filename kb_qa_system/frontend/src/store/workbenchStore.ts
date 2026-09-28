@@ -13,6 +13,8 @@ import { validatePersonalInput, type PersonalInput, type PersonalItem } from '@/
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
 import type { RenamePlan } from '@/fileOrganizer/plan';
+import type { OfficeToolInput } from '@/officeTasks/toolRunner';
+import { completeToolModel } from '@/services/officeToolModel';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -66,6 +68,7 @@ interface WorkbenchState {
   cancel: (id: string) => void;
   saveKnowledgeAnswer: (answer: KnowledgeAnswerArtifact) => Promise<string>;
   startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
+  startOfficeToolTask: (profileId: string, input: OfficeToolInput, allowCloud: boolean) => Promise<string>;
   startChartTask: (input: ChartInput, requestId: string) => Promise<string>;
   cancelTask: (id: string) => void;
   removeTask: (id: string) => Promise<void>;
@@ -514,6 +517,64 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token);
     }
   },
+  startOfficeToolTask: async (profileId, input, allowCloud) => {
+    const epoch = generation;
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const { validateOfficeToolInput, runOfficeTools } = await import('@/officeTasks/toolRunner');
+    if (epoch !== generation || !get().unlocked || !vault) throw new Error('密钥库已锁定。');
+    const clean = validateOfficeToolInput(input), profile = get().profiles.find(item => item.id === profileId), secret = secrets.find(item => item.id === profileId);
+    const account = profileId === ACCOUNT_MODEL_ID;
+    if (account) {
+      if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error('当前账号没有可用的云端模型。');
+    } else if (!profile || !secret) throw new Error('请选择已保存的模型连接。');
+    if ((account || profile?.mode === 'relay') && !allowCloud) throw new Error('本次多轮请求会发送任务材料及工具结果到云端，需要明确授权。');
+    if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型请求。');
+    if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个办公任务，请先删除旧任务。');
+    const id = crypto.randomUUID(), token = `task:${id}`, now = new Date().toISOString(), controller = new AbortController();
+    controllers.set(token, controller); if (account || profile?.mode === 'relay') accountRequests.add(token);
+    const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError'); };
+    set(state => ({ taskRuns: [{ id, type: 'office.tools', officeInput: clean, title: clean.title, instruction: clean.instruction, profileId,
+      status: 'running', createdAt: now, updatedAt: now, toolRunIds: [], artifactIds: [] }, ...state.taskRuns] }));
+    const timeout = setTimeout(() => controller.abort(), 360000);
+    try {
+      await persist(true); guard();
+      const summary = await runOfficeTools(id, clean, controller.signal, async messages => {
+        guard();
+        const round = new AbortController(), abort = () => round.abort();
+        controller.signal.addEventListener('abort', abort, { once: true });
+        const roundTimeout = setTimeout(abort, 120000);
+        try {
+          const reply = await completeToolModel(account ? null : profile!, secret?.apiKey || '', messages, round.signal);
+          guard(); if (round.signal.aborted) throw new Error('本轮模型请求已超时。'); return reply;
+        } catch (error) {
+          guard();
+          if (round.signal.aborted) throw new Error('本轮模型请求已超时；已保存成果保留。');
+          throw error;
+        } finally { clearTimeout(roundTimeout); controller.signal.removeEventListener('abort', abort); }
+      }, async ({ step, artifact }) => {
+        guard();
+        set(state => ({
+          toolRuns: [...state.toolRuns.filter(item => item.id !== step.id), step],
+          artifacts: artifact ? [artifact, ...state.artifacts] : state.artifacts,
+          taskRuns: state.taskRuns.map(task => task.id !== id ? task : { ...task, updatedAt: new Date().toISOString(),
+            toolRunIds: task.toolRunIds.includes(step.id) ? task.toolRunIds : [...task.toolRunIds, step.id], artifactIds: artifact ? [...task.artifactIds, artifact.id] : task.artifactIds }),
+        }));
+        await persist(true); guard();
+      });
+      guard();
+      set(state => ({ taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, status: 'succeeded', summary, updatedAt: new Date().toISOString() } : task) }));
+      await persist(true); guard(); return id;
+    } catch (error) {
+      if (epoch === generation && get().unlocked && get().taskRuns.find(task => task.id === id)?.status !== 'succeeded') {
+        const status = controller.signal.aborted ? 'cancelled' as const : 'failed' as const, stoppedAt = new Date().toISOString();
+        const message = controller.signal.aborted ? '任务已取消或超时；已保存成果保留。' : error instanceof Error ? error.message : '多步骤任务失败。';
+        set(state => ({ taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, status, error: message, updatedAt: stoppedAt } : task),
+          toolRuns: state.toolRuns.map(tool => tool.taskId === id && tool.status === 'running' ? { ...tool, status, error: message, finishedAt: stoppedAt } : tool) }));
+        await persist();
+      }
+      throw error;
+    } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); }
+  },
   cancelTask: (id) => { controllers.get(`task:${id}`)?.abort(); },
   startChartTask: async (input, requestId) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
@@ -572,8 +633,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const source = get().artifacts.find(item => item.id === sourceId);
     const task = get().taskRuns.find(item => item.id === source?.taskId);
-    if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
-    if (source.kind !== 'markdown' || task.type !== 'document.generate-markdown') throw new Error('仅 Markdown 文档支持 DOCX 导出。');
+    if (!source || !task || (task.type === 'office.tools' ? task.status === 'running' : task.status !== 'succeeded')) throw new Error('源成果不存在或任务尚未完成。');
+    if (source.kind !== 'markdown' || !['document.generate-markdown', 'office.tools'].includes(task.type)) throw new Error('仅 Markdown 文档支持 DOCX 导出。');
     if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
     if (get().toolRuns.filter(item => item.taskId === task.id && item.tool === 'document.export-docx').length >= 100) throw new Error('每个任务最多保留 100 次 DOCX 导出记录。');
     const controller = new AbortController(), epoch = generation, toolId = crypto.randomUUID(), now = new Date().toISOString();

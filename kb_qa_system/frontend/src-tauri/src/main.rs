@@ -6,6 +6,7 @@ use tauri::State;
 use tokio::sync::oneshot;
 
 mod local_stream;
+mod local_tools;
 
 #[derive(Default)]
 struct Requests(Mutex<HashMap<String, oneshot::Sender<()>>>);
@@ -148,9 +149,26 @@ fn cancel_local_model(request_id: String, state: State<'_, Requests>) {
     }
 }
 
+#[tauri::command]
+async fn complete_local_tools(request_id: String, base_url: String, api_key: String, body: String, state: State<'_, Requests>) -> Result<serde_json::Value, String> {
+    let url = local_endpoint(&base_url, "chat/completions")?;
+    if request_id.is_empty() || request_id.len() > 100 || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c)) {
+        return Err("Invalid tool request".into());
+    }
+    let (cancel, cancelled) = oneshot::channel();
+    {
+        let mut active = state.0.lock().map_err(|_| "Request state unavailable")?;
+        if active.len() >= 4 || active.contains_key(&request_id) { return Err("Too many active requests".into()); }
+        active.insert(request_id.clone(), cancel);
+    }
+    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = local_tools::complete(url, api_key, body) => result };
+    if let Ok(mut active) = state.0.lock() { active.remove(&request_id); }
+    result
+}
+
 fn main() {
     tauri::Builder::default().manage(Requests::default())
-        .invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, cancel_local_model])
+        .invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model])
         .run(tauri::generate_context!()).expect("Desktop runtime failed");
 }
 

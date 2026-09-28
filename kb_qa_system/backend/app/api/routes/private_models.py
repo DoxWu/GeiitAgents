@@ -11,6 +11,8 @@ from app.core.rate_limit import rate_limit
 from app.schemas.private_model import AccountCompletion, PrivateCompletion, PrivateModelList
 from app.services.private_model import PrivateModelError, complete_private, stream_private, list_private_models
 from app.services.account_model import account_model_status, can_use_account_model, complete_account, stream_account
+from app.schemas.office_tools import AccountToolCompletion, PrivateToolCompletion
+from app.services.office_tools import complete_account_tools, complete_private_tools
 
 router = APIRouter(prefix="/private-models", tags=["个人模型"])
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
@@ -28,10 +30,30 @@ async def read_payload(request: Request, schema):
         async for chunk in request.stream():
             payload.extend(chunk)
             if len(payload) > 1024 * 1024:
-                raise HTTPException(413, "请求内容过大。")
+                raise HTTPException(413, "请求内容过大。", headers=NO_STORE)
         return schema.model_validate_json(payload)
     except (ValidationError, ValueError):
-        raise HTTPException(422, "模型请求参数无效。") from None
+        raise HTTPException(422, "模型请求参数无效。", headers=NO_STORE) from None
+
+
+@router.post("/tools/complete", dependencies=[Depends(get_current_active_user), Depends(rate_limit("private_model_tools", per_minute=20))])
+async def private_tools(request: Request):
+    data = await read_payload(request, PrivateToolCompletion)
+    try:
+        return JSONResponse(await complete_private_tools(data, request.headers.get("x-model-api-key", "")), headers=NO_STORE)
+    except PrivateModelError as exc:
+        raise HTTPException(exc.status, str(exc), headers=NO_STORE) from None
+
+
+@router.post("/account/tools/complete", dependencies=[Depends(rate_limit("account_model_tools", per_minute=20))])
+async def account_tools(request: Request, user=Depends(get_current_active_user)):
+    if not can_use_account_model(user):
+        raise HTTPException(403, "当前账号无权使用云端模型。", headers=NO_STORE)
+    data = await read_payload(request, AccountToolCompletion)
+    try:
+        return JSONResponse(await complete_account_tools(data), headers=NO_STORE)
+    except PrivateModelError as exc:
+        raise HTTPException(exc.status, str(exc), headers=NO_STORE) from None
 
 
 @router.post("/models", dependencies=[

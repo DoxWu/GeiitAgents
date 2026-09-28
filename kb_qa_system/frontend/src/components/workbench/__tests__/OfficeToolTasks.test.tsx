@@ -1,0 +1,56 @@
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { OfficeToolTasks } from '../OfficeToolTasks';
+import { useWorkbenchStore as store } from '@/store/workbenchStore';
+import { useAuthStore } from '@/store/authStore';
+
+vi.mock('@/store/workbenchStore', async () => {
+  const { create } = await import('zustand');
+  return { ACCOUNT_MODEL_ID: 'account', useWorkbenchStore: create(() => ({ profiles: [], accountModel: null, taskRuns: [], toolRuns: [], artifacts: [], storageError: null,
+    startOfficeToolTask: vi.fn(), cancelTask: vi.fn(), removeTask: vi.fn(), retryStorage: vi.fn() })) };
+});
+vi.mock('@/store/authStore', async () => {
+  const { create } = await import('zustand');
+  return { useAuthStore: create(() => ({ user: null, isAuthenticated: false })) };
+});
+beforeEach(() => {
+  vi.resetAllMocks();
+  store.setState({ profiles: [{ id: 'cloud', name: 'Cloud', model: 'fixture', mode: 'relay', baseUrl: 'https://models.example/v1', hasKey: true }], accountModel: null, taskRuns: [], toolRuns: [], artifacts: [], storageError: null });
+  useAuthStore.setState({ user: null, isAuthenticated: false });
+  vi.mocked(store.getState().startOfficeToolTask).mockResolvedValue('new-task');
+});
+afterEach(cleanup);
+
+it('requires fresh cloud consent after input or account changes and consumes it once', async () => {
+  render(<OfficeToolTasks />);
+  const start = screen.getByRole('button', { name: '开始多步骤任务' });
+  const consent = screen.getByRole('checkbox');
+  fireEvent.change(screen.getByLabelText('任务标题'), { target: { value: '报告' } });
+  fireEvent.change(screen.getByLabelText('办公目标'), { target: { value: '写周报' } });
+  expect(start).toBeDisabled();
+  fireEvent.click(consent); expect(start).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('参考材料（可选）'), { target: { value: '新材料' } });
+  expect(start).toBeDisabled();
+  fireEvent.click(consent);
+  act(() => useAuthStore.setState({ isAuthenticated: true, user: { id: 2 } as ReturnType<typeof useAuthStore.getState>['user'] }));
+  expect(start).toBeDisabled();
+  fireEvent.click(consent);
+  act(() => store.setState({ profiles: [{ ...store.getState().profiles[0], baseUrl: 'https://changed.example/v1' }] }));
+  expect(start).toBeDisabled();
+  fireEvent.click(consent); await act(async () => fireEvent.click(start));
+  expect(store.getState().startOfficeToolTask).toHaveBeenCalledWith('cloud', expect.objectContaining({ title: '报告', sourceContent: '新材料' }), true);
+  expect(start).toBeDisabled();
+});
+
+it.each(['edit', 'unmount'] as const)('ignores late file contents after %s', async reason => {
+  let finish!: (buffer: ArrayBuffer) => void;
+  const file = new File(['original'], 'report.md', { type: 'text/markdown' });
+  Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
+  render(<OfficeToolTasks />);
+  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT，最多 200 KB）'), { target: { files: [file] } });
+  if (reason === 'edit') fireEvent.change(screen.getByLabelText('参考材料（可选）'), { target: { value: '用户新输入' } });
+  else cleanup();
+  await act(async () => finish(new TextEncoder().encode('迟到的文件内容').buffer));
+  if (reason === 'edit') expect(screen.getByLabelText('参考材料（可选）')).toHaveValue('用户新输入');
+  expect(store.getState().startOfficeToolTask).not.toHaveBeenCalled();
+});

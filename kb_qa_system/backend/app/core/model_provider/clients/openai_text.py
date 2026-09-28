@@ -20,8 +20,7 @@ OpenAI 兼容文本客户端
 
 import asyncio
 import logging
-import time
-from typing import Any, AsyncGenerator, List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
@@ -95,6 +94,12 @@ class OpenAITextClient(TextModelClient):
             streaming=True,
             **common_kwargs,
         )
+        # Tool tasks have their own round budget; SDK retries must not silently
+        # repeat a planning request or alter the ordinary knowledge model.
+        self._tools_llm = ChatOpenAI(
+            model=config.model, streaming=False, request_timeout=config.timeout,
+            max_retries=0, **common_kwargs,
+        )
 
         # Token 用量追踪（最近一次调用）
         # 作用：供上层读取，统计成本
@@ -108,6 +113,19 @@ class OpenAITextClient(TextModelClient):
     def last_token_input(self) -> int:
         """最近一次调用的输入 Token 数"""
         return self._last_token_input
+
+    async def acomplete_tools(self, messages: list[dict], tools: list[dict]):
+        """Request-scoped binding; no mutation of the shared knowledge model."""
+        if self.breaker.is_open():
+            raise CircuitBreakerOpenError(self.breaker.service, self.breaker.get_retry_after())
+        try:
+            result = await self._tools_llm.bind_tools(tools, tool_choice="auto").ainvoke(messages)
+            self.breaker.record_success()
+            return result
+        except Exception as error:
+            if is_retryable(error):
+                self.breaker.record_failure()
+            raise
 
     @property
     def last_token_output(self) -> int:
