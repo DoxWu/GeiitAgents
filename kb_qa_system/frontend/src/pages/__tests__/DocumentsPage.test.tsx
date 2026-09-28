@@ -14,6 +14,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
+const { auth } = vi.hoisted(() => ({ auth: { user: { id: 1, user_type: 'registered' } as { id: number; user_type: string } | null } }));
+vi.mock('@/store/authStore', () => ({ useAuthStore: () => auth }));
+
 // Mock documentStore
 const { mockDocStore } = vi.hoisted(() => ({
   mockDocStore: {
@@ -101,6 +104,7 @@ function renderPage() {
 describe("DocumentsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    auth.user = { id: 1, user_type: 'registered' };
     mockDocStore.folders = [];
     mockDocStore.currentFolderId = null;
     mockDocStore.documents = [];
@@ -117,6 +121,18 @@ describe("DocumentsPage", () => {
   it("mount 时调用 loadFolders", () => {
     renderPage();
     expect(mockDocStore.loadFolders).toHaveBeenCalledTimes(1);
+  });
+
+  it('登录前不加载分支，登录及切换账号后重新加载', () => {
+    auth.user = null;
+    const { rerender } = renderPage();
+    expect(mockDocStore.loadFolders).not.toHaveBeenCalled();
+    auth.user = { id: 1, user_type: 'registered' };
+    rerender(<MemoryRouter><DocumentsPage /></MemoryRouter>);
+    expect(mockDocStore.loadFolders).toHaveBeenCalledTimes(1);
+    auth.user = { id: 2, user_type: 'registered' };
+    rerender(<MemoryRouter><DocumentsPage /></MemoryRouter>);
+    expect(mockDocStore.loadFolders).toHaveBeenCalledTimes(2);
   });
 
   it("渲染核心子组件", () => {

@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { DocumentResponse } from "@/types/document";
 
@@ -48,6 +48,7 @@ vi.mock("@/store/toastStore", () => ({
 }));
 
 import { DocumentPreview } from "../DocumentPreview";
+import { apiClient } from '@/api/client';
 
 /** 创建测试用文档 */
 function createMockDoc(
@@ -79,6 +80,10 @@ function createMockDoc(
 describe("DocumentPreview 组件", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(apiClient, 'getBlob').mockResolvedValue(new Blob(['%PDF-test'], { type: 'application/pdf' }));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview-test');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected network request')));
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, writable: true, value: vi.fn() });
     mockDocStore.previewDocument = null;
     mockDocStore.previewOpen = false;
     localStorage.setItem(
@@ -89,6 +94,7 @@ describe("DocumentPreview 组件", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     localStorage.clear();
   });
 
@@ -307,19 +313,50 @@ describe("DocumentPreview 组件", () => {
     });
   });
 
-  it("PDF 文件使用 iframe 预览", async () => {
+  it("PDF 文件通过鉴权 Blob 加载并在关闭时释放 URL", async () => {
     mockDocStore.previewOpen = true;
     mockDocStore.previewDocument = createMockDoc({
       file_type: ".pdf",
       status: "completed",
     });
 
-    const { container } = render(<DocumentPreview />);
+    const { container, rerender } = render(<DocumentPreview />);
     await waitFor(() => {
       const iframe = container.querySelector("iframe");
       expect(iframe).not.toBeNull();
-      expect(iframe?.getAttribute("src")).toContain("/documents/1/content");
+      expect(iframe?.getAttribute("src")).toBe('blob:preview-test');
     });
+    expect(apiClient.getBlob).toHaveBeenCalledWith('/documents/1/content', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    mockDocStore.previewOpen = false;
+    rerender(<DocumentPreview />);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview-test');
+  });
+
+  it('切换文档后忽略旧 PDF 响应，卸载中止请求并释放当前 URL', async () => {
+    let finish!: (value: Blob) => void;
+    vi.mocked(apiClient.getBlob).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    mockDocStore.previewOpen = true;
+    mockDocStore.previewDocument = createMockDoc();
+    const { rerender, unmount } = render(<DocumentPreview />);
+    const oldSignal = vi.mocked(apiClient.getBlob).mock.calls[0][1]?.signal;
+    mockDocStore.previewDocument = createMockDoc({ id: 2 });
+    rerender(<DocumentPreview />);
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledTimes(1));
+    await act(async () => finish(new Blob(['old PDF'])));
+    expect(oldSignal?.aborted).toBe(true);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview-test');
+  });
+
+  it('PDF 原文件缺失时显示服务端文本回退，不创建 iframe', async () => {
+    vi.mocked(apiClient.getBlob).mockResolvedValueOnce({ type: 'text/plain', text: async () => '提取内容回退' } as Blob);
+    mockDocStore.previewOpen = true;
+    mockDocStore.previewDocument = createMockDoc();
+    const { container } = render(<DocumentPreview />);
+    expect(await screen.findByText('提取内容回退')).toBeInTheDocument();
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   it("不支持预览的文件类型显示提示", () => {

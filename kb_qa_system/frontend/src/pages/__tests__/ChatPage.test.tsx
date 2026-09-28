@@ -165,7 +165,7 @@ describe("ChatPage 页面", () => {
 
       expect(screen.getByText("开始新对话")).toBeInTheDocument();
       expect(
-        screen.getByText("在下方输入框中提问，AI 将基于您的知识库回答"),
+        screen.getByText(/在下方输入框中提问，AI 将基于您的知识库回答/),
       ).toBeInTheDocument();
     });
   });

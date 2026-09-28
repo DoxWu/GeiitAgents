@@ -22,6 +22,7 @@ export function validateProfile(profile: Pick<ModelProfile, "baseUrl" | "mode" |
 export async function completeModel(
   profile: ModelProfile, apiKey: string,
   messages: { role: string; content: string }[], signal: AbortSignal,
+  onChunk?: (chunk: string) => void,
 ): Promise<string> {
   validateProfile(profile);
   if (signal.aborted) throw new DOMException("已取消", "AbortError");
@@ -62,7 +63,7 @@ export async function completeModel(
   try {
     const response = await fetch(`${profile.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST", headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({ model: profile.model, messages, max_tokens: profile.maxTokens, stream: false }),
+      body: JSON.stringify({ model: profile.model, messages, max_tokens: profile.maxTokens, stream: Boolean(onChunk) }),
       signal, redirect: "error", cache: "no-store", credentials: "omit",
     });
     if (!response.ok) throw new Error();
@@ -71,19 +72,41 @@ export async function completeModel(
     const decoder = new TextDecoder();
     let body = "";
     let size = 0;
+    const streamed = response.headers.get("content-type")?.toLowerCase().includes("text/event-stream") ?? false;
+    let content = "";
+    let sseBuffer = "";
+    const consumeSse = (chunk: string) => {
+      sseBuffer += chunk;
+      const lines = sseBuffer.split(/\r?\n/);
+      sseBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const value = line.slice(5).trim();
+        if (!value || value === "[DONE]") continue;
+        const delta = JSON.parse(value).choices?.[0]?.delta?.content;
+        if (typeof delta === "string") { content += delta; onChunk?.(delta); }
+      }
+    };
     try {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         size += value.byteLength;
         if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new Error(); }
-        body += decoder.decode(value, { stream: true });
+        const text = decoder.decode(value, { stream: true });
+        if (streamed) consumeSse(text); else body += text;
       }
-      body += decoder.decode();
+      const finalText = decoder.decode();
+      if (streamed) consumeSse(finalText + "\n\n"); else body += finalText;
     } finally { reader.releaseLock(); }
+    if (streamed) {
+      if (!content.trim() || content.length > 1_000_000) throw new Error();
+      return content;
+    }
     const data = JSON.parse(body);
-    const content = data.choices?.[0]?.message?.content;
+    content = data.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim() || content.length > 1_000_000) throw new Error();
+    onChunk?.(content);
     return content;
   } catch {
     if (signal.aborted) throw new DOMException("已取消", "AbortError");

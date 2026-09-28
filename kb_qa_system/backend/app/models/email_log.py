@@ -95,6 +95,8 @@ class EmailLog(Base):
         nullable=True, index=True
     )
 
+    reminder_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
     # Celery 任务 ID（用于追踪任务状态）
     celery_task_id: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True

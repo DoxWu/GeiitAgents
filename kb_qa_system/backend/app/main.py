@@ -35,6 +35,7 @@ from app.api.routes.metrics import router as metrics_router
 from app.api.routes.folders import router as folders_router
 from app.api.routes.private_models import router as private_models_router
 from app.api.routes.maintenance import router as maintenance_router
+from app.api.routes.personal import router as personal_router
 from app.api.ws_notifications import router as ws_notifications_router
 
 
@@ -401,6 +402,7 @@ app.include_router(document_chat_router, prefix=settings.API_V1_PREFIX)
 app.include_router(stats_router, prefix=settings.API_V1_PREFIX)
 app.include_router(private_models_router, prefix=settings.API_V1_PREFIX)
 app.include_router(maintenance_router, prefix=settings.API_V1_PREFIX)
+app.include_router(personal_router, prefix=settings.API_V1_PREFIX)
 # metrics 路由不加 API_V1_PREFIX，放在根路径（/metrics）
 app.include_router(metrics_router)
 # E1-04: WebSocket 通知端点，不加 API_V1_PREFIX，放在根路径（/ws/notifications）

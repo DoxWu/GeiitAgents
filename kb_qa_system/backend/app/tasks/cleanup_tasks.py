@@ -81,7 +81,8 @@ def cleanup_expired_data() -> dict:
         # 作用：EmailLog 记录邮件发送历史，按 created_at 物理删除
         cutoff = now - timedelta(days=settings.EMAIL_LOG_RETENTION_DAYS)
         result = db.execute(text(
-            "DELETE FROM email_logs WHERE created_at < :cutoff"
+            "DELETE FROM email_logs WHERE created_at < :cutoff "
+            "AND NOT EXISTS (SELECT 1 FROM reminder_deliveries WHERE email_log_id = email_logs.id)"
         ), {"cutoff": cutoff})
         stats["email_logs"] = result.rowcount
 

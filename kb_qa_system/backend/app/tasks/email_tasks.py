@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 
 from app.core.celery_app import celery_app
 from app.core.database import SessionLocal
+from app.core.config import settings
 from app.models.email_log import EmailLog
 from app.services.email_service import send_email_sync
 
@@ -63,6 +64,13 @@ def send_email_task(self, email_log_id: int) -> dict:
             {"email_log_id": 1, "status": "sent"}  # 成功
             {"email_log_id": 1, "status": "already_sent"}  # 幂等跳过
     """
+    # Reminder retries use the durable outbox, not generic Celery autoretry.
+    with SessionLocal() as lookup:
+        reminder_log = lookup.query(EmailLog).filter(EmailLog.id == email_log_id, EmailLog.reminder_id.isnot(None)).first()
+    if reminder_log is not None:
+        from app.services.personal_reminders import deliver
+        return deliver(SessionLocal, email_log_id, send_email_sync,
+                       lambda: settings.EMAIL_ENABLED and settings.REMINDERS_ENABLED)
     db = SessionLocal()
     try:
         # 查询邮件日志记录

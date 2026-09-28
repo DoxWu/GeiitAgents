@@ -50,6 +50,7 @@ celery_app = Celery(
         "app.tasks.document_tasks",  # 文档处理任务
         "app.tasks.email_tasks",     # 邮件发送任务
         "app.tasks.cleanup_tasks",   # D10-03 数据清理任务
+        "app.tasks.reminder_tasks",
     ],  # 自动发现的任务模块
 )
 
@@ -130,6 +131,10 @@ celery_app.conf.update(
             "queue": "email",
             "routing_key": "email.send",
         },
+        "app.tasks.reminder_tasks.dispatch_due_reminders": {
+            "queue": "email",
+            "routing_key": "email.reminders",
+        },
     },
 
     # ============================================
@@ -158,6 +163,10 @@ celery_app.conf.update(
         "cleanup-expired-data": {
             "task": "app.tasks.cleanup_tasks.cleanup_expired_data",
             "schedule": crontab(hour=3, minute=0),  # 每日凌晨 03:00 执行
+        },
+        "dispatch-due-reminders": {
+            "task": "app.tasks.reminder_tasks.dispatch_due_reminders",
+            "schedule": 60.0,
         },
     },
 )

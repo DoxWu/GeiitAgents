@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BookOpen, Plus, LockKeyhole, Settings2, FileText, MessageSquare, Send, Square, Download, Trash2, Menu, X, Loader2, ClipboardList } from "lucide-react";
 import { useWorkbenchStore, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from "@/store/workbenchStore";
@@ -10,11 +10,14 @@ import { ThemeToggle } from "@/components/common/ThemeToggle";
 import type { LocalDocument } from "@/types/workbench";
 import "@/styles/workbench.css";
 
+const PersonalItems = lazy(() => import('@/components/workbench/PersonalItems').then(module => ({ default: module.PersonalItems })));
+const FileOrganizer = lazy(() => import('@/components/workbench/FileOrganizer').then(module => ({ default: module.FileOrganizer })));
+
 export default function WorkbenchPage() {
   const state = useWorkbenchStore();
   const userId = useAuthStore((s) => s.user?.id);
   const authenticated = useAuthStore((s) => s.isAuthenticated);
-  const [tab, setTab] = useState<"chat" | "tasks" | "preview" | "models">("chat");
+  const [tab, setTab] = useState<"chat" | "tasks" | "preview" | "models" | "personal" | "files">("chat");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -45,7 +48,7 @@ export default function WorkbenchPage() {
     setUnlocking(true);
     try {
       await state.unlock(password); setPassword(""); setConfirmation("");
-      if (!useWorkbenchStore.getState().profiles.length && !useWorkbenchStore.getState().conversations.length && !authenticated) setTab("models");
+      if (!useWorkbenchStore.getState().profiles.length && !useWorkbenchStore.getState().conversations.length && !authenticated) setTab(current => current === 'chat' ? 'models' : current);
     }
     catch (e) { setError(e instanceof Error ? e.message : "无法解锁。"); }
     finally { setUnlocking(false); }
@@ -82,6 +85,8 @@ export default function WorkbenchPage() {
         </button>)}
       </div>
       <nav className="grid gap-1 border-t border-line p-3">
+        <button className="work-nav" onClick={() => { setTab('personal'); setSidebar(false); }}><ClipboardList size={17} />笔记与待办</button>
+        <button className="work-nav" onClick={() => { setTab('files'); setSidebar(false); }}><FileText size={17} />文件整理</button>
         <button className="work-nav" onClick={() => { setTab("preview"); setSidebar(false); }}><FileText size={17} />本地文档</button>
         <button className="work-nav" onClick={() => { setTab("models"); setSidebar(false); }}><Settings2 size={17} />模型连接</button>
         <Link className="work-nav" to="/local-knowledge"><BookOpen size={17} />本地知识库</Link>
@@ -106,7 +111,7 @@ export default function WorkbenchPage() {
           {!hasVault && <><label className="work-label">确认口令<input className="work-input" type="password" required minLength={4} autoComplete="new-password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></label><p className="text-xs text-ink-secondary">至少 4 个字符。口令不上传；遗失后无法恢复本机密钥和对话。</p></>}
           <button className="work-command justify-center bg-brand text-white" disabled={unlocking}>{unlocking ? "处理中..." : hasVault ? "解锁" : "创建"}</button>
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-        </form></div> : tab === "models" ? <ModelConnections /> : tab === "tasks" ? <OfficeTasks /> :
+        </form></div> : tab === "models" ? <ModelConnections /> : tab === "tasks" ? <OfficeTasks /> : tab === 'personal' ? <Suspense fallback={<p className="p-6">正在加载笔记与待办…</p>}><PersonalItems /></Suspense> : tab === 'files' ? <Suspense fallback={<p className="p-6">正在加载文件整理…</p>}><FileOrganizer /></Suspense> :
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
             <select aria-label="当前对话模型" className="work-input min-w-0 flex-1 sm:max-w-80" disabled={running || archive} value={archive ? '' : selectedProfile} onChange={(e) => { if (conversation) state.setProfile(conversation.id, e.target.value); else state.newConversation(e.target.value); }}>
@@ -126,6 +131,7 @@ export default function WorkbenchPage() {
                 {authenticated && !state.accountModel && <button className="work-command mx-auto mt-3" disabled={state.accountLoading} onClick={() => void state.refreshAccountModel()}>刷新账号模型</button>}
               </div>}
               {conversation?.messages.map((message) => <article key={message.id} className="min-w-0 border-b border-line pb-5"><p className="mb-2 text-xs font-medium text-ink-secondary">{message.role === "user" ? "你" : message.model || "助手"}</p><PrivateMarkdown content={message.content} /></article>)}
+              {running && state.streamingContent[conversation?.id ?? ''] && <article className="min-w-0 border-b border-line pb-5" aria-label="流式回答"><p className="mb-2 text-xs font-medium text-ink-secondary">模型输出中</p><PrivateMarkdown content={state.streamingContent[conversation?.id ?? '']} /></article>}
               {running && <p role="status" className="flex items-center gap-2 text-sm text-ink-secondary"><Loader2 size={16} className="animate-spin" />模型处理中...</p>}
               {(error || conversation && state.errors[conversation.id]) && <p role="alert" className="text-sm text-danger">{error || state.errors[conversation!.id]}</p>}
               <div ref={endRef} />

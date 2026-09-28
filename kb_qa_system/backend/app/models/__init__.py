@@ -13,6 +13,7 @@ from app.models.qa_event import QAEvent
 from app.models.registration import RegistrationApplication
 from app.models.email_log import EmailLog
 from app.models.audit_log import AuditLog
+from app.models.personal import Note, Todo, Reminder, ReminderDelivery
 
 __all__ = [
     "User",
@@ -25,4 +26,5 @@ __all__ = [
     "RegistrationApplication",
     "EmailLog",
     "AuditLog",
+    "Note", "Todo", "Reminder", "ReminderDelivery",
 ]

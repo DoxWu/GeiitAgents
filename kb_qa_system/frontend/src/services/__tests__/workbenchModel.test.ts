@@ -26,3 +26,19 @@ it("omits an unset limit from the serialized relay payload", async () => {
 it.each([0, -1, 1.5, NaN, 2147483648])("rejects an invalid explicit limit (%s)", (limit) => {
   expect(() => validateProfile({ ...profile, maxTokens: limit })).toThrow();
 });
+
+it('renders OpenAI-compatible local SSE chunks incrementally and returns the same final text', async () => {
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"，世界"}}]}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { const encoder = new TextEncoder(); chunks.forEach(chunk => controller.enqueue(encoder.encode(chunk))); controller.close(); },
+  });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { headers: { 'content-type': 'text/event-stream' } })));
+  const received: string[] = [];
+  await expect(completeModel(profile, '', [{ role: 'user', content: 'hello' }], new AbortController().signal, chunk => received.push(chunk))).resolves.toBe('你好，世界');
+  expect(received).toEqual(['你好', '，世界']);
+  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1].body).stream).toBe(true);
+});

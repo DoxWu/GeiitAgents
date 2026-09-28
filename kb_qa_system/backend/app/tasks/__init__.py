@@ -14,9 +14,11 @@ from app.tasks.document_tasks import (
     reprocess_document_task,
 )
 from app.tasks.email_tasks import send_email_task
+from app.tasks.reminder_tasks import dispatch_due_reminders
 
 __all__ = [
     "process_document_task",
     "reprocess_document_task",
     "send_email_task",
+    "dispatch_due_reminders",
 ]

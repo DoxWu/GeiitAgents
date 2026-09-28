@@ -8,6 +8,7 @@ import { buildKnowledgeMessages } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { buildDocumentMessages, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import type { ChartInput } from '@/officeTasks/chart';
+import { validatePersonalInput, type PersonalInput, type PersonalItem } from '@/personal/items';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -20,6 +21,9 @@ const accountRequests = new Set<string>();
 let accountLookup: AbortController | null = null;
 
 interface WorkbenchState {
+  personalItems: PersonalItem[];
+  savePersonalItem: (id: string, input: PersonalInput, expectedRevision: number) => Promise<PersonalItem>;
+  removePersonalItem: (id: string, expectedRevision: number) => Promise<void>;
   unlocked: boolean;
   profiles: ModelProfile[];
   conversations: WorkConversation[];
@@ -28,6 +32,7 @@ interface WorkbenchState {
   artifacts: WorkArtifact[];
   currentId: string | null;
   running: Record<string, boolean>;
+  streamingContent: Record<string, string>;
   errors: Record<string, string>;
   storageError: string | null;
   accountModel: { userId: number; model: string } | null;
@@ -70,7 +75,7 @@ async function persist(required = false) {
   const epoch = generation;
   try {
     const state = useWorkbenchStore.getState();
-    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts });
+    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems });
     if (epoch === generation) useWorkbenchStore.setState({ storageError: null });
   } catch {
     const message = "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
@@ -88,7 +93,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -130,7 +135,32 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
-  unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {}, storageError: null,
+  personalItems: [],
+  savePersonalItem: async (id, input, expectedRevision) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('记录标识无效。');
+    const clean = validatePersonalInput(input), existing = get().personalItems.find(item => item.id === id);
+    if ((existing?.revision ?? 0) !== expectedRevision) throw new Error('记录已改变，请重新打开后编辑。');
+    if (existing && existing.kind !== clean.kind) throw new Error('不能更改记录类型。');
+    if (!existing && get().personalItems.length >= 500) throw new Error('最多保留 500 条笔记和待办，请导出并删除不需要的记录。');
+    const now = new Date().toISOString(), epoch = generation;
+    const item: PersonalItem = { ...clean, id, revision: expectedRevision + 1, createdAt: existing?.createdAt ?? now, updatedAt: now,
+      completedAt: clean.kind === 'todo' && clean.status === 'done' ? existing?.completedAt ?? now : null };
+    set(state => ({ personalItems: [item, ...state.personalItems.filter(value => value.id !== id)] }));
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看保存结果。');
+    return item;
+  },
+  removePersonalItem: async (id, expectedRevision) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const item = get().personalItems.find(value => value.id === id);
+    if (!item || item.revision !== expectedRevision) throw new Error('记录已改变，请重新打开后删除。');
+    const epoch = generation;
+    set(state => ({ personalItems: state.personalItems.filter(value => value.id !== id) }));
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
+  },
+  unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -165,8 +195,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       error: '客户端在任务完成前关闭或锁定，结果未生成。' } : task);
     const toolRuns = (data.toolRuns ?? []).map(tool => tool.status === 'running' ? { ...tool, status: 'interrupted' as const, finishedAt: unlockedAt,
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
-    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [],
-      currentId: data.conversations[0]?.id ?? null, running: {}, errors: {}, storageError: null });
+    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [],
+      currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index])) await persist();
   },
   lock: async () => {
@@ -174,7 +204,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, errors: {} });
+    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
@@ -269,14 +299,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const timeout = setTimeout(() => controller.abort(), 120_000);
     set((state) => ({
       conversations: state.conversations.map((c) => c.id === id ? { ...c, profileId: useAccount ? ACCOUNT_MODEL_ID : c.profileId, messages, title: c.messages.length ? c.title : text.trim().slice(0, 28), updatedAt: userMessage.createdAt } : c),
-      running: { ...state.running, [id]: true }, errors: { ...state.errors, [id]: "" },
+      running: { ...state.running, [id]: true }, streamingContent: { ...state.streamingContent, [id]: "" }, errors: { ...state.errors, [id]: "" },
     }));
     await persist();
     try {
       if (epoch !== generation || controller.signal.aborted) return;
       const input = messages.map(({ role, content }) => ({ role, content }));
       const result = useAccount ? await completeAccountModel(input, controller.signal) : {
-        content: await completeModel(profile!, secret!.apiKey, input, controller.signal), model: profile!.model,
+        content: await completeModel(profile!, secret!.apiKey, input, controller.signal, chunk => set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }))), model: profile!.model,
       };
       if (epoch !== generation || controller.signal.aborted) return;
       const message: WorkMessage = { id: crypto.randomUUID(), role: "assistant", ...result, createdAt: new Date().toISOString() };
@@ -289,7 +319,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       accountRequests.delete(id);
       if (epoch === generation) {
         controllers.delete(id);
-        set((state) => ({ running: { ...state.running, [id]: false } }));
+        set((state) => { const streamingContent = { ...state.streamingContent }; delete streamingContent[id]; return { running: { ...state.running, [id]: false }, streamingContent }; });
       }
     }
   },

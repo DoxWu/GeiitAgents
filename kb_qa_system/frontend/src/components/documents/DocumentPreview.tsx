@@ -27,7 +27,7 @@ import {
   Globe,
   Lock,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Badge, Button } from "@/components/common";
 import { useDocumentStore } from "@/store/documentStore";
 import { useToastStore } from "@/store/toastStore";
@@ -83,92 +83,49 @@ export function DocumentPreview() {
   // 修复问题2：标记预览内容是否为回退（原始文件丢失，使用数据库已处理内容）
   const [previewFallback, setPreviewFallback] = useState(false);
 
-  /** 加载文档内容预览
-   * 作用：对文本类文件请求原始内容，对 PDF 使用 iframe（Blob URL），其他格式显示提示
-   */
-  const loadPreviewContent = useCallback(async (doc: DocumentResponse) => {
-    // 非文本/iframe 类文件不加载内容
-    if (!isPreviewable(doc.file_type)) {
-      setPreviewState("idle");
-      setPreviewContent("");
-      setPreviewFallback(false);
-      return;
-    }
-
-    // PDF：通过 apiClient.getBlob 获取文件流，创建 Object URL 供 iframe 使用
-    // 修复：原方案直接在 iframe src 中拼接 API_BASE_URL，无法携带 Token → 401 → 预览失败
-    if (isIframePreviewable(doc.file_type)) {
-      setPreviewState("loading");
+  // Each preview owns its request and Blob URL; ignore late responses.
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setPreviewContent("");
+    setPdfBlobUrl(null);
+    setPreviewFallback(false);
+    setPreviewState("idle");
+    const doc = previewDocument;
+    if (!previewOpen || !doc || doc.status !== "completed" || !isPreviewable(doc.file_type)) return;
+    const endpoint = API_PATHS.DOCUMENT_DETAIL(doc.id) + "/content";
+    const isPdf = isIframePreviewable(doc.file_type);
+    setPreviewState("loading");
+    async function load() {
       try {
-        const blob = await apiClient.getBlob(
-          API_PATHS.DOCUMENT_DETAIL(doc.id) + "/content",
-        );
-        // 修复问题2：后端文件不存在时返回 document.content 作为 text/plain，
-        // 此时 blob.type 为 text/plain，需作为文本展示而非 iframe
-        if (blob.type.startsWith("text/")) {
-          const text = await blob.text();
-          setPreviewContent(text);
-          setPreviewFallback(true);
-          setPdfBlobUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return null;
-          });
+        if (isPdf) {
+          const blob = await apiClient.getBlob(endpoint, { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          if (blob.type.startsWith("text/")) {
+            const content = await blob.text();
+            if (controller.signal.aborted) return;
+            setPreviewContent(content);
+            setPreviewFallback(true);
+          } else {
+            objectUrl = URL.createObjectURL(blob);
+            setPdfBlobUrl(objectUrl);
+          }
         } else {
-          // 正常 PDF 文件
-          setPdfBlobUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return URL.createObjectURL(blob);
-          });
-          setPreviewFallback(false);
+          const content = await apiClient.getText(endpoint, { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          setPreviewContent(content);
         }
         setPreviewState("success");
       } catch {
-        setPreviewState("error");
+        if (!controller.signal.aborted) setPreviewState("error");
       }
-      return;
     }
-
-    // 文本类文件：请求原始内容
-    // 修复：改用 apiClient.getText() 替代原生 fetch，获得 Token 自动刷新和网络错误友好提示
-    setPreviewState("loading");
-    setPreviewFallback(false);
-    try {
-      const text = await apiClient.getText(
-        API_PATHS.DOCUMENT_DETAIL(doc.id) + "/content",
-      );
-      setPreviewContent(text);
-      setPreviewState("success");
-    } catch {
-      setPreviewState("error");
-      setPreviewContent("");
-    }
-  }, []);
-
-  // 文档变化时加载预览内容
-  useEffect(() => {
-    if (previewOpen && previewDocument) {
-      loadPreviewContent(previewDocument);
-    } else {
-      setPreviewContent("");
-      setPreviewState("idle");
-      setPreviewFallback(false);
-      // 释放 PDF Object URL 避免内存泄漏
-      setPdfBlobUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-    }
-  }, [previewOpen, previewDocument, loadPreviewContent]);
-
-  // 组件卸载时释放 PDF Object URL
-  useEffect(() => {
+    void load();
     return () => {
-      setPdfBlobUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, []);
+  }, [previewOpen, previewDocument]);
 
   /** 处理删除 */
   async function handleDelete(doc: DocumentResponse) {

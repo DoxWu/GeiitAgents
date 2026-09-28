@@ -153,6 +153,7 @@ class Settings(BaseSettings):
 
     # 是否启用邮件发送（开发环境关闭，仅记录日志；生产环境必须开启）
     EMAIL_ENABLED: bool = False
+    REMINDERS_ENABLED: bool = False
 
     # 邮件发送通道：http（Resend HTTP API，默认，推荐生产）/ smtp（本地开发或无限制环境）
     EMAIL_PROVIDER: str = "http"
