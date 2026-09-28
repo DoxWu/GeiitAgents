@@ -65,21 +65,38 @@ export async function completeModel(
     }
   }
   if (isDesktop()) {
-    const { invoke } = await import("@tauri-apps/api/core");
+    const { invoke, Channel } = await import("@tauri-apps/api/core");
+    if (signal.aborted) throw new DOMException("已取消", "AbortError");
     const requestId = crypto.randomUUID();
     const abort = () => { void invoke("cancel_local_model", { requestId }).catch(() => {}); };
+    let accepting = true, callbackFailed = false, streamedLength = 0;
+    const channel = onChunk ? new Channel<{ content: string }>(event => {
+      if (!accepting || signal.aborted || callbackFailed) return;
+      try {
+        if (typeof event?.content !== 'string') throw new Error();
+        streamedLength += event.content.length;
+        if (streamedLength > 1_000_000) throw new Error();
+        if (event.content) onChunk(event.content);
+      } catch { callbackFailed = true; abort(); }
+    }) : undefined;
     signal.addEventListener("abort", abort, { once: true });
     try {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
-      const result = await invoke<{ content: string }>("complete_local_model", {
+      const result = await invoke<{ content: string }>(channel ? "stream_local_model" : "complete_local_model", {
         requestId, baseUrl: profile.baseUrl, apiKey, model: profile.model, messages, maxTokens: profile.maxTokens,
+        ...(channel ? { onChunk: channel } : {}),
       });
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
+      if (callbackFailed || typeof result?.content !== 'string' || !result.content.trim() || result.content.length > 1_000_000) throw new Error();
       return result.content;
     } catch {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
-      throw new Error("本机模型请求失败，请检查服务、模型名称和接口地址。");
-    } finally { signal.removeEventListener("abort", abort); }
+      throw new Error("本机模型请求失败或输出中断，请检查服务、模型名称和接口地址。");
+    } finally {
+      accepting = false;
+      if (channel) channel.onmessage = () => {};
+      signal.removeEventListener("abort", abort);
+    }
   }
   try {
     const response = await fetch(`${profile.baseUrl.replace(/\/$/, "")}/chat/completions`, {

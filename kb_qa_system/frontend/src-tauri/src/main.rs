@@ -5,6 +5,8 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tauri::State;
 use tokio::sync::oneshot;
 
+mod local_stream;
+
 #[derive(Default)]
 struct Requests(Mutex<HashMap<String, oneshot::Sender<()>>>);
 
@@ -14,8 +16,11 @@ struct Message {
     content: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct Completion { content: String }
+
+#[derive(Serialize)]
+struct TextDelta { content: String }
 
 fn local_endpoint(base_url: &str, resource: &str) -> Result<reqwest::Url, String> {
     if base_url.len() > 8192 || base_url.chars().any(|c| c <= ' ' || c == '\u{7f}')
@@ -33,14 +38,13 @@ fn local_endpoint(base_url: &str, resource: &str) -> Result<reqwest::Url, String
     Ok(url)
 }
 
-#[tauri::command]
-async fn complete_local_model(
+async fn run_local_completion(
     request_id: String, base_url: String, api_key: String, model: String,
-    messages: Vec<Message>, max_tokens: Option<u32>, state: State<'_, Requests>,
+    messages: Vec<Message>, max_tokens: Option<u32>, on_chunk: Option<tauri::ipc::Channel<TextDelta>>, state: &Requests,
 ) -> Result<Completion, String> {
     let url = local_endpoint(&base_url, "chat/completions")?;
-    if request_id.len() > 100 || model.trim().is_empty() || model.chars().count() > 200 || model.chars().any(|c| c.is_control())
-        || api_key.len() > 4096 || max_tokens.is_some_and(|value| !(1..=2147483647).contains(&value))
+    if request_id.is_empty() || request_id.len() > 100 || model.trim().is_empty() || model.chars().count() > 200 || model.chars().any(|c| c.is_control())
+        || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c)) || max_tokens.is_some_and(|value| !(1..=2147483647).contains(&value))
         || messages.is_empty() || messages.len() > 100
         || messages.iter().any(|m| !["user", "assistant", "system"].contains(&m.role.as_str()) || m.content.len() > 400000)
         || messages.iter().map(|m| m.content.len()).sum::<usize>() > 800000
@@ -52,26 +56,34 @@ async fn complete_local_model(
         active.insert(request_id.clone(), cancel);
     }
     let operation = async {
-        let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(115)).build().map_err(|_| "Client unavailable")?;
-        let mut body = serde_json::json!({ "model": model, "messages": messages, "stream": false });
+        let mut body = serde_json::json!({ "model": model, "messages": messages, "stream": on_chunk.is_some() });
         if let Some(limit) = max_tokens { body["max_tokens"] = limit.into(); }
-        let mut request = client.post(url).json(&body);
-        if !api_key.is_empty() { request = request.bearer_auth(api_key); }
-        let mut response = request.send().await.map_err(|_| "Model connection failed")?;
-        if !response.status().is_success() { return Err("Model rejected request".to_string()); }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| "Invalid response")? {
-            if bytes.len() + chunk.len() > 2 * 1024 * 1024 { return Err("Response too large".into()); }
-            bytes.extend_from_slice(&chunk);
-        }
-        let data: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid response")?;
-        let content = data["choices"][0]["message"]["content"].as_str().filter(|c| !c.trim().is_empty()).ok_or("Empty response")?;
-        Ok(Completion { content: content.into() })
+        local_stream::fetch_completion(url, api_key, body, &mut |content| {
+            if let Some(channel) = &on_chunk {
+                channel.send(TextDelta { content: content.into() }).map_err(|_| "Stream channel unavailable")?;
+            }
+            Ok(())
+        }).await
     };
-    let result = tokio::select! { result = operation => result, _ = cancelled => Err("Cancelled".into()) };
+    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = operation => result };
     if let Ok(mut active) = state.0.lock() { active.remove(&request_id); }
     result
+}
+
+#[tauri::command]
+async fn complete_local_model(
+    request_id: String, base_url: String, api_key: String, model: String,
+    messages: Vec<Message>, max_tokens: Option<u32>, state: State<'_, Requests>,
+) -> Result<Completion, String> {
+    run_local_completion(request_id, base_url, api_key, model, messages, max_tokens, None, &state).await
+}
+
+#[tauri::command]
+async fn stream_local_model(
+    request_id: String, base_url: String, api_key: String, model: String,
+    messages: Vec<Message>, max_tokens: Option<u32>, on_chunk: tauri::ipc::Channel<TextDelta>, state: State<'_, Requests>,
+) -> Result<Completion, String> {
+    run_local_completion(request_id, base_url, api_key, model, messages, max_tokens, Some(on_chunk), &state).await
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -138,7 +150,7 @@ fn cancel_local_model(request_id: String, state: State<'_, Requests>) {
 
 fn main() {
     tauri::Builder::default().manage(Requests::default())
-        .invoke_handler(tauri::generate_handler![complete_local_model, list_local_models, cancel_local_model])
+        .invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, cancel_local_model])
         .run(tauri::generate_context!()).expect("Desktop runtime failed");
 }
 

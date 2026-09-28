@@ -54,6 +54,59 @@ it("ignores late responses after locking and recovers the saved user message", a
   expect(store.getState().conversations[0].messages.map((m) => m.content)).toEqual(["task"]);
 });
 
+it('does not repopulate streaming text after locking, unlocking and starting a replacement request', async () => {
+  const pending: { chunk: (value: string) => void; finish: (value: string) => void }[] = [];
+  vi.mocked(completeModel).mockImplementation((_p, _key, _messages, _signal, onChunk) => new Promise(resolve => pending.push({ chunk: onChunk!, finish: resolve })));
+  const id = store.getState().newConversation();
+  const oldRun = store.getState().send(id, 'old');
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  pending[0].chunk('visible-before-lock');
+  expect(store.getState().streamingContent[id]).toBe('visible-before-lock');
+  await store.getState().lock(); pending[0].chunk('locked-late');
+  expect(store.getState().streamingContent).toEqual({});
+  await store.getState().unlock(password);
+  const newRun = store.getState().send(id, 'new');
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  pending[1].chunk('new-text'); pending[0].chunk('old-late'); pending[0].finish('old-final'); await oldRun;
+  expect(store.getState().streamingContent[id]).toBe('new-text');
+  expect(store.getState().running[id]).toBe(true);
+  pending[1].finish('new-final'); await newRun;
+  expect(store.getState().conversations[0].messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual(['new-final']);
+});
+
+it('drops streamed private-cloud text on logout without saving a partial answer', async () => {
+  login();
+  await store.getState().saveProfile({ ...profile, mode: 'relay', baseUrl: 'https://models.example/v1' }, 'new-fixture-key');
+  let chunk!: (value: string) => void, finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation((_p, _key, _messages, _signal, onChunk) => new Promise(resolve => { chunk = onChunk!; finish = resolve; }));
+  const id = store.getState().newConversation(), running = store.getState().send(id, 'cloud');
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  chunk('first');
+  useAuthStore.setState({ isAuthenticated: false, user: null });
+  expect(vi.mocked(completeModel).mock.calls[0][3].aborted).toBe(true);
+  chunk('late'); expect(store.getState().streamingContent[id]).toBe('first');
+  finish('partial'); await running;
+  expect(store.getState().streamingContent[id]).toBeUndefined();
+  expect(store.getState().conversations[0].messages).toHaveLength(1);
+});
+
+it('cancels a stalled streaming request at the conversation timeout and saves no assistant message', async () => {
+  vi.useFakeTimers();
+  let streamSignal!: AbortSignal;
+  vi.mocked(completeModel).mockImplementation((_p, _key, _messages, signal, onChunk) => new Promise((_resolve, reject) => {
+    streamSignal = signal; onChunk?.('partial');
+    signal.addEventListener('abort', () => reject(new DOMException('timeout', 'AbortError')), { once: true });
+  }));
+  const id = store.getState().newConversation(), running = store.getState().send(id, 'wait');
+  await vi.waitFor(() => expect(streamSignal).toBeDefined());
+  await vi.advanceTimersByTimeAsync(120_000); await running;
+  expect(streamSignal.aborted).toBe(true);
+  expect(store.getState().errors[id]).toContain('超时');
+  expect(store.getState().running[id]).toBe(false);
+  expect(store.getState().streamingContent[id]).toBeUndefined();
+  expect(store.getState().conversations[0].messages).toHaveLength(1);
+});
+
 it("keeps profile changes and conversation updates during overlapping saves", async () => {
   const first = store.getState().saveProfile({ ...profile, id: "p2" }, "second-key");
   const second = store.getState().saveProfile({ ...profile, id: "p3" }, "third-key");

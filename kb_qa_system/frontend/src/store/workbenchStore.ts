@@ -404,7 +404,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const messages = [...conversation.messages, userMessage];
     const controller = new AbortController();
     controllers.set(id, controller);
-    if (useAccount) accountRequests.add(id);
+    if (useAccount || profile?.mode === 'relay') accountRequests.add(id);
     const epoch = generation;
     const timeout = setTimeout(() => controller.abort(), 120_000);
     set((state) => ({
@@ -415,8 +415,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     try {
       if (epoch !== generation || controller.signal.aborted) return;
       const input = messages.map(({ role, content }) => ({ role, content }));
-      const result = useAccount ? await completeAccountModel(input, controller.signal, chunk => set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }))) : {
-        content: await completeModel(profile!, secret!.apiKey, input, controller.signal, chunk => set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }))), model: profile!.model,
+      const onChunk = (chunk: string) => {
+        if (epoch !== generation || controller.signal.aborted || !get().unlocked || controllers.get(id) !== controller) return;
+        set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }));
+      };
+      const result = useAccount ? await completeAccountModel(input, controller.signal, onChunk) : {
+        content: await completeModel(profile!, secret!.apiKey, input, controller.signal, onChunk), model: profile!.model,
       };
       if (epoch !== generation || controller.signal.aborted) return;
       const message: WorkMessage = { id: crypto.randomUUID(), role: "assistant", ...result, createdAt: new Date().toISOString() };
@@ -426,7 +430,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       if (epoch === generation) set((state) => ({ errors: { ...state.errors, [id]: controller.signal.aborted ? "请求已停止或超时。" : error instanceof Error ? error.message : "模型请求失败。" } }));
     } finally {
       clearTimeout(timeout);
-      accountRequests.delete(id);
+      if (controllers.get(id) === controller) accountRequests.delete(id);
       if (epoch === generation) {
         controllers.delete(id);
         set((state) => { const streamingContent = { ...state.streamingContent }; delete streamingContent[id]; return { running: { ...state.running, [id]: false }, streamingContent }; });
