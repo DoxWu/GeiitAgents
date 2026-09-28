@@ -19,8 +19,8 @@ from app.models.email_log import EmailLog
 from app.models.personal import Note, Reminder, ReminderDelivery, Todo
 from app.models.user import User
 from app.schemas.personal import (
-    DeliveryDismiss, DeliveryOut, DeliveryRetry, NoteCreate, NoteOut, NoteUpdate,
-    ReminderCreate, ReminderOut, ReminderUpdate, TodoCreate, TodoOut, TodoUpdate,
+    DeliveryDismiss, DeliveryOut, DeliveryPage, DeliveryRetry, NoteCreate, NoteOut, NoteUpdate,
+    ReminderCreate, ReminderOut, ReminderPage, ReminderUpdate, TodoCreate, TodoOut, TodoUpdate,
 )
 from app.services.personal_reminders import cancel_pending, next_occurrence, utc
 
@@ -218,6 +218,25 @@ def create_reminder(body: ReminderCreate, response: Response, user=UserDep, db: 
     return item
 
 
+def page_query(query, model, limit, cursor, snapshot_id):
+    # Immutable IDs avoid skips when schedules/statuses change during browsing.
+    # This is an insertion boundary, not a database transaction snapshot.
+    if cursor is not None and (snapshot_id is None or cursor > snapshot_id):
+        raise HTTPException(422, "invalid_page_cursor")
+    if snapshot_id is not None:
+        query = query.filter(model.id <= snapshot_id)
+    if cursor is not None:
+        query = query.filter(model.id < cursor)
+    rows = query.order_by(model.id.desc()).limit(limit + 1).all()
+    boundary = snapshot_id if snapshot_id is not None else rows[0].id if rows else 0
+    return {"items": rows[:limit], "snapshot_id": boundary, "next_cursor": rows[limit - 1].id if len(rows) > limit else None}
+
+
+@router.get("/reminders/page", response_model=ReminderPage)
+def page_reminders(limit: int = Query(20, ge=1, le=100), cursor: int | None = Query(None, ge=1), snapshot_id: int | None = Query(None, ge=0), user=UserDep, db: Session=DbDep):
+    return page_query(db.query(Reminder).filter(Reminder.user_id == user.id), Reminder, limit, cursor, snapshot_id)
+
+
 @router.get("/reminders/{reminder_id}", response_model=ReminderOut)
 def get_reminder(reminder_id: int, user=UserDep, db: Session=DbDep):
     return owned(db, Reminder, reminder_id, user)
@@ -291,6 +310,12 @@ def retry_delivery(reminder_id: int, delivery_id: int, body: DeliveryRetry, user
     db.commit()
     db.refresh(delivery)
     return delivery
+
+
+@router.get("/reminders/{reminder_id}/deliveries/page", response_model=DeliveryPage)
+def page_deliveries(reminder_id: int, limit: int = Query(20, ge=1, le=100), cursor: int | None = Query(None, ge=1), snapshot_id: int | None = Query(None, ge=0), user=UserDep, db: Session=DbDep):
+    owned(db, Reminder, reminder_id, user)
+    return page_query(db.query(ReminderDelivery).filter(ReminderDelivery.reminder_id == reminder_id), ReminderDelivery, limit, cursor, snapshot_id)
 
 
 @router.post("/reminders/{reminder_id}/deliveries/{delivery_id}/dismiss", response_model=DeliveryOut)

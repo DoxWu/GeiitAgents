@@ -150,3 +150,15 @@ class DeliveryOut(Output):
     last_attempt_at: datetime | None
     error_code: str | None
     created_at: datetime
+
+
+class ReminderPage(Output):
+    items: list[ReminderOut]
+    snapshot_id: int
+    next_cursor: int | None
+
+
+class DeliveryPage(Output):
+    items: list[DeliveryOut]
+    snapshot_id: int
+    next_cursor: int | None

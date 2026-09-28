@@ -70,6 +70,27 @@ def unknown_fixture():
         return {"id": item.id}
 
 
+@app.post("/__qa__/pagination")
+def pagination_fixture():
+    now = datetime.now(timezone.utc)
+    with factory() as db:
+        for index in range(61):
+            item = Reminder(user_id=1, recipient="qa@example.test", request_id=str(uuid4()), request_hash="f" * 64,
+                            subject=f"分页提醒 {index:03}", body="合成历史记录，无邮件发送。", timezone="Asia/Shanghai",
+                            anchor_at=now, next_run_at=None, status="completed")
+            db.add(item)
+        db.flush()
+        rid = item.id
+        for index in range(55):
+            log = EmailLog(recipient=item.recipient, subject=item.subject, html_body="fixture", email_type="reminder", reminder_id=rid, status="sent")
+            db.add(log)
+            db.flush()
+            db.add(ReminderDelivery(reminder_id=rid, revision=index + 1, scheduled_at=now - timedelta(days=index), email_log_id=log.id,
+                                   status="sent", attempts=1, next_attempt_at=now))
+        db.commit()
+        return {"reminder_id": rid, "reminders": 61, "deliveries": 55}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=18763, log_level="warning", access_log=False)

@@ -370,3 +370,93 @@ def test_sending_cannot_be_dismissed_and_pause_does_not_claim_recall(fixture):
     with fixture.factory() as db:
         assert db.get(Reminder, rid).status == "paused"
         assert db.get(ReminderDelivery, did).status == "sent"
+
+
+def test_reminder_pages_do_not_skip_when_schedules_change_or_records_are_inserted_deleted(fixture):
+    ids = [seeded(fixture.factory) for _ in range(61)]
+    c = fixture.client
+    first = c.get("/personal/reminders/page", params={"limit": 20}).json()
+    assert [item["id"] for item in first["items"]] == ids[-20:][::-1]
+    boundary = first["snapshot_id"]
+    assert boundary == ids[-1]
+    new_id = seeded(fixture.factory)
+    deleted = ids[12]
+    with fixture.factory() as db:
+        db.delete(db.get(Reminder, deleted))
+        db.get(Reminder, ids[5]).next_run_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        db.get(Reminder, ids[8]).status = "cancelled"
+        db.commit()
+    seen = [item["id"] for item in first["items"]]
+    current = first
+    while current["next_cursor"] is not None:
+        current = c.get("/personal/reminders/page", params={"limit": 20, "snapshot_id": boundary, "cursor": current["next_cursor"]}).json()
+        assert current["snapshot_id"] == boundary
+        seen.extend(item["id"] for item in current["items"])
+    assert seen == [item for item in reversed(ids) if item != deleted]
+    # Going back uses the same upper boundary; refreshing starts a new window.
+    previous = c.get("/personal/reminders/page", params={"snapshot_id": boundary}).json()
+    assert previous["items"][0]["id"] == ids[-1]
+    assert c.get("/personal/reminders/page").json()["items"][0]["id"] == new_id
+    assert isinstance(c.get("/personal/reminders").json(), list)
+
+
+def test_page_cursor_is_not_a_permission_and_does_not_require_the_boundary_row_to_exist(fixture):
+    ids = [seeded(fixture.factory) for _ in range(4)]
+    c = fixture.client
+    first = c.get("/personal/reminders/page", params={"limit": 2}).json()
+    with fixture.factory() as db:
+        db.delete(db.get(Reminder, first["next_cursor"]))
+        db.commit()
+    rest = c.get("/personal/reminders/page", params={"limit": 2, "snapshot_id": first["snapshot_id"], "cursor": first["next_cursor"]}).json()
+    assert [item["id"] for item in rest["items"]] == ids[:2][::-1]
+    fixture.state["id"] = 2
+    forged = c.get("/personal/reminders/page", params={"cursor": first["next_cursor"], "snapshot_id": first["snapshot_id"]})
+    assert forged.json()["items"] == []
+    assert forged.headers["cache-control"] == "no-store"
+    assert c.get(f"/personal/reminders/{ids[0]}/deliveries/page").status_code == 404
+
+
+def test_delivery_pages_keep_their_window_during_new_dispatch_and_status_updates(fixture):
+    rid = seeded(fixture.factory)
+    with fixture.factory() as db:
+        ids = []
+        for index in range(55):
+            log = EmailLog(recipient="user1@example.test", subject="fixture", html_body="fixture", email_type="reminder", reminder_id=rid)
+            db.add(log)
+            db.flush()
+            row = ReminderDelivery(reminder_id=rid, revision=index+1, email_log_id=log.id, scheduled_at=NOW, next_attempt_at=NOW, status="sent")
+            db.add(row)
+            db.flush()
+            ids.append(row.id)
+        db.commit()
+    url = f"/personal/reminders/{rid}/deliveries/page"
+    first = fixture.client.get(url).json()
+    assert len(first["items"]) == 20
+    with fixture.factory() as db:
+        db.get(ReminderDelivery, ids[5]).status = "cancelled"
+        log = EmailLog(recipient="user1@example.test", subject="new", html_body="fixture", email_type="reminder", reminder_id=rid)
+        db.add(log)
+        db.flush()
+        db.add(ReminderDelivery(reminder_id=rid, revision=100, email_log_id=log.id, scheduled_at=NOW, next_attempt_at=NOW))
+        db.commit()
+    seen = [row["id"] for row in first["items"]]
+    current = first
+    while current["next_cursor"] is not None:
+        current = fixture.client.get(url, params={"cursor": current["next_cursor"], "snapshot_id": first["snapshot_id"]}).json()
+        seen.extend(row["id"] for row in current["items"])
+    assert seen == list(reversed(ids))
+    assert fixture.client.get(url).json()["items"][0]["id"] > ids[-1]
+    assert isinstance(fixture.client.get(f"/personal/reminders/{rid}/deliveries").json(), list)
+
+
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 101}, {"cursor": 0}, {"cursor": 10}, {"cursor": 10, "snapshot_id": 9}, {"snapshot_id": -1}])
+def test_invalid_page_queries_are_rejected_without_echoing_inputs(fixture, params):
+    response = fixture.client.get("/personal/reminders/page", params=params)
+    assert response.status_code == 422
+    assert response.json()["detail"] in {"invalid_personal_request", "invalid_page_cursor"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_empty_page_is_terminal(fixture):
+    response = fixture.client.get("/personal/reminders/page")
+    assert response.json() == {"items": [], "snapshot_id": 0, "next_cursor": None}

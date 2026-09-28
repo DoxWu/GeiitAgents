@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bell, ChevronDown, ChevronUp, Pause, Play, RefreshCw, Square } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import {
   createServerReminder, dismissReminderDelivery, getPersonalCapabilities, getServerReminder, listReminderDeliveries, listServerReminders,
   retryReminderDelivery, updateServerReminder, type DeliveryStatus, type PersonalCapabilities,
-  type ReminderDelivery, type ReminderRecurrence, type ServerReminder,
+  type PersonalPage, type ReminderDelivery, type ReminderRecurrence, type ServerReminder,
 } from '@/api/personal';
 import { ReminderEditor, type ReminderEdit, type ReminderFields } from './ReminderEditor';
 import { formatReminderDate } from '@/personal/reminderTime';
@@ -12,6 +12,10 @@ import { formatReminderDate } from '@/personal/reminderTime';
 const recurrenceLabels: Record<ReminderRecurrence, string> = { once: '一次', daily: '每天', weekly: '每周' };
 const statusLabels: Record<string, string> = { active: '运行中', paused: '已暂停', cancelled: '已取消', completed: '已结束' };
 const deliveryLabels: Record<DeliveryStatus, string> = { pending: '待发送', failed: '发送失败', unknown: '结果不明', sending: '发送中', sent: '已发送', cancelled: '已取消', completed: '已完成' };
+type PageInfo = Pick<PersonalPage<unknown>, 'snapshot_id' | 'next_cursor'>;
+function Pager({ name, depth, count, next, busy, onPage }: { name: string; depth: number; count: number; next: number | null; busy: boolean; onPage: (direction: -1 | 1) => void }) {
+  return <nav aria-label={name + '分页'} className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-secondary"><span>第 {depth} 页 · 本页 {count} 条</span><button className="work-command" disabled={busy || depth <= 1} onClick={() => onPage(-1)}>上一页{name}</button><button className="work-command" disabled={busy || next === null} onClick={() => onPage(1)}>下一页{name}</button></nav>;
+}
 
 function messageFor(error: unknown) {
   if (!(error instanceof Error)) return '操作失败，请稍后重试。';
@@ -62,7 +66,9 @@ export function ServerReminders() {
 function ReminderWorkspace({ email }: { email: string }) {
   const [capabilities, setCapabilities] = useState<PersonalCapabilities | null>(null);
   const [reminders, setReminders] = useState<ServerReminder[]>([]);
+  const [reminderPage, setReminderPage] = useState<PageInfo | null>(null), [reminderCursors, setReminderCursors] = useState<(number | undefined)[]>([undefined]);
   const [deliveries, setDeliveries] = useState<Record<number, ReminderDelivery[]>>({});
+  const [deliveryPage, setDeliveryPage] = useState<PageInfo | null>(null), [deliveryCursors, setDeliveryCursors] = useState<(number | undefined)[]>([undefined]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [editing, setEditing] = useState<{ original: ServerReminder; resume: boolean }>();
   const [editorVersion, setEditorVersion] = useState(0), [conflict, setConflict] = useState(false);
@@ -75,7 +81,7 @@ function ReminderWorkspace({ email }: { email: string }) {
     mounted.current = true; const epoch = ++lifecycle.current, token = lifecycle;
     busyRef.current = true; setBusy(true);
     void Promise.all([getPersonalCapabilities(), listServerReminders()]).then(([caps, rows]) => {
-      if (mounted.current && epoch === token.current) { setCapabilities(caps); setReminders(rows); }
+      if (mounted.current && epoch === token.current) { setCapabilities(caps); setReminders(rows.items); setReminderPage(rows); }
     }).catch(cause => { if (mounted.current && epoch === token.current) setError(messageFor(cause)); })
       .finally(() => { if (mounted.current && epoch === token.current) { busyRef.current = false; setBusy(false); } });
     return () => { mounted.current = false; token.current++; busyRef.current = false; };
@@ -94,9 +100,13 @@ function ReminderWorkspace({ email }: { email: string }) {
     } finally { if (live()) { busyRef.current = false; setBusy(false); } }
   }
   function replace(item: ServerReminder) {
-    setReminders(current => [item, ...current.filter(value => value.id !== item.id)]);
+    setReminders(current => current.map(value => value.id === item.id ? item : value));
     setDeliveries(current => { const next = { ...current }; delete next[item.id]; return next; });
-    setExpanded(null);
+    setExpanded(null); setDeliveryPage(null);
+  }
+  function firstPage(page: PersonalPage<ServerReminder>) {
+    setReminders(page.items); setReminderPage(page); setReminderCursors([undefined]);
+    setDeliveries({}); setDeliveryPage(null); setExpanded(null);
   }
   function edit(item: ServerReminder, resume = false) {
     setEditing({ original: item, resume }); setEditorVersion(value => value + 1); setConflict(false); setDraftDirty(false); setError(''); setNotice('');
@@ -104,7 +114,15 @@ function ReminderWorkspace({ email }: { email: string }) {
   async function refresh() {
     await perform(async live => {
       const [caps, rows] = await Promise.all([getPersonalCapabilities(), listServerReminders()]);
-      if (live()) { setCapabilities(caps); setReminders(rows); setDeliveries({}); setExpanded(null); }
+      if (live()) { setCapabilities(caps); firstPage(rows); }
+    });
+  }
+  async function turnReminders(direction: -1 | 1) {
+    if (!reminderPage || direction === -1 && reminderCursors.length <= 1 || direction === 1 && reminderPage.next_cursor === null) return;
+    const cursors = direction === 1 ? [...reminderCursors, reminderPage.next_cursor!] : reminderCursors.slice(0, -1);
+    await perform(async live => {
+      const page = await listServerReminders(cursors.at(-1), reminderPage.snapshot_id);
+      if (live()) { setReminders(page.items); setReminderPage(page); setReminderCursors(cursors); setDeliveries({}); setDeliveryPage(null); setExpanded(null); }
     });
   }
   async function save(fields: ReminderEdit) {
@@ -116,7 +134,11 @@ function ReminderWorkspace({ email }: { email: string }) {
         const fingerprint = JSON.stringify(fields);
         if (createAttempt.current?.fingerprint !== fingerprint) createAttempt.current = { fingerprint, requestId: crypto.randomUUID() };
         const item = await createServerReminder({ ...fields as ReminderFields, request_id: createAttempt.current.requestId });
-        if (live()) { replace(item); createAttempt.current = undefined; setDraftDirty(false); setEditorVersion(value => value + 1); setNotice('邮件提醒已保存，客户端关闭后仍由服务端调度。'); }
+        if (live()) {
+          replace(item); createAttempt.current = undefined; setDraftDirty(false); setEditorVersion(value => value + 1); setNotice('邮件提醒已保存，客户端关闭后仍由服务端调度。');
+          try { const page = await listServerReminders(); if (live()) firstPage(page); }
+          catch { if (live()) setError('提醒已保存，但列表刷新失败。请刷新列表查看，不要重复创建。'); }
+        }
       }
     });
   }
@@ -146,7 +168,15 @@ function ReminderWorkspace({ email }: { email: string }) {
     if (expanded === item.id) { setExpanded(null); return; }
     await perform(async live => {
       const rows = await listReminderDeliveries(item.id);
-      if (live()) { setDeliveries(current => ({ ...current, [item.id]: rows })); setExpanded(item.id); }
+      if (live()) { setDeliveries({ [item.id]: rows.items }); setDeliveryPage(rows); setDeliveryCursors([undefined]); setExpanded(item.id); }
+    });
+  }
+  async function turnDeliveries(item: ServerReminder, direction: -1 | 1) {
+    if (!deliveryPage || expanded !== item.id || direction === -1 && deliveryCursors.length <= 1 || direction === 1 && deliveryPage.next_cursor === null) return;
+    const cursors = direction === 1 ? [...deliveryCursors, deliveryPage.next_cursor!] : deliveryCursors.slice(0, -1);
+    await perform(async live => {
+      const page = await listReminderDeliveries(item.id, cursors.at(-1), deliveryPage.snapshot_id);
+      if (live()) { setDeliveries({ [item.id]: page.items }); setDeliveryPage(page); setDeliveryCursors(cursors); }
     });
   }
   async function deliveryAction(item: ServerReminder, delivery: ReminderDelivery, action: 'retry' | 'dismiss') {
@@ -159,7 +189,6 @@ function ReminderWorkspace({ email }: { email: string }) {
       if (live()) setReminders(current => current.map(value => value.id === item.id ? latest : value));
     });
   }
-  const sorted = useMemo(() => [...reminders].sort((a, b) => (a.next_run_at || '9999').localeCompare(b.next_run_at || '9999')), [reminders]);
   return <section className="flex min-h-0 flex-1 flex-col" aria-label="邮件提醒">
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3"><Bell size={17} className="text-brand" /><strong>邮件提醒</strong><button aria-label="刷新邮件提醒" className="work-icon ml-auto" onClick={() => void refresh()} disabled={busy}><RefreshCw size={16} /></button></div>
     <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
@@ -168,10 +197,11 @@ function ReminderWorkspace({ email }: { email: string }) {
         {capabilities && !capabilities.email_reminders_enabled && <p className="mb-3 border border-line p-3 text-sm text-ink-secondary">邮件提醒功能当前未启用。管理员需同时开启邮件和提醒配置。</p>}
         <ReminderEditor key={editorVersion} original={editing?.original} resume={editing?.resume} disabled={busy || (!editing && !capabilities?.email_reminders_enabled)} conflict={conflict} onSave={save} onDirty={() => setDraftDirty(true)} onReload={() => void reloadEditor()} onCancel={() => { if (draftDirty && !window.confirm('放弃当前未保存的提醒修改？')) return; setEditing(undefined); setConflict(false); setDraftDirty(false); setEditorVersion(value => value + 1); setError(''); }} />
       </div>
-      <div><div className="flex items-center justify-between gap-3"><h2 className="font-semibold">已安排提醒</h2><span className="text-xs text-ink-secondary">已加载 {sorted.length} 条</span></div>
-        {!sorted.length && <p className="mt-4 text-sm text-ink-secondary">{busy ? '正在读取提醒…' : '还没有服务端提醒。'}</p>}
-        <div className="mt-3 grid gap-3">{sorted.map(item => <article aria-label={'提醒：' + item.subject} key={item.id} className="min-w-0 border border-line p-4">
-          <div className="flex flex-wrap items-start gap-2"><div className="min-w-0 flex-1"><h3 className="break-words font-medium">{item.subject}</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink-secondary">{item.body}</p></div><span className="shrink-0 text-xs text-ink-secondary">{statusLabels[item.status]}</span></div>
+      <div><h2 className="font-semibold">已安排提醒</h2><p className="mt-2 text-xs text-ink-secondary">按创建顺序从新到旧，每页最多 20 条。刷新查看新记录；已打开的编辑草稿会保留。</p>
+        {reminderPage && <Pager name="提醒" depth={reminderCursors.length} count={reminders.length} next={reminderPage.next_cursor} busy={busy} onPage={direction => void turnReminders(direction)} />}
+        {!reminders.length && <p className="mt-4 text-sm text-ink-secondary">{busy ? '正在读取提醒…' : reminderCursors.length > 1 ? '本页已无记录，可返回上一页或刷新。' : '还没有服务端提醒。'}</p>}
+        <div className="mt-3 grid gap-3">{reminders.map(item => <article aria-label={'提醒：' + item.subject} key={item.id} className="min-w-0 border border-line p-4">
+          <div className="flex flex-wrap items-start gap-2"><div className="min-w-0 flex-1"><h3 className="break-words font-medium">{item.subject}</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink-secondary">{item.body.slice(0, 500)}</p>{item.body.length > 500 && <details className="mt-2 text-sm"><summary className="cursor-pointer">展开其余内容</summary><p className="mt-2 whitespace-pre-wrap break-words">{item.body.slice(500)}</p></details>}</div><span className="shrink-0 text-xs text-ink-secondary">{statusLabels[item.status]}</span></div>
           <div className="mt-3 grid gap-1 break-words text-xs text-ink-secondary"><span>{recurrenceLabels[item.recurrence]} · {formatReminderDate(item.next_run_at, item.timezone)}</span><span>时区：{item.timezone}</span><span>收件人：{item.recipient}</span></div>
           <div className="mt-3 flex flex-wrap gap-2">
             {(item.status === 'active' || item.status === 'paused') && <button className="work-command" disabled={busy} onClick={() => { if (draftDirty && !window.confirm('放弃当前未保存的提醒草稿，编辑所选提醒？')) return; edit(item); }}>编辑 / 改期</button>}
@@ -180,7 +210,7 @@ function ReminderWorkspace({ email }: { email: string }) {
             {(item.status === 'active' || item.status === 'paused') && <button className="work-command" disabled={busy || !!editing} onClick={() => void change(item, 'cancelled')}><Square size={15} />取消</button>}
             <button className="work-command" disabled={busy} onClick={() => void showDeliveries(item)}>{expanded === item.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />}投递记录</button>
           </div>
-          {expanded === item.id && <ul aria-label={'投递记录：' + item.subject} className="mt-3">{(deliveries[item.id] || []).length ? deliveries[item.id].map(delivery => <DeliveryRow key={delivery.id} delivery={delivery} item={item} disabled={busy || !!editing} onAction={(row, action) => void deliveryAction(item, row, action)} />) : <li className="border-t border-line pt-3 text-sm text-ink-secondary">暂无投递记录。</li>}</ul>}
+          {expanded === item.id && <div className="mt-3"><p className="text-xs text-ink-secondary">按投递记录创建顺序从新到旧；重新打开可查看新记录。</p>{deliveryPage && <Pager name="投递" depth={deliveryCursors.length} count={(deliveries[item.id] || []).length} next={deliveryPage.next_cursor} busy={busy} onPage={direction => void turnDeliveries(item, direction)} />}<ul aria-label={'投递记录：' + item.subject} className="mt-3">{(deliveries[item.id] || []).length ? deliveries[item.id].map(delivery => <DeliveryRow key={delivery.id} delivery={delivery} item={item} disabled={busy || !!editing} onAction={(row, action) => void deliveryAction(item, row, action)} />) : <li className="border-t border-line pt-3 text-sm text-ink-secondary">暂无投递记录。</li>}</ul></div>}
         </article>)}</div>
       </div>
       {error && <p role="alert" className="break-words text-sm text-danger lg:col-span-2">{error}</p>}{notice && <p role="status" className="break-words text-sm lg:col-span-2">{notice}</p>}

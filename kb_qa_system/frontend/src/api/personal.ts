@@ -45,8 +45,15 @@ export function getPersonalCapabilities() {
   return apiClient.get<PersonalCapabilities>("/personal/capabilities", { cache: "no-store" });
 }
 
-export function listServerReminders() {
-  return apiClient.get<ServerReminder[]>("/personal/reminders", { cache: "no-store" });
+export interface PersonalPage<T> { items: T[]; snapshot_id: number; next_cursor: number | null }
+function pageQuery(cursor?: number, snapshotId?: number) {
+  const query = new URLSearchParams({ limit: '20' });
+  if (cursor !== undefined) query.set('cursor', String(cursor));
+  if (snapshotId !== undefined) query.set('snapshot_id', String(snapshotId));
+  return query.toString();
+}
+export function listServerReminders(cursor?: number, snapshotId?: number) {
+  return apiClient.get<PersonalPage<ServerReminder>>('/personal/reminders/page?' + pageQuery(cursor, snapshotId), { cache: 'no-store' });
 }
 
 export function getServerReminder(id: number) {
@@ -80,8 +87,8 @@ export function cancelServerReminder(id: number) {
   return apiClient.delete<void>(`/personal/reminders/${id}`, { cache: "no-store" });
 }
 
-export function listReminderDeliveries(id: number) {
-  return apiClient.get<ReminderDelivery[]>(`/personal/reminders/${id}/deliveries`, { cache: "no-store" });
+export function listReminderDeliveries(id: number, cursor?: number, snapshotId?: number) {
+  return apiClient.get<PersonalPage<ReminderDelivery>>(`/personal/reminders/${id}/deliveries/page?` + pageQuery(cursor, snapshotId), { cache: 'no-store' });
 }
 
 export function retryReminderDelivery(reminderId: number, deliveryId: number, acknowledgeDuplicateRisk: boolean) {

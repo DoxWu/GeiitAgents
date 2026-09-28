@@ -91,10 +91,44 @@ try {
   current = await (await fetch(backend + '/api/v1/personal/reminders/' + uncertain.id)).json();
   expect(current.status).toBe('active'); expect(current.revision).toBe(3);
   expect(Date.parse(current.next_run_at)).toBe(Date.parse('2099-02-01T01:00:00Z'));
+  const batch = await (await fetch(backend + '/__qa__/pagination', { method: 'POST' })).json();
+  expect(batch.reminders).toBe(61);
+  await page.getByRole('button', { name: '刷新邮件提醒' }).click();
+  await expect(page.getByRole('article')).toHaveCount(20);
+  const firstSubjects = await page.locator('article h3').allTextContents(), subjects = [...firstSubjects];
+  const createdLater = await fetch(backend + '/api/v1/personal/reminders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: crypto.randomUUID(), subject: '翻页期间新增', body: '刷新后可见', timezone: 'UTC', recurrence: 'once', next_run_at: '2099-03-01T09:00:00Z' }) });
+  expect(createdLater.status).toBe(201);
+  for (let index = 2; index <= 4; index++) {
+    await page.getByRole('button', { name: '下一页提醒', exact: true }).click();
+    await expect(page.getByRole('navigation', { name: '提醒分页' })).toContainText('第 ' + index + ' 页');
+    subjects.push(...await page.locator('article h3').allTextContents());
+    expect(await page.getByRole('article').count()).toBeLessThanOrEqual(20);
+  }
+  expect(subjects).toHaveLength(63); expect(new Set(subjects).size).toBe(63);
+  expect(subjects).toContain('分页提醒 000'); expect(subjects).not.toContain('翻页期间新增');
+  await expect(page.getByRole('button', { name: '下一页提醒' })).toBeDisabled();
+  for (let index = 3; index >= 1; index--) {
+    await page.getByRole('button', { name: '上一页提醒', exact: true }).click();
+    await expect(page.getByRole('navigation', { name: '提醒分页' })).toContainText('第 ' + index + ' 页');
+  }
+  expect(await page.locator('article h3').allTextContents()).toEqual(firstSubjects);
+  const pagedReminder = page.getByRole('article', { name: '提醒：分页提醒 060', exact: true });
+  await pagedReminder.getByRole('button', { name: '投递记录', exact: true }).click();
+  await expect(pagedReminder.getByRole('listitem')).toHaveCount(20);
+  for (const [index, count] of [[2, 20], [3, 15]]) {
+    await pagedReminder.getByRole('button', { name: '下一页投递', exact: true }).click();
+    await expect(pagedReminder.getByRole('navigation', { name: '投递分页' })).toContainText('第 ' + index + ' 页');
+    await expect(pagedReminder.getByRole('listitem')).toHaveCount(count);
+  }
+  await expect(pagedReminder.getByRole('button', { name: '下一页投递' })).toBeDisabled();
+  await pagedReminder.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'pagination-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
-  await article.scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(output, 'mobile.png') });
+  await pagedReminder.getByRole('navigation', { name: '投递分页' }).scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(output, 'mobile.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: '刷新邮件提醒' }).click();
+  await expect(page.getByRole('article', { name: '提醒：翻页期间新增' })).toBeVisible();
   expect(errors).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, backend: 'real FastAPI routes + isolated SQLite memory', deviceZone: 'America/Los_Angeles', reminderZone: 'Asia/Shanghai', checks: ['create', 'schedule and weekly rule edit', 'revision conflict retains draft', 'explicit latest reload', 'uncertain paused delivery dismissal', 'overdue reschedule and resume', '390px layout'], emailsSent: 0, pageErrors: errors }, null, 2));
-  console.log('Reminder real HTTP create/edit/conflict/uncertain resolution/resume and 390px QA passed.');
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, backend: 'real FastAPI routes + isolated SQLite memory', deviceZone: 'America/Los_Angeles', reminderZone: 'Asia/Shanghai', checks: ['create', 'schedule and weekly rule edit', 'revision conflict retains draft', 'explicit latest reload', 'uncertain paused delivery dismissal', 'overdue reschedule and resume', '63 reminders across four pages, insertion boundary and return navigation', '55 deliveries across three pages', '390px layout'], emailsSent: 0, pageErrors: errors }, null, 2));
+  console.log('Reminder real HTTP editing, 63-reminder/55-delivery pagination and 390px QA passed.');
 } finally { await browser?.close(); service.kill(); }
