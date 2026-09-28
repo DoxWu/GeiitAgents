@@ -1,23 +1,33 @@
 export interface LocalFileEntry { path: string; name: string; size: number; modifiedAt: number; type: string }
-export interface RenamePlan { source: string; target: string; size: number; status: 'ready' | 'unchanged' | 'conflict' | 'invalid' }
+export interface RenamePlan { source: string; target: string; size: number; modifiedAt?: number; sha256?: string; status: 'ready' | 'unchanged' | 'conflict' | 'invalid' }
+
+export const fileNameKey = (name: string) => name.normalize('NFC').toLowerCase();
+export function validFileName(name: string): boolean {
+  return Boolean(name && name.length <= 240 && name !== '.' && name !== '..' && !/[<>:"/\\|?*]/.test(name)
+    && !/[. ]$/.test(name) && !Array.from(name).some(char => char.charCodeAt(0) < 32)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name));
+}
 
 function safeName(value: string): string { return value.normalize('NFC').replace(/[<>:"/\\|?*]/g, '_').split('').map(char => char.charCodeAt(0) < 32 ? '_' : char).join('').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 180) || '未命名文件'; }
 export function proposeName(file: LocalFileEntry, prefix: string): string {
   const dot = file.name.lastIndexOf('.'); const ext = dot > 0 ? file.name.slice(dot) : ''; const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
   const date = new Date(file.modifiedAt); const stamp = Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '未定日期';
-  return `${safeName(prefix) ? `${safeName(prefix)}_` : ''}${stamp}_${safeName(stem)}${ext.toLowerCase().slice(0, 20)}`;
+  const safePrefix = prefix.trim() ? safeName(prefix).slice(0, 40) + '_' : '';
+  const safeExt = ext ? safeName(ext).toLowerCase().slice(0, 20) : '';
+  return `${safePrefix}${stamp}_${safeName(stem).slice(0, 150)}${safeExt}`;
 }
 
 export function makeRenamePlan(files: LocalFileEntry[], prefix: string): RenamePlan[] {
   const proposals = files.map(file => ({ file, target: proposeName(file, prefix) }));
-  const occupied = new Set(files.map(file => file.path));
-  const targets = new Map<string, number>();
+  const occupied = new Set(files.map(file => fileNameKey(file.path)));
+  const targets = new Set<string>();
   return proposals.map(({ file, target }) => {
-    const count = targets.get(target) ?? 0; targets.set(target, count + 1);
-    const unique = count ? `${target.replace(/(\.[^.]+)?$/, `_${count + 1}$1`)}` : target;
+    let unique = target, count = 1;
+    while (targets.has(fileNameKey(unique))) unique = target.replace(/(\.[^.]+)?$/, `_${++count}$1`);
+    targets.add(fileNameKey(unique));
     const same = unique === file.name;
-    const conflict = occupied.has(unique) && unique !== file.name;
-    return { source: file.path, target: unique, size: file.size, status: conflict ? 'conflict' : same ? 'unchanged' : 'ready' };
+    const conflict = occupied.has(fileNameKey(unique)) && !same;
+    return { source: file.path, target: unique, size: file.size, modifiedAt: file.modifiedAt, status: !validFileName(file.path) || !validFileName(unique) ? 'invalid' : conflict ? 'conflict' : same ? 'unchanged' : 'ready' };
   });
 }
 

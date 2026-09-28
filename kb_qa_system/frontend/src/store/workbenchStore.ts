@@ -9,6 +9,9 @@ import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/a
 import { buildDocumentMessages, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import type { ChartInput } from '@/officeTasks/chart';
 import { validatePersonalInput, type PersonalInput, type PersonalItem } from '@/personal/items';
+import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
+import { undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
+import type { RenamePlan } from '@/fileOrganizer/plan';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -19,8 +22,16 @@ const controllers = new Map<string, AbortController>();
 const artifactOperations = new Map<string, AbortController>();
 const accountRequests = new Set<string>();
 let accountLookup: AbortController | null = null;
+// Disk compensation may outlive a locked vault. Keep this fence until it settles.
+let organizerInFlight = false;
 
 interface WorkbenchState {
+  organizerRuns: OrganizerRun[];
+  organizerBusy: boolean;
+  runFileOrganizer: (directory: OrganizerDirectoryHandle, plan: RenamePlan[], undoOf?: string) => Promise<string>;
+  cancelFileOrganizer: () => void;
+  inspectOrganizerRun: (directory: OrganizerDirectoryHandle, id: string) => Promise<void>;
+  removeOrganizerRun: (id: string) => Promise<void>;
   personalItems: PersonalItem[];
   savePersonalItem: (id: string, input: PersonalInput, expectedRevision: number) => Promise<PersonalItem>;
   removePersonalItem: (id: string, expectedRevision: number) => Promise<void>;
@@ -75,7 +86,7 @@ async function persist(required = false) {
   const epoch = generation;
   try {
     const state = useWorkbenchStore.getState();
-    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems });
+    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, organizerRuns: state.organizerRuns });
     if (epoch === generation) useWorkbenchStore.setState({ storageError: null });
   } catch {
     const message = "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
@@ -93,7 +104,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], organizerRuns: [], organizerBusy: organizerInFlight, currentId: null, running: {}, streamingContent: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -135,6 +146,73 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
+  organizerRuns: [], organizerBusy: false,
+  cancelFileOrganizer: () => { artifactOperations.get('file-organizer')?.abort(); },
+  runFileOrganizer: async (directory, plan, undoOf) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (organizerInFlight) throw new Error('文件整理正在运行。');
+    if (get().storageError) throw new Error('请先重试本机保存，避免丢失整理记录。');
+    if (get().organizerRuns.length >= 100) throw new Error('最多保留 100 条整理记录，请先导出并删除不再需要的记录。');
+    const original = undoOf ? get().organizerRuns.find(run => run.id === undoOf) : undefined;
+    if (undoOf && !original) throw new Error('原整理记录不存在。');
+    if (undoOf && get().organizerRuns.some(run => run.undoOf === undoOf && ['running', 'interrupted', 'needs-attention', 'succeeded'].includes(run.status))) throw new Error('此记录已有撤销操作，请先核对其结果。');
+    const selectedPlan = original ? undoPlan(original) : plan.map(item => ({ ...item }));
+    const controller = new AbortController(), epoch = generation;
+    organizerInFlight = true;
+    artifactOperations.set('file-organizer', controller); set({ organizerBusy: true });
+    let id: string | undefined, fileWorkFinished = false;
+    try {
+      const { applyRenamePlan } = await import('@/fileOrganizer/apply');
+      const result = await applyRenamePlan(directory, selectedPlan, { signal: controller.signal, beforeWrite: async prepared => {
+        if (epoch !== generation || !get().unlocked || controller.signal.aborted) throw new Error('密钥库已锁定或操作已取消。');
+        const now = new Date().toISOString(); id = prepared.id;
+        const run: OrganizerRun = { ...prepared, directoryName: directory.name || '所选目录', kind: undoOf ? 'undo' : 'rename', undoOf, status: 'running', createdAt: now, updatedAt: now };
+        set(state => ({ organizerRuns: [run, ...state.organizerRuns] }));
+        await persist(true);
+      } });
+      fileWorkFinished = true;
+      if (epoch !== generation || !get().unlocked) throw new Error('操作期间密钥库已锁定，请重新解锁并核对执行记录。');
+      set(state => ({ organizerRuns: state.organizerRuns.map(run => run.id === result.id ? { ...run, status: 'succeeded', updatedAt: new Date().toISOString(), retainedFiles: result.retainedFiles, warnings: result.warnings } : run.id === undoOf ? { ...run, status: 'undone', updatedAt: new Date().toISOString() } : run) }));
+      await persist(true);
+      if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看保存结果。');
+      return result.id;
+    } catch (error) {
+      if (!fileWorkFinished && id && epoch === generation && get().unlocked) {
+        const { OrganizerRecoveryError } = await import('@/fileOrganizer/apply');
+        if (epoch === generation && get().unlocked) {
+          set(state => ({ organizerRuns: state.organizerRuns.map(run => run.id === id ? { ...run, status: error instanceof OrganizerRecoveryError ? 'needs-attention' : 'failed', updatedAt: new Date().toISOString(), error: error instanceof Error ? error.message : '整理失败。', retainedFiles: error instanceof OrganizerRecoveryError ? error.retainedFiles : [] } : run) }));
+          await persist();
+        }
+      }
+      throw error;
+    } finally {
+      if (artifactOperations.get('file-organizer') === controller) artifactOperations.delete('file-organizer');
+      organizerInFlight = false; set({ organizerBusy: false });
+    }
+  },
+  removeOrganizerRun: async id => {
+    if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件整理完成。');
+    const run = get().organizerRuns.find(item => item.id === id);
+    if (!run || ['running', 'interrupted', 'needs-attention'].includes(run.status) || run.retainedFiles?.length) throw new Error('存在未核实结果或保留副本，请先核对目录，勿删除恢复记录。');
+    if (get().organizerRuns.some(item => item.undoOf === id && ['running', 'interrupted', 'needs-attention'].includes(item.status))) throw new Error('关联撤销尚未核实，请先保留原记录。');
+    set(state => ({ organizerRuns: state.organizerRuns.filter(item => item.id !== id) }));
+    await persist(true);
+  },
+  inspectOrganizerRun: async (directory, id) => {
+    if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件整理完成。');
+    const run = get().organizerRuns.find(item => item.id === id), epoch = generation;
+    if (!run || run.status === 'undone') throw new Error('记录不存在或已撤销。');
+    organizerInFlight = true; set({ organizerBusy: true });
+    try {
+      const { inspectRenameOutcome } = await import('@/fileOrganizer/apply');
+      const result = await inspectRenameOutcome(directory, run.changes);
+      if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+      const status = result.outcome === 'applied' ? 'succeeded' : result.outcome === 'not-applied' ? 'failed' : 'needs-attention';
+      const message = result.outcome === 'applied' ? undefined : result.outcome === 'not-applied' ? '已核验源文件完整，目标不存在；本次变更未应用。' : '目录与记录不完全匹配，请核对源文件、目标和暂存副本。';
+      set(state => ({ organizerRuns: state.organizerRuns.map(item => item.id === id ? { ...item, status, error: message, retainedFiles: result.retainedFiles, updatedAt: new Date().toISOString() } : item.id === run.undoOf && status === 'succeeded' ? { ...item, status: 'undone', updatedAt: new Date().toISOString() } : item) }));
+      await persist(true);
+    } finally { organizerInFlight = false; set({ organizerBusy: false }); }
+  },
   personalItems: [],
   savePersonalItem: async (id, input, expectedRevision) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
@@ -195,16 +273,17 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       error: '客户端在任务完成前关闭或锁定，结果未生成。' } : task);
     const toolRuns = (data.toolRuns ?? []).map(tool => tool.status === 'running' ? { ...tool, status: 'interrupted' as const, finishedAt: unlockedAt,
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
-    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [],
+    const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
+    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], organizerRuns, organizerBusy: organizerInFlight,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, errors: {}, storageError: null });
-    if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index])) await persist();
+    if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index])) await persist();
   },
   lock: async () => {
     const epoch = ++generation;
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
+    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], organizerRuns: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();

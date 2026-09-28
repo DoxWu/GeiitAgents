@@ -77,6 +77,7 @@ export interface WorkArtifact {
 }
 
 export interface VaultData {
+  organizerRuns?: import('@/fileOrganizer/history').OrganizerRun[];
   personalItems?: import('@/personal/items').PersonalItem[];
   profiles: (Omit<ModelProfile, "hasKey"> & { apiKey: string })[];
   conversations: WorkConversation[];
