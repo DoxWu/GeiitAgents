@@ -4,8 +4,9 @@ import type { ModelProfile } from "@/types/workbench";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
-export function validateProfile(profile: Pick<ModelProfile, "baseUrl" | "mode" | "model" | "maxTokens" | "name">): string {
+export function validateModelEndpoint(profile: Pick<ModelProfile, "baseUrl" | "mode">): string {
   let url: URL;
+  if (profile.baseUrl.length > 2048 || [...profile.baseUrl.trim()].some(c => c.charCodeAt(0) <= 32 || c.charCodeAt(0) === 127)) throw new Error("模型接口地址无效。");
   try { url = new URL(profile.baseUrl.trim()); } catch { throw new Error("模型接口地址无效。"); }
   if (url.username || url.password || url.search || url.hash) throw new Error("接口地址不能含凭据、查询参数或片段。");
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -14,9 +15,24 @@ export function validateProfile(profile: Pick<ModelProfile, "baseUrl" | "mode" |
   } else if (url.protocol !== "https:" || loopback || url.port && url.port !== "443") {
     throw new Error("云端转发仅支持 HTTPS 公网地址（443 端口）。");
   }
-  if (!profile.model.trim() || !profile.name.trim()) throw new Error("连接名称和模型名称不能为空。");
-  if (profile.maxTokens !== undefined && (!Number.isInteger(profile.maxTokens) || profile.maxTokens < 1 || profile.maxTokens > 2147483647)) throw new Error("输出上限应为有效的正整数。");
   return url.href.replace(/\/$/, "");
+}
+
+export function validateProfile(profile: Pick<ModelProfile, "baseUrl" | "mode" | "model" | "maxTokens" | "name">): string {
+  const baseUrl = validateModelEndpoint(profile);
+  if (!profile.model.trim() || !profile.name.trim()) throw new Error("连接名称和模型名称不能为空。");
+  if ([...profile.model.trim()].length > 200 || [...profile.model].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)) throw new Error("模型名称过长或包含无效字符。");
+  if (profile.maxTokens !== undefined && (!Number.isInteger(profile.maxTokens) || profile.maxTokens < 1 || profile.maxTokens > 2147483647)) throw new Error("输出上限应为有效的正整数。");
+  return baseUrl;
+}
+
+export function requirePrivateRelay(apiKey: string): void {
+  const api = new URL(API_BASE_URL, window.location.href);
+  if (api.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(api.hostname)) {
+    throw new Error("云端地址必须使用 HTTPS 才能传输模型密钥。");
+  }
+  if (!getStoredTokens()?.access_token) throw new Error("请先登录知识库账号，再使用云端转发。");
+  if (!apiKey) throw new Error("此连接尚未填写 API Key。");
 }
 
 export async function completeModel(
@@ -27,12 +43,7 @@ export async function completeModel(
   validateProfile(profile);
   if (signal.aborted) throw new DOMException("已取消", "AbortError");
   if (profile.mode === "relay") {
-    const api = new URL(API_BASE_URL, window.location.href);
-    if (api.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(api.hostname)) {
-      throw new Error("云端地址必须使用 HTTPS 才能传输模型密钥。");
-    }
-    if (!getStoredTokens()?.access_token) throw new Error("请先登录知识库账号，再使用云端转发。");
-    if (!apiKey) throw new Error("此连接尚未填写 API Key。");
+    requirePrivateRelay(apiKey);
     try {
       const body = { base_url: profile.baseUrl, model: profile.model, messages, ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) };
       if (onChunk) {

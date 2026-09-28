@@ -4,6 +4,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useWorkbenchStore as store, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from "../workbenchStore";
 import { useAuthStore } from "../authStore";
 import { completeModel, completeAccountModel, getAccountModel } from "@/services/workbenchModel";
+import { discoverModels } from '@/services/modelDiscovery';
 import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
@@ -11,6 +12,7 @@ import { exportDocx } from '@/officeTasks/docxClient';
 import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart';
 
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
+vi.mock('@/services/modelDiscovery', () => ({ discoverModels: vi.fn() }));
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -19,6 +21,7 @@ beforeEach(async () => {
   vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("TextEncoder", TextEncoder); vi.stubGlobal("TextDecoder", TextDecoder);
   localStorage.clear(); vi.mocked(completeModel).mockReset();
   vi.mocked(exportDocx).mockReset();
+  vi.mocked(discoverModels).mockReset();
   vi.mocked(completeAccountModel).mockReset(); vi.mocked(getAccountModel).mockReset();
   useAuthStore.setState({ user: null, isAuthenticated: false });
   store.setState({ accountModel: null });
@@ -63,6 +66,50 @@ it("keeps profile changes and conversation updates during overlapping saves", as
 it("does not move an existing key to an edited endpoint without reentry", async () => {
   await expect(store.getState().saveProfile({ ...profile, baseUrl: "http://localhost:1234/v1" }, "")).rejects.toThrow();
   expect(store.getState().profiles[0].baseUrl).toBe(profile.baseUrl);
+});
+
+it('discovers with a saved key without persisting catalogs or exposing secrets in public state', async () => {
+  vi.mocked(discoverModels).mockResolvedValue({ models: [{ id: 'catalog-only' }], truncated: false });
+  const before = localStorage.getItem(VAULT_STORAGE_KEY);
+  const result = await store.getState().discoverProfileModels(profile, '', false, new AbortController().signal);
+  expect(result.models[0].id).toBe('catalog-only');
+  expect(discoverModels).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.any(AbortSignal));
+  expect(JSON.stringify(store.getState())).not.toMatch(/fixture-key|catalog-only/);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).toBe(before);
+});
+
+it('does not send a saved key to an edited discovery endpoint, but permits reentry or clearing', async () => {
+  const input = { ...profile, baseUrl: 'http://localhost:1234/v1', model: '', name: '' };
+  await expect(store.getState().discoverProfileModels(input, '', false, new AbortController().signal)).rejects.toThrow('重新填写');
+  expect(discoverModels).not.toHaveBeenCalled();
+  vi.mocked(discoverModels).mockResolvedValue({ models: [], truncated: false });
+  await store.getState().discoverProfileModels(input, 'new-fixture-key', false, new AbortController().signal);
+  expect(discoverModels).toHaveBeenLastCalledWith(expect.any(Object), 'new-fixture-key', expect.any(AbortSignal));
+  await store.getState().discoverProfileModels(input, '', true, new AbortController().signal);
+  expect(discoverModels).toHaveBeenLastCalledWith(expect.any(Object), '', expect.any(AbortSignal));
+});
+
+it.each(['lock', 'cancel', 'logout'] as const)('aborts discovery on %s and rejects late catalogs', async reason => {
+  login();
+  let finish!: (value: { models: { id: string }[]; truncated: boolean }) => void;
+  vi.mocked(discoverModels).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const controller = new AbortController();
+  const input = reason === 'logout' ? { ...profile, id: 'new-relay', mode: 'relay' as const, baseUrl: 'https://models.example/v1' } : profile;
+  const pending = store.getState().discoverProfileModels(input, 'fixture-key', false, controller.signal);
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  if (reason === 'lock') await store.getState().lock();
+  else if (reason === 'cancel') controller.abort();
+  else useAuthStore.setState({ isAuthenticated: false, user: null });
+  expect(vi.mocked(discoverModels).mock.calls[0][2].aborted).toBe(true);
+  finish({ models: [{ id: 'late' }], truncated: false }); await rejected;
+});
+
+it('never reports a successful connection test after vault locking', async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().testProfile(profile.id);
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  await store.getState().lock(); finish('late'); await rejected;
 });
 
 it("locks on inactivity even with no workbench component mounted", async () => {

@@ -8,8 +8,8 @@ from pydantic import ValidationError
 
 from app.api.deps import get_current_active_user
 from app.core.rate_limit import rate_limit
-from app.schemas.private_model import AccountCompletion, PrivateCompletion
-from app.services.private_model import PrivateModelError, complete_private, stream_private
+from app.schemas.private_model import AccountCompletion, PrivateCompletion, PrivateModelList
+from app.services.private_model import PrivateModelError, complete_private, stream_private, list_private_models
 from app.services.account_model import account_model_status, can_use_account_model, complete_account, stream_account
 
 router = APIRouter(prefix="/private-models", tags=["个人模型"])
@@ -32,6 +32,21 @@ async def read_payload(request: Request, schema):
         return schema.model_validate_json(payload)
     except (ValidationError, ValueError):
         raise HTTPException(422, "模型请求参数无效。") from None
+
+
+@router.post("/models", dependencies=[
+    Depends(get_current_active_user), Depends(rate_limit("private_model_list", per_minute=20)),
+])
+async def model_list(request: Request):
+    try:
+        data = await read_payload(request, PrivateModelList)
+        result = await list_private_models(data, request.headers.get("x-model-api-key", ""))
+        return JSONResponse(result, headers=NO_STORE)
+    except PrivateModelError as exc:
+        raise HTTPException(exc.status, str(exc), headers=NO_STORE) from None
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), **NO_STORE}
+        raise
 
 
 @router.post("/complete", dependencies=[

@@ -11,6 +11,11 @@ class PrivateMessage(BaseModel):
     content: str = Field(min_length=1, max_length=100000)
 
 
+class PrivateModelList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_url: str = Field(min_length=8, max_length=2048)
+
+
 class AccountCompletion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     messages: list[PrivateMessage] = Field(min_length=1, max_length=100)

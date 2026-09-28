@@ -29,7 +29,21 @@ def test_authenticated_route_validation_no_cache_and_key_header():
     url = "/api/v1/private-models/complete"
     body = {"base_url": "https://models.example/v1", "model": "test", "messages": [{"role": "user", "content": "hello"}]}
     assert client.post(url, json=body).status_code == 401
+    list_url = "/api/v1/private-models/models"
+    assert client.post(list_url, json={"base_url": body["base_url"]}).status_code == 401
     app.dependency_overrides[auth] = lambda: object()
+    catalog = AsyncMock(return_value={"models": [{"id": "only-id"}], "truncated": False})
+    with patch.object(module, "list_private_models", catalog):
+        response = client.post(list_url, json={"base_url": body["base_url"]}, headers={"X-Model-Api-Key": "fixture-private-key"})
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert catalog.await_args.args[1] == "fixture-private-key"
+        assert catalog.await_args.args[0].model_dump() == {"base_url": body["base_url"]}
+        invalid = client.post(list_url, json={"base_url": body["base_url"], "api_key": "fixture-private-key"})
+        assert invalid.status_code == 422
+        assert "fixture-private-key" not in invalid.text
+        assert invalid.headers["cache-control"] == "no-store"
+        assert catalog.await_count == 1
     completion = AsyncMock(return_value={"content": "done", "model": "test"})
     with patch.object(module, "complete_private", completion):
         response = client.post(url, json=body, headers={"X-Model-Api-Key": "fixture-private-key"})

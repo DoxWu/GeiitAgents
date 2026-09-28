@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { PrivateVault } from "@/services/privateVault";
-import { completeModel, completeAccountModel, getAccountModel, validateProfile } from "@/services/workbenchModel";
+import { completeModel, completeAccountModel, getAccountModel, validateProfile, validateModelEndpoint } from "@/services/workbenchModel";
+import { discoverModels, type ModelCatalog, type ModelEndpoint } from '@/services/modelDiscovery';
 import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConversation, WorkMessage } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
@@ -54,7 +55,8 @@ interface WorkbenchState {
   lock: () => Promise<void>;
   saveProfile: (input: Omit<ModelProfile, "hasKey">, apiKey: string, clearKey?: boolean) => Promise<void>;
   removeProfile: (id: string) => Promise<void>;
-  testProfile: (id: string) => Promise<void>;
+  testProfile: (id: string, signal?: AbortSignal) => Promise<void>;
+  discoverProfileModels: (input: ModelEndpoint, apiKey: string, clearKey: boolean, signal: AbortSignal) => Promise<ModelCatalog>;
   newConversation: (profileId?: string) => string;
   select: (id: string) => void;
   rename: (id: string, title: string) => void;
@@ -76,6 +78,40 @@ interface WorkbenchState {
 
 function publicProfiles(): ModelProfile[] {
   return secrets.map(({ apiKey, ...profile }) => ({ ...profile, hasKey: Boolean(apiKey) }));
+}
+
+function keyForEndpoint(input: ModelEndpoint, apiKey: string, clearKey: boolean, baseUrl: string): string {
+  const previous = secrets.find(profile => profile.id === input.id);
+  const secret = clearKey ? '' : apiKey.trim() || previous?.apiKey || '';
+  if (secret.length > 4096 || /[^\x21-\x7e]/.test(secret)) throw new Error('API Key 格式无效。');
+  if (previous?.apiKey && (previous.baseUrl !== baseUrl || previous.mode !== input.mode) && !apiKey.trim() && !clearKey) {
+    throw new Error('接口地址已改变，请重新填写 API Key 或勾选清除密钥。');
+  }
+  if (input.mode === 'relay' && !secret) throw new Error('云端模型需要 API Key。');
+  return secret;
+}
+
+async function modelCheck<T>(mode: ModelProfile['mode'], signal: AbortSignal | undefined, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  if (!useWorkbenchStore.getState().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+  if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
+  if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型请求。');
+  const controller = new AbortController(), epoch = generation, token = `check:${crypto.randomUUID()}`;
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  controllers.set(token, controller);
+  if (mode === 'relay') accountRequests.add(token);
+  const timeout = setTimeout(abort, 25_000);
+  try {
+    const result = await operation(controller.signal);
+    if (controller.signal.aborted || epoch !== generation) throw new DOMException('请求已取消或超时', 'AbortError');
+    return result;
+  } catch (error) {
+    if (controller.signal.aborted || epoch !== generation) throw new DOMException('请求已取消或超时', 'AbortError');
+    throw error;
+  } finally {
+    clearTimeout(timeout); signal?.removeEventListener('abort', abort);
+    controllers.delete(token); accountRequests.delete(token);
+  }
 }
 
 async function persist(required = false) {
@@ -294,13 +330,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const baseUrl = validateProfile(input);
     const previous = secrets.find((profile) => profile.id === input.id);
     if (secrets.length >= 30 && !previous) throw new Error("最多保存 30 个模型连接。");
-    const secret = clearKey ? "" : apiKey.trim() || previous?.apiKey || "";
-    if (secret.length > 4096 || /[^\x21-\x7e]/.test(secret)) throw new Error("API Key 格式无效。");
-    if (input.mode === "relay" && !secret) throw new Error("云端模型需要 API Key。");
-    // A saved key must not silently follow an edited endpoint to another provider.
-    if (previous?.apiKey && previous.baseUrl !== baseUrl && !apiKey.trim() && !clearKey) {
-      throw new Error("接口地址已改变，请重新填写 API Key 或勾选清除密钥。");
-    }
+    const secret = keyForEndpoint(input, apiKey, clearKey, baseUrl);
     const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret };
     const next = [...secrets.filter((item) => item.id !== input.id), profile];
     secrets = next;
@@ -318,16 +348,17 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set({ profiles: publicProfiles() });
     await persist(true);
   },
-  testProfile: async (id) => {
+  discoverProfileModels: async (input, apiKey, clearKey, signal) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const baseUrl = validateModelEndpoint(input);
+    const secret = keyForEndpoint(input, apiKey, clearKey, baseUrl);
+    return modelCheck(input.mode, signal, requestSignal => discoverModels({ ...input, baseUrl }, secret, requestSignal));
+  },
+  testProfile: async (id, signal) => {
     const profile = get().profiles.find((item) => item.id === id);
     const secret = secrets.find((item) => item.id === id);
     if (!profile || !secret) throw new Error("请先保存模型连接。");
-    const controller = new AbortController();
-    const token = `test:${crypto.randomUUID()}`;
-    controllers.set(token, controller);
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try { await completeModel(profile, secret.apiKey, [{ role: "user", content: "Reply OK." }], controller.signal); }
-    finally { clearTimeout(timeout); controllers.delete(token); }
+    await modelCheck(profile.mode, signal, requestSignal => completeModel(profile, secret.apiKey, [{ role: "user", content: "Reply OK." }], requestSignal));
   },
   newConversation: (profileId) => {
     if (!get().unlocked) return "";
