@@ -40,5 +40,5 @@ it('renders OpenAI-compatible local SSE chunks incrementally and returns the sam
   const received: string[] = [];
   await expect(completeModel(profile, '', [{ role: 'user', content: 'hello' }], new AbortController().signal, chunk => received.push(chunk))).resolves.toBe('你好，世界');
   expect(received).toEqual(['你好', '，世界']);
-  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1].body).stream).toBe(true);
+  expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1].body)).stream).toBe(true);
 });

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Plus, Save, Trash2 } from 'lucide-react';
+import { Bell, Download, Plus, Save, Trash2 } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { PrivateMarkdown } from './LocalMarkdown';
 import { isOverdue, localDateInput, localDateToUtc, personalMarkdown, type PersonalInput, type PersonalItem, type Priority, type TodoStatus } from '@/personal/items';
+import { ServerReminders } from './ServerReminders';
 
 const statusLabels = { open: '待完成', done: '已完成', cancelled: '已取消' };
 function blank(kind: 'note' | 'todo'): PersonalInput {
@@ -15,6 +16,12 @@ function exportItem(item: PersonalItem) {
 }
 
 export function PersonalItems() {
+  const [view, setView] = useState<'local' | 'reminders'>('local');
+  if (view === 'reminders') return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 gap-2 border-b border-line px-4 py-3"><button className="work-command" onClick={() => setView('local')}>本机记录</button><button className="work-command bg-muted" onClick={() => setView('reminders')}><Bell size={16} />邮件提醒</button></div><ServerReminders /></div>;
+  return <LocalPersonalItems onOpenReminders={() => setView('reminders')} />;
+}
+
+function LocalPersonalItems({ onOpenReminders }: { onOpenReminders: () => void }) {
   const store = useWorkbenchStore();
   const [kind, setKind] = useState<'note' | 'todo'>('todo');
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all');
@@ -74,6 +81,7 @@ export function PersonalItems() {
       <button className={`work-command ${kind === 'todo' ? 'bg-muted' : ''}`} disabled={busy} onClick={() => select(undefined, 'todo')}>待办</button>
       <button className={`work-command ${kind === 'note' ? 'bg-muted' : ''}`} disabled={busy} onClick={() => select(undefined, 'note')}>笔记</button>
       <button className="work-command" disabled={busy} onClick={() => select()}><Plus size={16} />{kind === 'note' ? '新建笔记' : '新建待办'}</button>
+      <button className="work-command ml-auto" disabled={busy} onClick={onOpenReminders}><Bell size={16} />邮件提醒</button>
     </div>
     <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]">
       <aside className="max-h-64 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
