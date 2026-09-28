@@ -49,6 +49,10 @@ export function listServerReminders() {
   return apiClient.get<ServerReminder[]>("/personal/reminders", { cache: "no-store" });
 }
 
+export function getServerReminder(id: number) {
+  return apiClient.get<ServerReminder>(`/personal/reminders/${id}`, { cache: 'no-store' });
+}
+
 export function createServerReminder(input: {
   request_id: string;
   subject: string;
@@ -64,6 +68,10 @@ export function updateServerReminder(id: number, input: {
   revision: number;
   status?: "active" | "paused" | "cancelled";
   next_run_at?: string;
+  subject?: string;
+  body?: string;
+  timezone?: string;
+  recurrence?: ReminderRecurrence;
 }) {
   return apiClient.patch<ServerReminder>(`/personal/reminders/${id}`, input, { cache: "no-store" });
 }
@@ -82,4 +90,8 @@ export function retryReminderDelivery(reminderId: number, deliveryId: number, ac
     { acknowledge_duplicate_risk: acknowledgeDuplicateRisk },
     { cache: "no-store" },
   );
+}
+
+export function dismissReminderDelivery(reminderId: number, deliveryId: number) {
+  return apiClient.post<ReminderDelivery>(`/personal/reminders/${reminderId}/deliveries/${deliveryId}/dismiss`, { acknowledge_delivery_uncertainty: true }, { cache: 'no-store' });
 }

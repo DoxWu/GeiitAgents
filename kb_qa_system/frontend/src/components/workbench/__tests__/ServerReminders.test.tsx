@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { auth, api } = vi.hoisted(() => ({
@@ -13,6 +13,8 @@ const { auth, api } = vi.hoisted(() => ({
     updateServerReminder: vi.fn(),
     listReminderDeliveries: vi.fn(),
     retryReminderDelivery: vi.fn(),
+    dismissReminderDelivery: vi.fn(),
+    getServerReminder: vi.fn(),
   },
 }));
 
@@ -51,11 +53,12 @@ function enableReminderApi() {
 
 describe("ServerReminders", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     auth.isAuthenticated = false;
     auth.user = null;
     window.confirm = vi.fn(() => true);
     enableReminderApi();
+    api.getServerReminder.mockResolvedValue(reminder);
   });
 
   afterEach(cleanup);
@@ -96,7 +99,7 @@ describe("ServerReminders", () => {
     expect(payload).not.toHaveProperty("recipient");
   });
 
-  it("updates reminders with the current revision and requires confirmation for unknown delivery outcomes", async () => {
+  it("requires confirmation for unknown delivery retries", async () => {
     auth.isAuthenticated = true;
     auth.user = { email: "user@example.com" };
     api.listServerReminders.mockResolvedValue([reminder]);
@@ -117,8 +120,6 @@ describe("ServerReminders", () => {
     api.retryReminderDelivery.mockResolvedValue({ id: 11, status: "pending" });
     render(<ServerReminders />);
     await waitFor(() => expect(screen.getByText("提交周报")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "暂停" }));
-    await waitFor(() => expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, status: "paused" }));
     fireEvent.click(screen.getByRole("button", { name: /投递记录/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: /确认风险并重试/ })).toBeInTheDocument());
     vi.mocked(window.confirm).mockReturnValueOnce(false);
@@ -127,5 +128,124 @@ describe("ServerReminders", () => {
     vi.mocked(window.confirm).mockReturnValueOnce(true);
     fireEvent.click(screen.getByRole("button", { name: /确认风险并重试/ }));
     await waitFor(() => expect(api.retryReminderDelivery).toHaveBeenCalledWith(7, 11, true));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已提交重试'));
+  });
+
+  async function loaded(item = reminder) {
+    auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
+    api.listServerReminders.mockResolvedValue([item]);
+    const view = render(<ServerReminders />);
+    await screen.findByRole('button', { name: '编辑 / 改期' });
+    return view;
+  }
+  it('pauses using the viewed revision and displays the server result', async () => {
+    await loaded(); api.updateServerReminder.mockResolvedValue({ ...reminder, revision: 4, status: 'paused' });
+    fireEvent.click(screen.getByRole('button', { name: '暂停' }));
+    await screen.findByRole('button', { name: '恢复' });
+    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, status: 'paused' });
+  });
+  it('edits schedule and recurrence using the reminder zone, with one revision-guarded update', async () => {
+    await loaded(); api.updateServerReminder.mockResolvedValue({ ...reminder, revision: 4, recurrence: 'weekly' });
+    fireEvent.click(screen.getByRole('button', { name: '编辑 / 改期' }));
+    expect(screen.getByLabelText('提醒时区')).toHaveValue('Asia/Shanghai');
+    expect(screen.getByLabelText('提醒时间')).toHaveValue('2099-01-02T09:00');
+    fireEvent.change(screen.getByLabelText('提醒时间'), { target: { value: '2099-01-03T10:30' } });
+    fireEvent.change(screen.getByLabelText('提醒重复规则'), { target: { value: 'weekly' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await screen.findByRole('status');
+    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, next_run_at: '2099-01-03T02:30:00.000Z', timezone: 'Asia/Shanghai', recurrence: 'weekly' });
+  });
+  it('does not move the schedule when only content changes', async () => {
+    await loaded({ ...reminder, next_run_at: '2099-01-02T01:00:37.000Z' });
+    api.updateServerReminder.mockResolvedValue({ ...reminder, revision: 4, body: 'new body' });
+    fireEvent.click(screen.getByRole('button', { name: '编辑 / 改期' }));
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'new body' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await screen.findByRole('status');
+    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, body: 'new body' });
+  });
+  it('preserves conflicting drafts, forbids blind retry, and explicitly reloads the latest revision', async () => {
+    await loaded(); api.updateServerReminder.mockRejectedValueOnce(new Error('revision_conflict'));
+    fireEvent.click(screen.getByRole('button', { name: '编辑 / 改期' }));
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'my draft' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await screen.findByRole('button', { name: '载入最新版本（放弃草稿）' });
+    expect(screen.getByLabelText('提醒内容')).toHaveValue('my draft');
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
+    api.getServerReminder.mockResolvedValue({ ...reminder, revision: 8, body: 'other window' });
+    fireEvent.click(screen.getByRole('button', { name: '载入最新版本（放弃草稿）' }));
+    await waitFor(() => expect(screen.getByLabelText('提醒内容')).toHaveValue('other window'));
+    api.updateServerReminder.mockResolvedValue({ ...reminder, revision: 9 });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'merged draft' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await screen.findByRole('status');
+    expect(api.updateServerReminder).toHaveBeenLastCalledWith(7, { revision: 8, body: 'merged draft' });
+  });
+  it('routes overdue resume into explicit rescheduling instead of repeatedly sending an invalid patch', async () => {
+    auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
+    api.listServerReminders.mockResolvedValue([{ ...reminder, status: 'paused', next_run_at: '2000-01-01T00:00:00Z' }]);
+    api.updateServerReminder.mockResolvedValue({ ...reminder, revision: 4 }); render(<ServerReminders />);
+    fireEvent.click(await screen.findByRole('button', { name: '恢复' }));
+    expect(api.updateServerReminder).not.toHaveBeenCalled();
+    expect(screen.getByRole('checkbox', { name: '保存后恢复提醒' })).toBeChecked();
+    fireEvent.change(screen.getByLabelText('提醒时间'), { target: { value: '2099-01-03T09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(api.updateServerReminder).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'active', next_run_at: '2099-01-03T01:00:00.000Z' })));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已修改'));
+  });
+  it('reuses the creation request id after an uncertain HTTP failure', async () => {
+    await loaded(); api.createServerReminder.mockRejectedValueOnce(new Error('network unavailable')).mockResolvedValueOnce(reminder);
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: 'new reminder' } });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'content' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存提醒' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: '保存提醒' }));
+    await screen.findByRole('status');
+    expect(api.createServerReminder.mock.calls[0][0]).toEqual(api.createServerReminder.mock.calls[1][0]);
+  });
+  it('shows retry errors and requires confirmation before dismissing an unknown delivery', async () => {
+    await loaded();
+    const delivery = { id: 11, revision: 3, status: 'unknown', scheduled_at: reminder.next_run_at, attempts: 1, retry_limit: 3 };
+    api.listReminderDeliveries.mockResolvedValue([delivery]);
+    api.retryReminderDelivery.mockRejectedValue(new Error('delivery_not_retryable'));
+    fireEvent.click(screen.getByRole('button', { name: '投递记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认风险并重试' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('不能重试'));
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    fireEvent.click(screen.getByRole('button', { name: '人工结束本次尝试' }));
+    expect(api.dismissReminderDelivery).not.toHaveBeenCalled();
+    api.dismissReminderDelivery.mockResolvedValue({ ...delivery, status: 'cancelled', error_code: 'uncertain_delivery_dismissed' });
+    fireEvent.click(screen.getByRole('button', { name: '人工结束本次尝试' }));
+    await screen.findByText('人工结束（可能已发送）');
+    expect(api.dismissReminderDelivery).toHaveBeenCalledWith(7, 11);
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新邮件提醒' })).toBeEnabled());
+  });
+  it('ignores late list responses and clears drafts when the account changes', async () => {
+    auth.isAuthenticated = true; auth.user = { email: 'old@example.com' };
+    let resolve!: (rows: typeof reminder[]) => void;
+    api.listServerReminders.mockImplementationOnce(() => new Promise(done => { resolve = done; })).mockResolvedValueOnce([]);
+    const view = render(<ServerReminders />);
+    auth.user = { email: 'new@example.com' }; view.rerender(<ServerReminders />);
+    await screen.findByText('还没有服务端提醒。');
+    await act(async () => { resolve([reminder]); });
+    expect(screen.queryByText('提交周报')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('提醒主题')).toHaveValue('');
+  });
+  it('keeps unsaved drafts when switching records is declined, and prevents duplicate saves', async () => {
+    await loaded();
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: 'unsaved draft' } });
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    fireEvent.click(screen.getByRole('button', { name: '编辑 / 改期' }));
+    expect(screen.getByLabelText('提醒主题')).toHaveValue('unsaved draft');
+    fireEvent.click(screen.getByRole('button', { name: '编辑 / 改期' }));
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'edited' } });
+    let finish!: (item: typeof reminder) => void;
+    api.updateServerReminder.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const form = screen.getByRole('button', { name: '保存修改' }).closest('form')!;
+    fireEvent.submit(form); fireEvent.submit(form);
+    expect(api.updateServerReminder).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('提醒内容')).toBeDisabled();
+    await act(async () => { finish({ ...reminder, revision: 4 }); });
+    await screen.findByRole('status');
   });
 });

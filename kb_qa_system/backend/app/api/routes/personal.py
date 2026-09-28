@@ -19,10 +19,10 @@ from app.models.email_log import EmailLog
 from app.models.personal import Note, Reminder, ReminderDelivery, Todo
 from app.models.user import User
 from app.schemas.personal import (
-    DeliveryOut, DeliveryRetry, NoteCreate, NoteOut, NoteUpdate,
+    DeliveryDismiss, DeliveryOut, DeliveryRetry, NoteCreate, NoteOut, NoteUpdate,
     ReminderCreate, ReminderOut, ReminderUpdate, TodoCreate, TodoOut, TodoUpdate,
 )
-from app.services.personal_reminders import cancel_pending, utc
+from app.services.personal_reminders import cancel_pending, next_occurrence, utc
 
 
 class PersonalRoute(APIRoute):
@@ -218,6 +218,11 @@ def create_reminder(body: ReminderCreate, response: Response, user=UserDep, db: 
     return item
 
 
+@router.get("/reminders/{reminder_id}", response_model=ReminderOut)
+def get_reminder(reminder_id: int, user=UserDep, db: Session=DbDep):
+    return owned(db, Reminder, reminder_id, user)
+
+
 @router.patch("/reminders/{reminder_id}", response_model=ReminderOut)
 def update_reminder(reminder_id: int, body: ReminderUpdate, user=UserDep, db: Session=DbDep):
     item = owned(db, Reminder, reminder_id, user, lock=True)
@@ -226,6 +231,11 @@ def update_reminder(reminder_id: int, body: ReminderUpdate, user=UserDep, db: Se
     data = body.model_dump(exclude_unset=True, exclude={"revision"})
     if not data:
         raise HTTPException(422, "empty_update")
+    if item.status in {"cancelled", "completed"}:
+        raise HTTPException(409, "reminder_closed")
+    rule_changed = any(key in data and data[key] != getattr(item, key) for key in ("timezone", "recurrence"))
+    if rule_changed and "next_run_at" not in data:
+        raise HTTPException(422, "rule_change_requires_schedule")
     uncertain = db.query(ReminderDelivery).filter(ReminderDelivery.reminder_id == item.id, ReminderDelivery.status.in_(["sending", "unknown"])).first()
     if uncertain and not (set(data) == {"status"} and data["status"] in {"paused", "cancelled"}):
         raise HTTPException(409, "delivery_in_flight_or_unknown")
@@ -278,6 +288,33 @@ def retry_delivery(reminder_id: int, delivery_id: int, body: DeliveryRetry, user
     delivery.error_code = "manual_retry_acknowledged" if body.acknowledge_duplicate_risk else None
     log = db.get(EmailLog, delivery.email_log_id)
     log.status, log.error_message = "pending", delivery.error_code
+    db.commit()
+    db.refresh(delivery)
+    return delivery
+
+
+@router.post("/reminders/{reminder_id}/deliveries/{delivery_id}/dismiss", response_model=DeliveryOut)
+def dismiss_delivery(reminder_id: int, delivery_id: int, body: DeliveryDismiss, user=UserDep, db: Session=DbDep):
+    # Explicitly close an uncertain attempt, not a claim that it was never sent.
+    item = owned(db, Reminder, reminder_id, user, lock=True)
+    delivery = db.query(ReminderDelivery).filter_by(id=delivery_id, reminder_id=item.id).with_for_update().first()
+    if not delivery:
+        raise HTTPException(404, "delivery_not_found")
+    if not body.acknowledge_delivery_uncertainty:
+        raise HTTPException(409, "delivery_uncertainty_acknowledgement_required")
+    if delivery.status == "cancelled" and delivery.error_code == "uncertain_delivery_dismissed":
+        return delivery  # Safe replay if the HTTP response was lost.
+    if delivery.status != "unknown":
+        raise HTTPException(409, "delivery_not_dismissible")
+    delivery.status, delivery.error_code = "cancelled", "uncertain_delivery_dismissed"
+    log = db.get(EmailLog, delivery.email_log_id)
+    log.status, log.error_message = "cancelled", delivery.error_code
+    # A matching active occurrence must advance, otherwise the durable row
+    # would block scheduling forever. Paused/edited reminders retain their plan.
+    if item.status == "active" and item.revision == delivery.revision:
+        item.next_run_at = next_occurrence(item, max(datetime.now(timezone.utc), utc(delivery.scheduled_at)))
+        item.status = "active" if item.next_run_at else "completed"
+        item.revision += 1
     db.commit()
     db.refresh(delivery)
     return delivery

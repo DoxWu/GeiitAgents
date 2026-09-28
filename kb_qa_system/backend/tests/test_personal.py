@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_current_user
 from app.core.database import Base, get_db
-from app.models import EmailLog, Note, Reminder, ReminderDelivery, Todo, User
+from app.models import EmailLog, Reminder, ReminderDelivery, User
 from app.services.personal_reminders import deliver, dispatch, next_occurrence
 
 NOW = datetime(2026, 9, 29, 8, tzinfo=timezone.utc)
@@ -257,3 +257,116 @@ def test_daily_wall_clock_dst_rules(anchor, after, expected):
 def test_weekly_downtime_skips_missed_occurrences():
     r = SimpleNamespace(recurrence="weekly", timezone="Asia/Shanghai", anchor_at=NOW)
     assert next_occurrence(r, NOW+timedelta(days=20)) == NOW+timedelta(days=21)
+
+
+def test_reschedule_retires_queued_revision_and_uses_new_anchor_and_content(fixture):
+    rid = seeded(fixture.factory, recurrence="daily")
+    dispatch(fixture.factory, Mock(), NOW)
+    old_log = logs(fixture.factory)[0].id
+    scheduled = datetime.now(timezone.utc) + timedelta(days=2)
+    changed = fixture.client.patch(f"/personal/reminders/{rid}", json={"revision": 1, "subject": "New weekly", "body": "Updated", "timezone": "America/New_York", "recurrence": "weekly", "next_run_at": scheduled.isoformat()})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["revision"] == 2
+    with fixture.factory() as db:
+        item = db.get(Reminder, rid)
+        assert item.anchor_at.replace(tzinfo=timezone.utc) == scheduled
+        assert db.query(ReminderDelivery).one().status == "cancelled"
+        assert db.get(EmailLog, old_log).status == "cancelled"
+    send = Mock()
+    assert deliver(fixture.factory, old_log, send, lambda: True, scheduled)["status"] == "cancelled"
+    send.assert_not_called()
+    assert dispatch(fixture.factory, Mock(), scheduled)["created"] == 1
+    new_log = logs(fixture.factory)[-1]
+    assert new_log.subject == "New weekly" and "Updated" in new_log.html_body
+    assert deliver(fixture.factory, new_log.id, send, lambda: True, scheduled)["status"] == "sent"
+    send.assert_called_once()
+    with fixture.factory() as db:
+        item = db.get(Reminder, rid)
+        assert item.next_run_at > scheduled.replace(tzinfo=None)
+    # Stale edit must not replace the plan after the scheduler advances it.
+    assert fixture.client.patch(f"/personal/reminders/{rid}", json={"revision": 2, "body": "stale"}).status_code == 409
+
+
+@pytest.mark.parametrize("change", [{"timezone": "UTC"}, {"recurrence": "weekly"}])
+def test_rule_change_requires_explicit_next_schedule(fixture, change):
+    rid = seeded(fixture.factory)
+    response = fixture.client.patch(f"/personal/reminders/{rid}", json={"revision": 1, **change})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "rule_change_requires_schedule"
+    with fixture.factory() as db:
+        assert db.get(Reminder, rid).revision == 1
+
+
+def test_reminder_detail_is_owned_and_ended_reminders_cannot_reopen(fixture):
+    rid = seeded(fixture.factory)
+    c = fixture.client
+    assert c.get(f"/personal/reminders/{rid}").json()["id"] == rid
+    fixture.state["id"] = 2
+    assert c.get(f"/personal/reminders/{rid}").status_code == 404
+    fixture.state["id"] = 1
+    c.delete(f"/personal/reminders/{rid}")
+    response = c.patch(f"/personal/reminders/{rid}", json={"revision": 2, "status": "active", "next_run_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()})
+    assert response.status_code == 409 and response.json()["detail"] == "reminder_closed"
+
+
+def test_unknown_paused_attempt_can_be_explicitly_dismissed_then_rescheduled(fixture):
+    rid = seeded(fixture.factory)
+    dispatch(fixture.factory, Mock(), NOW)
+    log_id = logs(fixture.factory)[0].id
+    deliver(fixture.factory, log_id, Mock(side_effect=TimeoutError()), lambda: True, NOW)
+    c = fixture.client
+    did = c.get(f"/personal/reminders/{rid}/deliveries").json()[0]["id"]
+    assert c.patch(f"/personal/reminders/{rid}", json={"revision": 1, "status": "paused"}).status_code == 200
+    scheduled = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    edit = {"revision": 2, "next_run_at": scheduled, "status": "active"}
+    assert c.patch(f"/personal/reminders/{rid}", json=edit).json()["detail"] == "delivery_in_flight_or_unknown"
+    url = f"/personal/reminders/{rid}/deliveries/{did}/dismiss"
+    assert c.post(url, json={}).status_code == 409
+    fixture.state["id"] = 2
+    assert c.post(url, json={"acknowledge_delivery_uncertainty": True}).status_code == 404
+    fixture.state["id"] = 1
+    response = c.post(url, json={"acknowledge_delivery_uncertainty": True})
+    assert response.status_code == 200
+    assert response.json()["error_code"] == "uncertain_delivery_dismissed"
+    assert c.post(url, json={"acknowledge_delivery_uncertainty": True}).json()["id"] == did
+    with fixture.factory() as db:
+        assert db.get(EmailLog, log_id).error_message == "uncertain_delivery_dismissed"
+        assert db.get(Reminder, rid).status == "paused"
+    assert c.patch(f"/personal/reminders/{rid}", json=edit).status_code == 200
+    send = Mock()
+    assert deliver(fixture.factory, log_id, send, lambda: True, NOW)["status"] == "cancelled"
+    send.assert_not_called()
+
+
+@pytest.mark.parametrize("recurrence", ["once", "daily"])
+def test_dismissing_active_unknown_advances_without_claiming_delivery(fixture, recurrence):
+    rid = seeded(fixture.factory, recurrence=recurrence)
+    dispatch(fixture.factory, Mock(), NOW)
+    deliver(fixture.factory, logs(fixture.factory)[0].id, Mock(side_effect=TimeoutError()), lambda: True, NOW)
+    with fixture.factory() as db:
+        did = db.query(ReminderDelivery).one().id
+    url = f"/personal/reminders/{rid}/deliveries/{did}/dismiss"
+    assert fixture.client.post(url, json={"acknowledge_delivery_uncertainty": True}).status_code == 200
+    with fixture.factory() as db:
+        item = db.get(Reminder, rid)
+        assert item.last_run_at is None
+        assert item.revision == 2
+        assert item.status == ("completed" if recurrence == "once" else "active")
+        assert (item.next_run_at is None) == (recurrence == "once")
+
+
+def test_sending_cannot_be_dismissed_and_pause_does_not_claim_recall(fixture):
+    rid = seeded(fixture.factory)
+    dispatch(fixture.factory, Mock(), NOW)
+    log_id = logs(fixture.factory)[0].id
+    with fixture.factory() as db:
+        did = db.query(ReminderDelivery).one().id
+    def send(**kwargs):
+        c = fixture.client
+        assert c.post(f"/personal/reminders/{rid}/deliveries/{did}/dismiss", json={"acknowledge_delivery_uncertainty": True}).status_code == 409
+        assert c.patch(f"/personal/reminders/{rid}", json={"revision": 1, "body": "changed"}).status_code == 409
+        assert c.patch(f"/personal/reminders/{rid}", json={"revision": 1, "status": "paused"}).status_code == 200
+    assert deliver(fixture.factory, log_id, send, lambda: True, NOW)["status"] == "sent"
+    with fixture.factory() as db:
+        assert db.get(Reminder, rid).status == "paused"
+        assert db.get(ReminderDelivery, did).status == "sent"

@@ -96,6 +96,9 @@ class ReminderUpdate(Input):
 class DeliveryRetry(Input):
     acknowledge_duplicate_risk: bool = False
 
+class DeliveryDismiss(Input):
+    acknowledge_delivery_uncertainty: bool = False
+
 class Output(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
