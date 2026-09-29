@@ -9,7 +9,8 @@ import { buildKnowledgeMessages } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { buildDocumentMessages, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import type { ChartInput } from '@/officeTasks/chart';
-import { validatePersonalInput, type PersonalInput, type PersonalItem } from '@/personal/items';
+import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
+import { inputFromDraft, validatePersonalDraft, type PersonalDraft } from '@/personal/itemDraft';
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { assertRunDirectories, undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
 import type { RenamePlan } from '@/fileOrganizer/plan';
@@ -30,6 +31,9 @@ let accountLookup: AbortController | null = null;
 let organizerInFlight = false;
 let reminderSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let reminderDraftVersion = 0;
+let personalSaveTimer: ReturnType<typeof setTimeout> | undefined;
+let personalDraftVersion = 0;
+function clearPersonalTimer() { clearTimeout(personalSaveTimer); personalSaveTimer = undefined; }
 
 function requireReminderOwner(owner: string) {
   const auth = useAuthStore.getState();
@@ -53,7 +57,14 @@ interface WorkbenchState {
   inspectOrganizerRun: (directory: OrganizerDirectoryHandle, id: string, destination?: OrganizerDirectoryHandle) => Promise<void>;
   removeOrganizerRun: (id: string) => Promise<void>;
   personalItems: PersonalItem[];
-  savePersonalItem: (id: string, input: PersonalInput, expectedRevision: number) => Promise<PersonalItem>;
+  personalDrafts: PersonalDraft[];
+  personalDraftSaving: boolean;
+  stagePersonalDraft: (draft: PersonalDraft) => void;
+  flushPersonalDrafts: () => Promise<void>;
+  discardPersonalDraft: (id: string, editId: string) => Promise<void>;
+  commitPersonalDraft: (id: string, editId: string) => Promise<PersonalItem>;
+  archivePersonalItems: (selection: PersonalSelection[], archived: boolean) => Promise<void>;
+  savePersonalItem: (id: string, input: PersonalInput, expectedRevision: number, draftEditId?: string) => Promise<PersonalItem>;
   removePersonalItem: (id: string, expectedRevision: number) => Promise<void>;
   unlocked: boolean;
   profiles: ModelProfile[];
@@ -142,8 +153,12 @@ async function persist(required = false) {
   const epoch = generation;
   try {
     const state = useWorkbenchStore.getState();
-    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates });
-    if (epoch === generation) useWorkbenchStore.setState({ storageError: null });
+    const draftVersion = personalDraftVersion;
+    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates });
+    if (epoch === generation) {
+      useWorkbenchStore.setState({ storageError: null });
+      if (draftVersion === personalDraftVersion) { clearPersonalTimer(); useWorkbenchStore.setState({ personalDraftSaving: false }); }
+    }
   } catch {
     const message = "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
     if (epoch === generation) useWorkbenchStore.setState({ storageError: message });
@@ -153,6 +168,7 @@ async function persist(required = false) {
 
 function eraseMemory() {
   clearReminderTimer();
+  clearPersonalTimer();
   generation++;
   for (const controller of controllers.values()) controller.abort();
   controllers.clear();
@@ -161,7 +177,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, currentId: null, running: {}, streamingContent: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, currentId: null, running: {}, streamingContent: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -313,18 +329,69 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       await persist(true);
     } finally { directory.release?.(); destination?.release?.(); organizerInFlight = false; set({ organizerBusy: false }); }
   },
-  personalItems: [],
-  savePersonalItem: async (id, input, expectedRevision) => {
+  personalItems: [], personalDrafts: [], personalDraftSaving: false,
+  stagePersonalDraft: draft => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    validatePersonalDraft(draft);
+    if (!get().personalDrafts.some(item => item.id === draft.id) && get().personalDrafts.length >= 100) throw new Error('最多保留 100 条草稿，请先保存或丢弃不需要的草稿。');
+    personalDraftVersion++;
+    set(state => ({ personalDrafts: [structuredClone(draft), ...state.personalDrafts.filter(item => item.id !== draft.id)], personalDraftSaving: true }));
+    clearPersonalTimer(); personalSaveTimer = setTimeout(() => { personalSaveTimer = undefined; void get().flushPersonalDrafts().catch(() => {}); }, 400);
+  },
+  flushPersonalDrafts: async () => {
+    clearPersonalTimer(); const epoch = generation;
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+  },
+  discardPersonalDraft: async (id, editId) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const draft = get().personalDrafts.find(item => item.id === id), epoch = generation;
+    if (!draft || draft.editId !== editId) throw new Error('草稿已改变，请重新打开。');
+    clearPersonalTimer(); personalDraftVersion++;
+    set(state => ({ personalDrafts: state.personalDrafts.filter(item => item.id !== id), personalDraftSaving: true }));
+    try { await get().flushPersonalDrafts(); }
+    catch (error) {
+      if (epoch === generation && get().unlocked && !get().personalDrafts.some(item => item.id === id)) {
+        personalDraftVersion++; set(state => ({ personalDrafts: [draft, ...state.personalDrafts], personalDraftSaving: true }));
+      }
+      throw error;
+    }
+  },
+  commitPersonalDraft: async (id, editId) => {
+    const draft = get().personalDrafts.find(item => item.id === id), epoch = generation;
+    if (!draft || draft.editId !== editId) throw new Error('草稿已改变，请重新打开。');
+    const input = inputFromDraft(draft);
+    // Preserve the raw edit before replacing it with a validated record. A lost
+    // final write therefore leaves either the old draft or the committed record.
+    await get().flushPersonalDrafts();
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+    return get().savePersonalItem(id, input, draft.baseRevision, editId);
+  },
+  archivePersonalItems: async (selection, archived) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (get().storageError) throw new Error('请先重试本机保存。');
+    const items = selectedPersonalItems(get().personalItems, selection), ids = new Set(items.map(item => item.id));
+    if (get().personalDrafts.some(draft => ids.has(draft.id))) throw new Error('所选记录有未保存草稿，请先保存或丢弃草稿。');
+    const epoch = generation, now = new Date().toISOString();
+    set(state => ({ personalItems: state.personalItems.map(item => ids.has(item.id) && !!item.archivedAt !== archived ? { ...item, archivedAt: archived ? now : null, updatedAt: now, revision: item.revision + 1 } : item) }));
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看归档结果。');
+  },
+  savePersonalItem: async (id, input, expectedRevision, draftEditId) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('记录标识无效。');
     const clean = validatePersonalInput(input), existing = get().personalItems.find(item => item.id === id);
+    if (existing?.archivedAt) throw new Error('请先恢复已归档记录，再编辑。');
+    if (draftEditId && get().personalDrafts.find(item => item.id === id)?.editId !== draftEditId) throw new Error('草稿已改变，请重新打开。');
     if ((existing?.revision ?? 0) !== expectedRevision) throw new Error('记录已改变，请重新打开后编辑。');
     if (existing && existing.kind !== clean.kind) throw new Error('不能更改记录类型。');
     if (!existing && get().personalItems.length >= 500) throw new Error('最多保留 500 条笔记和待办，请导出并删除不需要的记录。');
     const now = new Date().toISOString(), epoch = generation;
     const item: PersonalItem = { ...clean, id, revision: expectedRevision + 1, createdAt: existing?.createdAt ?? now, updatedAt: now,
       completedAt: clean.kind === 'todo' && clean.status === 'done' ? existing?.completedAt ?? now : null };
-    set(state => ({ personalItems: [item, ...state.personalItems.filter(value => value.id !== id)] }));
+    if (draftEditId) personalDraftVersion++;
+    set(state => ({ personalItems: [item, ...state.personalItems.filter(value => value.id !== id)],
+      ...(draftEditId ? { personalDrafts: state.personalDrafts.filter(draft => draft.id !== id || draft.editId !== draftEditId), personalDraftSaving: true } : {}) }));
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看保存结果。');
     return item;
@@ -374,19 +441,19 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const toolRuns = (data.toolRuns ?? []).map(tool => tool.status === 'running' ? { ...tool, status: 'interrupted' as const, finishedAt: unlockedAt,
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
     const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
-    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight,
+    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index])) await persist();
   },
   lock: async () => {
     // Queue the current draft snapshot before clearing memory; flush below waits
     // for it even when the 400 ms autosave debounce has not elapsed.
-    if (get().unlocked && get().reminderDraftSaving) { clearReminderTimer(); void persist().catch(() => {}); }
+    if (get().unlocked && (get().reminderDraftSaving || get().personalDraftSaving)) { clearReminderTimer(); clearPersonalTimer(); void persist().catch(() => {}); }
     const epoch = ++generation;
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
+    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();

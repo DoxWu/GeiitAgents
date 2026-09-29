@@ -82,6 +82,7 @@ export interface WorkArtifact {
 }
 
 export interface VaultData {
+  personalDrafts?: import('@/personal/itemDraft').PersonalDraft[];
   reminderDrafts?: import('@/personal/reminderDraft').ReminderDraft[];
   reminderTemplates?: import('@/personal/reminderDraft').ReminderTemplate[];
   organizerRuns?: import('@/fileOrganizer/history').OrganizerRun[];

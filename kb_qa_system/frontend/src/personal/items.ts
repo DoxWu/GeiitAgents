@@ -2,7 +2,7 @@ export type TodoStatus = 'open' | 'done' | 'cancelled';
 export type Priority = 'normal' | 'high' | 'low';
 export interface ItemFields { title: string; content: string; tags: string[] }
 export type PersonalInput = ItemFields & ({ kind: 'note' } | { kind: 'todo'; status: TodoStatus; priority: Priority; dueAt: string | null });
-export type PersonalItem = PersonalInput & { id: string; revision: number; createdAt: string; updatedAt: string; completedAt: string | null };
+export type PersonalItem = PersonalInput & { id: string; revision: number; createdAt: string; updatedAt: string; completedAt: string | null; archivedAt?: string | null };
 
 export function validatePersonalInput(input: PersonalInput): PersonalInput {
   const title = input.title.trim();
@@ -17,7 +17,7 @@ export function validatePersonalInput(input: PersonalInput): PersonalInput {
 }
 
 export function isOverdue(item: PersonalItem, now = Date.now()): boolean {
-  return item.kind === 'todo' && item.status === 'open' && item.dueAt !== null && Date.parse(item.dueAt) < now;
+  return !item.archivedAt && item.kind === 'todo' && item.status === 'open' && item.dueAt !== null && Date.parse(item.dueAt) < now;
 }
 
 export function localDateInput(iso: string | null): string {
@@ -42,5 +42,21 @@ export function localDateToUtc(value: string): string | null {
 export function personalMarkdown(item: PersonalItem): string {
   const details = [`类型：${item.kind === 'note' ? '笔记' : '待办'}`, `标签：${item.tags.join('、') || '无'}`, `更新时间：${item.updatedAt}`];
   if (item.kind === 'todo') details.push(`状态：${{ open: '待完成', done: '已完成', cancelled: '已取消' }[item.status]}`, `优先级：${{ normal: '普通', high: '高', low: '低' }[item.priority]}`, `截止时间（UTC）：${item.dueAt ?? '未设置'}`);
+  if (item.archivedAt) details.push(`归档时间：${item.archivedAt}`);
   return `# ${item.title}\n\n${details.join('\n\n')}\n\n---\n\n${item.content}\n`;
+}
+
+export interface PersonalSelection { id: string; revision: number }
+export function selectedPersonalItems(items: PersonalItem[], selection: PersonalSelection[]): PersonalItem[] {
+  if (!selection.length || selection.length > 500 || new Set(selection.map(item => item.id)).size !== selection.length) throw new Error('请选择 1–500 条不同的记录。');
+  return selection.map(reference => {
+    const item = items.find(item => item.id === reference.id);
+    if (!item || item.revision !== reference.revision) throw new Error('所选记录已改变，请重新选择后操作。');
+    return item;
+  });
+}
+export function exportPersonalItems(items: PersonalItem[], format: 'markdown' | 'json'): string {
+  if (!items.length || items.length > 500) throw new Error('请选择 1–500 条记录。');
+  if (format === 'markdown') return items.map(personalMarkdown).join('\n\n---\n\n');
+  return JSON.stringify({ format: 'geiit.personal-records', version: 1, exportedAt: new Date().toISOString(), items }, null, 2);
 }

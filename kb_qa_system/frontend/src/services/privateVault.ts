@@ -69,6 +69,7 @@ export class PrivateVault {
           || data.toolRuns !== undefined && !Array.isArray(data.toolRuns)
           || data.artifacts !== undefined && !Array.isArray(data.artifacts)
           || data.personalItems !== undefined && !Array.isArray(data.personalItems)
+          || data.personalDrafts !== undefined && !Array.isArray(data.personalDrafts)
           || data.reminderDrafts !== undefined && !Array.isArray(data.reminderDrafts)
           || data.reminderTemplates !== undefined && !Array.isArray(data.reminderTemplates)
           || data.organizerRuns !== undefined && !Array.isArray(data.organizerRuns)) throw new Error();
