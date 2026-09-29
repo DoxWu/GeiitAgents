@@ -82,6 +82,8 @@ export interface WorkArtifact {
 }
 
 export interface VaultData {
+  reminderDrafts?: import('@/personal/reminderDraft').ReminderDraft[];
+  reminderTemplates?: import('@/personal/reminderDraft').ReminderTemplate[];
   organizerRuns?: import('@/fileOrganizer/history').OrganizerRun[];
   personalItems?: import('@/personal/items').PersonalItem[];
   profiles: (Omit<ModelProfile, "hasKey"> & { apiKey: string })[];

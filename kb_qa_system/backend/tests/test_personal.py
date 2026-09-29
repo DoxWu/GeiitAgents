@@ -460,3 +460,51 @@ def test_invalid_page_queries_are_rejected_without_echoing_inputs(fixture, param
 def test_empty_page_is_terminal(fixture):
     response = fixture.client.get("/personal/reminders/page")
     assert response.json() == {"items": [], "snapshot_id": 0, "next_cursor": None}
+
+
+def test_creation_lookup_recovers_lost_response_with_account_isolation(fixture):
+    c = fixture.client
+    payload = reminder_payload()
+    item = c.post('/personal/reminders', json=payload).json()
+    url = '/personal/reminders/by-request/' + payload['request_id']
+    found = c.get(url)
+    assert found.status_code == 200 and found.json()['id'] == item['id']
+    assert found.headers['cache-control'] == 'no-store'
+    fixture.state['id'] = 2
+    assert c.get(url).status_code == 404
+    fixture.state['id'] = None
+    assert c.get(url).status_code == 401
+    fixture.state['id'] = 1
+    assert c.get('/personal/reminders/by-request/not-a-uuid').status_code == 422
+    assert c.get('/personal/reminders/by-request/' + str(uuid4())).status_code == 404
+    # Idempotency still precedes capability and time checks on an accepted request.
+    fixture.module.settings.REMINDERS_ENABLED = False
+    retried = c.post('/personal/reminders', json=payload)
+    assert retried.status_code == 200 and retried.json()['id'] == item['id']
+    with fixture.factory() as db:
+        assert db.query(Reminder).count() == 1
+
+
+def test_search_filters_apply_to_all_pages_and_escape_wildcards(fixture):
+    ids = [seeded(fixture.factory, recurrence='weekly') for _ in range(27)]
+    with fixture.factory() as db:
+        for rid in ids:
+            row = db.get(Reminder, rid)
+            row.subject, row.body = '工作报告', '预算 100%_核对\\完成'
+            row.status = 'paused' if rid == ids[0] else 'active'
+        db.commit()
+    c = fixture.client
+    params = {'q': '%_核对\\', 'status': 'active', 'recurrence': 'weekly'}
+    first = c.get('/personal/reminders/page', params=params).json()
+    assert len(first['items']) == 20
+    second = c.get('/personal/reminders/page', params={**params, 'cursor': first['next_cursor'], 'snapshot_id': first['snapshot_id']}).json()
+    assert [row['id'] for row in first['items'] + second['items']] == ids[:0:-1]
+    assert second['next_cursor'] is None
+    assert c.get('/personal/reminders/page', params={'q': 'does-not-exist'}).json()['items'] == []
+    assert len(c.get('/personal/reminders/page', params={'status': 'paused'}).json()['items']) == 1
+    assert c.get('/personal/reminders/page', params={'recurrence': 'daily'}).json()['items'] == []
+    for query in ({'q': 'x' * 201}, {'status': 'secret-invalid'}, {'recurrence': 'secret-invalid'}):
+        response = c.get('/personal/reminders/page', params=query)
+        assert response.status_code == 422 and 'secret-invalid' not in response.text
+    fixture.state['id'] = 2
+    assert c.get('/personal/reminders/page', params=params).json()['items'] == []

@@ -92,5 +92,6 @@ def pagination_fixture():
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=18763, log_level="warning", access_log=False)
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get('REMINDER_QA_PORT', '18763')), log_level="warning", access_log=False)

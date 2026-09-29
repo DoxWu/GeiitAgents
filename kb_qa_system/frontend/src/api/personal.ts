@@ -52,8 +52,17 @@ function pageQuery(cursor?: number, snapshotId?: number) {
   if (snapshotId !== undefined) query.set('snapshot_id', String(snapshotId));
   return query.toString();
 }
-export function listServerReminders(cursor?: number, snapshotId?: number) {
-  return apiClient.get<PersonalPage<ServerReminder>>('/personal/reminders/page?' + pageQuery(cursor, snapshotId), { cache: 'no-store' });
+export interface ReminderFilters { q?: string; status?: ReminderStatus; recurrence?: ReminderRecurrence }
+export function listServerReminders(cursor?: number, snapshotId?: number, filters: ReminderFilters = {}) {
+  const query = new URLSearchParams(pageQuery(cursor, snapshotId));
+  if (filters.q?.trim()) query.set('q', filters.q.trim());
+  if (filters.status) query.set('status', filters.status);
+  if (filters.recurrence) query.set('recurrence', filters.recurrence);
+  return apiClient.get<PersonalPage<ServerReminder>>('/personal/reminders/page?' + query, { cache: 'no-store' });
+}
+
+export function getReminderByRequest(requestId: string) {
+  return apiClient.get<ServerReminder>('/personal/reminders/by-request/' + encodeURIComponent(requestId), { cache: 'no-store' });
 }
 
 export function getServerReminder(id: number) {
@@ -67,8 +76,8 @@ export function createServerReminder(input: {
   timezone: string;
   recurrence: ReminderRecurrence;
   next_run_at: string;
-}) {
-  return apiClient.post<ServerReminder>("/personal/reminders", input, { cache: "no-store" });
+}, signal?: AbortSignal) {
+  return apiClient.post<ServerReminder>("/personal/reminders", input, { cache: "no-store", signal });
 }
 
 export function updateServerReminder(id: number, input: {
@@ -79,8 +88,8 @@ export function updateServerReminder(id: number, input: {
   body?: string;
   timezone?: string;
   recurrence?: ReminderRecurrence;
-}) {
-  return apiClient.patch<ServerReminder>(`/personal/reminders/${id}`, input, { cache: "no-store" });
+}, signal?: AbortSignal) {
+  return apiClient.patch<ServerReminder>(`/personal/reminders/${id}`, input, { cache: "no-store", signal });
 }
 
 export function cancelServerReminder(id: number) {

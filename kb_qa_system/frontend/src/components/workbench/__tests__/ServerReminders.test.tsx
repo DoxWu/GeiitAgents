@@ -15,13 +15,20 @@ const { auth, api } = vi.hoisted(() => ({
     retryReminderDelivery: vi.fn(),
     dismissReminderDelivery: vi.fn(),
     getServerReminder: vi.fn(),
+    getReminderByRequest: vi.fn(),
   },
 }));
 
 vi.mock("@/store/authStore", () => ({
-  useAuthStore: (selector: (state: typeof auth) => unknown) => selector(auth),
+  useAuthStore: Object.assign((selector: (state: typeof auth) => unknown) => selector(auth), { getState: () => auth, subscribe: () => () => {} }),
 }));
 vi.mock("@/api/personal", () => api);
+vi.mock('@/store/workbenchStore', async () => {
+  const { create } = await import('zustand');
+  return { useWorkbenchStore: create(() => ({ unlocked: true, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, storageError: null,
+    stageReminderDraft: vi.fn(), flushReminderDraft: vi.fn(), removeReminderDraft: vi.fn(), saveReminderTemplate: vi.fn(), removeReminderTemplate: vi.fn() })) };
+});
+import { useWorkbenchStore as store } from '@/store/workbenchStore';
 
 import { ServerReminders } from "../ServerReminders";
 
@@ -59,6 +66,10 @@ describe("ServerReminders", () => {
     auth.user = null;
     window.confirm = vi.fn(() => true);
     enableReminderApi();
+    store.setState({ unlocked: true, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, storageError: null });
+    vi.mocked(store.getState().stageReminderDraft).mockImplementation(draft => store.setState({ reminderDrafts: [draft, ...store.getState().reminderDrafts.filter(item => item.owner !== draft.owner)] }));
+    vi.mocked(store.getState().flushReminderDraft).mockResolvedValue();
+    vi.mocked(store.getState().removeReminderDraft).mockImplementation(async owner => { store.setState({ reminderDrafts: store.getState().reminderDrafts.filter(item => item.owner !== owner) }); });
     api.getServerReminder.mockResolvedValue(reminder);
   });
 
@@ -154,7 +165,7 @@ describe("ServerReminders", () => {
     fireEvent.change(screen.getByLabelText('提醒重复规则'), { target: { value: 'weekly' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await screen.findByRole('status');
-    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, next_run_at: '2099-01-03T02:30:00.000Z', timezone: 'Asia/Shanghai', recurrence: 'weekly' });
+    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, next_run_at: '2099-01-03T02:30:00.000Z', timezone: 'Asia/Shanghai', recurrence: 'weekly' }, expect.any(AbortSignal));
   });
   it('does not move the schedule when only content changes', async () => {
     await loaded({ ...reminder, next_run_at: '2099-01-02T01:00:37.000Z' });
@@ -163,7 +174,7 @@ describe("ServerReminders", () => {
     fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'new body' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await screen.findByRole('status');
-    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, body: 'new body' });
+    expect(api.updateServerReminder).toHaveBeenCalledWith(7, { revision: 3, body: 'new body' }, expect.any(AbortSignal));
   });
   it('preserves conflicting drafts, forbids blind retry, and explicitly reloads the latest revision', async () => {
     await loaded(); api.updateServerReminder.mockRejectedValueOnce(new Error('revision_conflict'));
@@ -180,7 +191,7 @@ describe("ServerReminders", () => {
     fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'merged draft' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await screen.findByRole('status');
-    expect(api.updateServerReminder).toHaveBeenLastCalledWith(7, { revision: 8, body: 'merged draft' });
+    expect(api.updateServerReminder).toHaveBeenLastCalledWith(7, { revision: 8, body: 'merged draft' }, expect.any(AbortSignal));
   });
   it('routes overdue resume into explicit rescheduling instead of repeatedly sending an invalid patch', async () => {
     auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
@@ -191,7 +202,7 @@ describe("ServerReminders", () => {
     expect(screen.getByRole('checkbox', { name: '保存后恢复提醒' })).toBeChecked();
     fireEvent.change(screen.getByLabelText('提醒时间'), { target: { value: '2099-01-03T09:00' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
-    await waitFor(() => expect(api.updateServerReminder).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'active', next_run_at: '2099-01-03T01:00:00.000Z' })));
+    await waitFor(() => expect(api.updateServerReminder).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'active', next_run_at: '2099-01-03T01:00:00.000Z' }), expect.any(AbortSignal)));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已修改'));
   });
   it('reuses the creation request id after an uncertain HTTP failure', async () => {
@@ -200,7 +211,8 @@ describe("ServerReminders", () => {
     fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'content' } });
     fireEvent.click(screen.getByRole('button', { name: '保存提醒' }));
     await screen.findByRole('alert');
-    fireEvent.click(screen.getByRole('button', { name: '保存提醒' }));
+    expect(screen.getByRole('button', { name: '保存提醒' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '重试同一提交' }));
     await screen.findByRole('status');
     expect(api.createServerReminder.mock.calls[0][0]).toEqual(api.createServerReminder.mock.calls[1][0]);
   });
@@ -229,7 +241,7 @@ describe("ServerReminders", () => {
     auth.user = { email: 'new@example.com' }; view.rerender(<ServerReminders />);
     await screen.findByText('还没有服务端提醒。');
     await act(async () => { resolve(page([reminder])); });
-    expect(screen.queryByText('提交周报')).not.toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: '提醒：提交周报' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('提醒主题')).toHaveValue('');
   });
   it('keeps unsaved drafts when switching records is declined, and prevents duplicate saves', async () => {
@@ -244,7 +256,7 @@ describe("ServerReminders", () => {
     api.updateServerReminder.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const form = screen.getByRole('button', { name: '保存修改' }).closest('form')!;
     fireEvent.submit(form); fireEvent.submit(form);
-    expect(api.updateServerReminder).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.updateServerReminder).toHaveBeenCalledTimes(1));
     expect(screen.getByLabelText('提醒内容')).toBeDisabled();
     await act(async () => { finish({ ...reminder, revision: 4 }); });
     await screen.findByRole('status');
@@ -257,13 +269,13 @@ describe("ServerReminders", () => {
     fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: '保持我的草稿' } });
     fireEvent.click(screen.getByRole('button', { name: '下一页提醒' }));
     await screen.findByRole('article', { name: '提醒：更早的提醒' });
-    expect(api.listServerReminders).toHaveBeenLastCalledWith(7, 9);
+    expect(api.listServerReminders).toHaveBeenLastCalledWith(7, 9, {});
     expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(screen.getByLabelText('提醒内容')).toHaveValue('保持我的草稿');
     expect(screen.getByRole('button', { name: '下一页提醒' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '上一页提醒' }));
     await screen.findByRole('article', { name: '提醒：提交周报' });
-    expect(api.listServerReminders).toHaveBeenLastCalledWith(undefined, 9);
+    expect(api.listServerReminders).toHaveBeenLastCalledWith(undefined, 9, {});
   });
   it('keeps the current page and cursor after a failed next-page request, then resets the window on refresh', async () => {
     auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
@@ -274,7 +286,7 @@ describe("ServerReminders", () => {
     expect(screen.getByRole('article')).toHaveAccessibleName('提醒：提交周报');
     fireEvent.click(screen.getByRole('button', { name: '刷新邮件提醒' }));
     await screen.findByRole('article', { name: '提醒：新提醒' });
-    expect(api.listServerReminders).toHaveBeenLastCalledWith();
+    expect(api.listServerReminders).toHaveBeenLastCalledWith(undefined, undefined, {});
     expect(screen.getByRole('button', { name: '上一页提醒' })).toBeDisabled();
   });
   it('pages deliveries independently and reopens their newest window', async () => {
@@ -289,5 +301,89 @@ describe("ServerReminders", () => {
     fireEvent.click(screen.getByRole('button', { name: '投递记录' })); await screen.findByText('结果不明');
     expect(api.listReminderDeliveries).toHaveBeenLastCalledWith(7);
     expect(screen.getByRole('button', { name: '上一页投递' })).toBeDisabled();
+  });
+
+  it('restores pending creation after remount and checks the original ID without resending', async () => {
+    const view = await loaded(); api.createServerReminder.mockRejectedValueOnce(new Error('response lost'));
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: 'pending' } });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'sensitive draft' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存提醒' })); await screen.findByRole('alert');
+    const payload = api.createServerReminder.mock.calls[0][0]; view.unmount();
+    render(<ServerReminders />); await screen.findByRole('region', { name: '待核查提交' });
+    await waitFor(() => expect(screen.getByRole('button', { name: '核查上次提交' })).toBeEnabled());
+    expect(screen.getByLabelText('提醒内容')).toHaveValue('sensitive draft');
+    expect(screen.getByLabelText('提醒内容')).toBeDisabled();
+    api.getReminderByRequest.mockResolvedValue(reminder);
+    fireEvent.click(screen.getByRole('button', { name: '核查上次提交' })); await screen.findByText('已找到原提交的提醒，未重复创建。');
+    expect(api.getReminderByRequest).toHaveBeenCalledWith(payload.request_id);
+    expect(api.createServerReminder).toHaveBeenCalledTimes(1);
+    expect(store.getState().reminderDrafts).toEqual([]);
+  });
+
+  it('retains an unknown create on not-found and reuses its exact ID on explicit retry', async () => {
+    await loaded(); api.createServerReminder.mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce(reminder);
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: 'pending' } });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'same content' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存提醒' })); await screen.findByRole('alert');
+    api.getReminderByRequest.mockRejectedValue(new Error('record_not_found'));
+    fireEvent.click(screen.getByRole('button', { name: '核查上次提交' })); await screen.findByText(/原请求仍可能在处理/);
+    expect(screen.getByLabelText('提醒内容')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '重试同一提交' })); await screen.findByText(/邮件提醒已保存/);
+    expect(api.createServerReminder.mock.calls[0][0]).toEqual(api.createServerReminder.mock.calls[1][0]);
+  });
+
+  it('never sends a request when its encrypted checkpoint fails', async () => {
+    await loaded(); vi.mocked(store.getState().flushReminderDraft).mockRejectedValue(new Error('本机保存失败'));
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: 'no upload' } });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'private' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存提醒' })); await screen.findByRole('alert');
+    expect(api.createServerReminder).not.toHaveBeenCalled();
+    expect(store.getState().reminderDrafts[0].attempt?.kind).toBe('create');
+  });
+
+  it('restores editing revision and reconciles an accepted patch without applying it twice', async () => {
+    const view = await loaded(); api.updateServerReminder.mockRejectedValueOnce(new Error('response lost'));
+    fireEvent.click(screen.getByRole('button', { name: '编辑 / 改期' }));
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'accepted content' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' })); await screen.findByRole('alert');
+    view.unmount(); render(<ServerReminders />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '核查上次提交' })).toBeEnabled());
+    api.getServerReminder.mockResolvedValue({ ...reminder, revision: 4, body: 'accepted content' });
+    fireEvent.click(screen.getByRole('button', { name: '核查上次提交' })); await screen.findByText(/当前内容与上次提交一致/);
+    expect(api.updateServerReminder).toHaveBeenCalledTimes(1);
+    expect(store.getState().reminderDrafts).toEqual([]);
+  });
+
+  it('applies template content without copying an old date and searches all pages with fixed filters', async () => {
+    await loaded(); fireEvent.click(screen.getByText('提醒模板'));
+    const time = (screen.getByLabelText('提醒时间') as HTMLInputElement).value;
+    fireEvent.change(screen.getByLabelText('选择提醒模板'), { target: { value: 'weekly-report' } });
+    fireEvent.click(screen.getByRole('button', { name: '应用模板' }));
+    expect(screen.getByLabelText('提醒主题')).toHaveValue('提交周报');
+    expect(screen.getByLabelText('提醒重复规则')).toHaveValue('weekly');
+    expect(screen.getByLabelText('提醒时间')).toHaveValue(time);
+    expect(api.createServerReminder).not.toHaveBeenCalled();
+    api.listServerReminders.mockResolvedValueOnce(page([reminder], 7, 8)).mockResolvedValueOnce(page([]));
+    fireEvent.change(screen.getByLabelText('搜索提醒'), { target: { value: '进展' } });
+    fireEvent.change(screen.getByLabelText('筛选状态'), { target: { value: 'active' } });
+    fireEvent.click(screen.getByRole('button', { name: '搜索 / 筛选' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '下一页提醒' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: '下一页提醒' }));
+    await waitFor(() => expect(api.listServerReminders).toHaveBeenLastCalledWith(7, 8, { q: '进展', status: 'active' }));
+    expect(screen.getByLabelText('提醒主题')).toHaveValue('提交周报');
+  });
+
+  it('aborts pending submit on unmount and retains its checkpoint despite a late response', async () => {
+    const view = await loaded(); let finish!: (item: typeof reminder) => void;
+    api.createServerReminder.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: 'pending submit' } });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: 'draft' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存提醒' }));
+    await waitFor(() => expect(api.createServerReminder).toHaveBeenCalledTimes(1));
+    const signal = api.createServerReminder.mock.calls[0][1] as AbortSignal;
+    view.unmount(); expect(signal.aborted).toBe(true);
+    await act(async () => finish(reminder));
+    expect(store.getState().reminderDrafts[0].attempt?.kind).toBe('create');
+    expect(store.getState().removeReminderDraft).not.toHaveBeenCalled();
   });
 });

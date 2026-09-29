@@ -3,6 +3,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.exceptions import RequestValidationError
@@ -233,8 +234,26 @@ def page_query(query, model, limit, cursor, snapshot_id):
 
 
 @router.get("/reminders/page", response_model=ReminderPage)
-def page_reminders(limit: int = Query(20, ge=1, le=100), cursor: int | None = Query(None, ge=1), snapshot_id: int | None = Query(None, ge=0), user=UserDep, db: Session=DbDep):
-    return page_query(db.query(Reminder).filter(Reminder.user_id == user.id), Reminder, limit, cursor, snapshot_id)
+def page_reminders(limit: int = Query(20, ge=1, le=100), cursor: int | None = Query(None, ge=1), snapshot_id: int | None = Query(None, ge=0),
+                   q: str | None = Query(None, max_length=200), status: Literal["active", "paused", "cancelled", "completed"] | None = None,
+                   recurrence: Literal["once", "daily", "weekly"] | None = None, user=UserDep, db: Session=DbDep):
+    query = db.query(Reminder).filter(Reminder.user_id == user.id)
+    if q and q.strip():
+        needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(or_(Reminder.subject.ilike(needle, escape="\\"), Reminder.body.ilike(needle, escape="\\")))
+    if status:
+        query = query.filter(Reminder.status == status)
+    if recurrence:
+        query = query.filter(Reminder.recurrence == recurrence)
+    return page_query(query, Reminder, limit, cursor, snapshot_id)
+
+
+@router.get("/reminders/by-request/{request_id}", response_model=ReminderOut)
+def reminder_by_request(request_id: UUID, user=UserDep, db: Session=DbDep):
+    item = db.query(Reminder).filter(Reminder.user_id == user.id, Reminder.request_id == str(request_id)).first()
+    if item is None:
+        raise HTTPException(404, "record_not_found")
+    return item
 
 
 @router.get("/reminders/{reminder_id}", response_model=ReminderOut)

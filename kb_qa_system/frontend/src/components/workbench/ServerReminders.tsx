@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bell, ChevronDown, ChevronUp, Pause, Play, RefreshCw, Square } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
+import { useWorkbenchStore } from '@/store/workbenchStore';
 import {
   createServerReminder, dismissReminderDelivery, getPersonalCapabilities, getServerReminder, listReminderDeliveries, listServerReminders,
   retryReminderDelivery, updateServerReminder, type DeliveryStatus, type PersonalCapabilities,
-  type PersonalPage, type ReminderDelivery, type ReminderRecurrence, type ServerReminder,
+  getReminderByRequest, type ReminderFilters, type PersonalPage, type ReminderDelivery, type ReminderRecurrence, type ServerReminder,
 } from '@/api/personal';
 import { ReminderEditor, type ReminderEdit, type ReminderFields } from './ReminderEditor';
 import { formatReminderDate } from '@/personal/reminderTime';
+import { reminderOwner, reminderForm, type ReminderDraft, type ReminderForm, type ReminderAttempt } from '@/personal/reminderDraft';
+import { ReminderTemplates } from './ReminderTemplates';
 
 const recurrenceLabels: Record<ReminderRecurrence, string> = { once: '一次', daily: '每天', weekly: '每周' };
 const statusLabels: Record<string, string> = { active: '运行中', paused: '已暂停', cancelled: '已取消', completed: '已结束' };
@@ -58,46 +61,70 @@ function DeliveryRow({ delivery, item, disabled, onAction }: {
 
 export function ServerReminders() {
   const authenticated = useAuthStore(state => state.isAuthenticated), user = useAuthStore(state => state.user);
+  const unlocked = useWorkbenchStore(state => state.unlocked);
   if (!authenticated || !user) return <section className="flex min-h-0 flex-1 flex-col" aria-label="邮件提醒"><div className="p-6"><h1 className="text-xl font-semibold">邮件提醒</h1><p className="mt-3 text-sm text-ink-secondary">请登录正式账号后使用服务端邮件提醒。提醒不会保存模型密钥，也不依赖客户端保持打开。</p></div></section>;
-  // Account changes unmount drafts and invalidate responses from the old account.
-  return <ReminderWorkspace key={user.id + ':' + user.email} email={user.email} />;
+  if (!unlocked) return <p className="p-6">请先解锁本机密钥库，以保护提醒草稿和提交记录。</p>;
+  const owner = reminderOwner(user.id, user.email);
+  // Account changes unmount forms; encrypted drafts stay scoped to their owner.
+  return <ReminderWorkspace key={owner} email={user.email} owner={owner} />;
 }
 
-function ReminderWorkspace({ email }: { email: string }) {
+function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
+  const draftSaving = useWorkbenchStore(state => state.reminderDraftSaving), storageError = useWorkbenchStore(state => state.storageError);
+  const [draft, setDraft] = useState<ReminderDraft>(() => useWorkbenchStore.getState().reminderDrafts.find(item => item.owner === owner) || { owner, form: reminderForm(), updatedAt: new Date().toISOString() });
+  const editing = draft.original ? { original: draft.original, resume: draft.form.reactivate } : undefined, conflict = Boolean(draft.conflict);
+  const [filters, setFilters] = useState<ReminderFilters>({}), [filterInput, setFilterInput] = useState<ReminderFilters>({});
   const [capabilities, setCapabilities] = useState<PersonalCapabilities | null>(null);
   const [reminders, setReminders] = useState<ServerReminder[]>([]);
   const [reminderPage, setReminderPage] = useState<PageInfo | null>(null), [reminderCursors, setReminderCursors] = useState<(number | undefined)[]>([undefined]);
   const [deliveries, setDeliveries] = useState<Record<number, ReminderDelivery[]>>({});
   const [deliveryPage, setDeliveryPage] = useState<PageInfo | null>(null), [deliveryCursors, setDeliveryCursors] = useState<(number | undefined)[]>([undefined]);
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [editing, setEditing] = useState<{ original: ServerReminder; resume: boolean }>();
-  const [editorVersion, setEditorVersion] = useState(0), [conflict, setConflict] = useState(false);
-  const [draftDirty, setDraftDirty] = useState(false);
+  const [editorVersion, setEditorVersion] = useState(0);
+  const [draftDirty, setDraftDirty] = useState(() => Boolean(useWorkbenchStore.getState().reminderDrafts.find(item => item.owner === owner)));
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const lifecycle = useRef(0), busyRef = useRef(false), mounted = useRef(false);
-  const createAttempt = useRef<{ fingerprint: string; requestId: string }>();
+  const requestController = useRef<AbortController>();
+  function stage(value: ReminderDraft) {
+    const next = { ...value, updatedAt: new Date().toISOString() };
+    useWorkbenchStore.getState().stageReminderDraft(next); setDraft(next); setDraftDirty(true);
+  }
+  function changeForm(form: ReminderForm) {
+    if (draft.attempt || busyRef.current) return;
+    try { stage({ ...draft, form }); setError(''); } catch (cause) { setError(messageFor(cause)); }
+  }
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (useWorkbenchStore.getState().reminderDraftSaving || useWorkbenchStore.getState().storageError) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, []);
 
   useEffect(() => {
     mounted.current = true; const epoch = ++lifecycle.current, token = lifecycle;
+    const unsubscribe = useAuthStore.subscribe(auth => {
+      if (!auth.isAuthenticated || !auth.user || reminderOwner(auth.user.id, auth.user.email) !== owner) requestController.current?.abort();
+    });
     busyRef.current = true; setBusy(true);
     void Promise.all([getPersonalCapabilities(), listServerReminders()]).then(([caps, rows]) => {
       if (mounted.current && epoch === token.current) { setCapabilities(caps); setReminders(rows.items); setReminderPage(rows); }
     }).catch(cause => { if (mounted.current && epoch === token.current) setError(messageFor(cause)); })
       .finally(() => { if (mounted.current && epoch === token.current) { busyRef.current = false; setBusy(false); } });
-    return () => { mounted.current = false; token.current++; busyRef.current = false; };
-  }, []);
+    return () => { mounted.current = false; token.current++; busyRef.current = false; requestController.current?.abort(); unsubscribe(); };
+  }, [owner]);
 
   async function perform(action: (live: () => boolean) => Promise<void>) {
     if (!mounted.current || busyRef.current) return;
     busyRef.current = true; setBusy(true); setError(''); setNotice('');
-    const epoch = lifecycle.current, live = () => mounted.current && epoch === lifecycle.current;
+    const controller = new AbortController(); requestController.current = controller;
+    const epoch = lifecycle.current, live = () => {
+      const auth = useAuthStore.getState();
+      return !controller.signal.aborted && mounted.current && epoch === lifecycle.current && useWorkbenchStore.getState().unlocked && auth.isAuthenticated && !!auth.user && reminderOwner(auth.user.id, auth.user.email) === owner;
+    };
     try { await action(live); }
     catch (cause) {
       if (live()) {
         setError(messageFor(cause));
-        if (cause instanceof Error && cause.message === 'revision_conflict' && editing) setConflict(true);
       }
-    } finally { if (live()) { busyRef.current = false; setBusy(false); } }
+    } finally { if (live()) { busyRef.current = false; setBusy(false); } if (requestController.current === controller) requestController.current = undefined; }
   }
   function replace(item: ServerReminder) {
     setReminders(current => current.map(value => value.id === item.id ? item : value));
@@ -109,11 +136,13 @@ function ReminderWorkspace({ email }: { email: string }) {
     setDeliveries({}); setDeliveryPage(null); setExpanded(null);
   }
   function edit(item: ServerReminder, resume = false) {
-    setEditing({ original: item, resume }); setEditorVersion(value => value + 1); setConflict(false); setDraftDirty(false); setError(''); setNotice('');
+    if (draft.attempt) { setError('请先核查上次提交，或明确放弃待核查记录。'); return; }
+    try { stage({ owner, original: item, form: reminderForm(item, resume), updatedAt: new Date().toISOString() }); setDraftDirty(false); setEditorVersion(value => value + 1); setError(''); setNotice(''); }
+    catch (cause) { setError(messageFor(cause)); }
   }
   async function refresh() {
     await perform(async live => {
-      const [caps, rows] = await Promise.all([getPersonalCapabilities(), listServerReminders()]);
+      const [caps, rows] = await Promise.all([getPersonalCapabilities(), listServerReminders(undefined, undefined, filters)]);
       if (live()) { setCapabilities(caps); firstPage(rows); }
     });
   }
@@ -121,26 +150,63 @@ function ReminderWorkspace({ email }: { email: string }) {
     if (!reminderPage || direction === -1 && reminderCursors.length <= 1 || direction === 1 && reminderPage.next_cursor === null) return;
     const cursors = direction === 1 ? [...reminderCursors, reminderPage.next_cursor!] : reminderCursors.slice(0, -1);
     await perform(async live => {
-      const page = await listServerReminders(cursors.at(-1), reminderPage.snapshot_id);
+      const page = await listServerReminders(cursors.at(-1), reminderPage.snapshot_id, filters);
       if (live()) { setReminders(page.items); setReminderPage(page); setReminderCursors(cursors); setDeliveries({}); setDeliveryPage(null); setExpanded(null); }
     });
   }
-  async function save(fields: ReminderEdit) {
-    await perform(async live => {
-      if (editing) {
-        const updated = await updateServerReminder(editing.original.id, { revision: editing.original.revision, ...fields });
-        if (live()) { replace(updated); setEditing(undefined); setConflict(false); setDraftDirty(false); setEditorVersion(value => value + 1); setNotice('提醒已修改，旧版本尚未发送的投递已取消。'); }
-      } else {
-        const fingerprint = JSON.stringify(fields);
-        if (createAttempt.current?.fingerprint !== fingerprint) createAttempt.current = { fingerprint, requestId: crypto.randomUUID() };
-        const item = await createServerReminder({ ...fields as ReminderFields, request_id: createAttempt.current.requestId });
-        if (live()) {
-          replace(item); createAttempt.current = undefined; setDraftDirty(false); setEditorVersion(value => value + 1); setNotice('邮件提醒已保存，客户端关闭后仍由服务端调度。');
-          try { const page = await listServerReminders(); if (live()) firstPage(page); }
-          catch { if (live()) setError('提醒已保存，但列表刷新失败。请刷新列表查看，不要重复创建。'); }
+  function blank() { setDraft({ owner, form: reminderForm(), updatedAt: new Date().toISOString() }); setDraftDirty(false); setEditorVersion(value => value + 1); }
+  async function finish(item: ServerReminder, live: () => boolean, message: string) {
+    if (!live()) return;
+    replace(item); setNotice(message);
+    await useWorkbenchStore.getState().removeReminderDraft(owner);
+    if (!live()) return;
+    blank();
+    try { const page = await listServerReminders(undefined, undefined, filters); if (live()) firstPage(page); }
+    catch { if (live()) setError('提醒已保存，但列表刷新失败。请刷新列表查看，不要重复创建。'); }
+  }
+  async function sendAttempt(attempt: ReminderAttempt, live: () => boolean) {
+    try {
+      const item = attempt.kind === 'create' ? await createServerReminder(attempt.payload, requestController.current?.signal) : await updateServerReminder(attempt.id, attempt.payload, requestController.current?.signal);
+      await finish(item, live, attempt.kind === 'create' ? '邮件提醒已保存，客户端关闭后仍由服务端调度。' : '提醒已修改，旧版本尚未发送的投递已取消。');
+    } catch (cause) {
+      if (live()) {
+        const code = cause instanceof Error ? cause.message : '';
+        // These application errors are emitted before commit. A duplicate create
+        // with the same ID is looked up before these checks by the backend.
+        if (['future_schedule_required', 'invalid_personal_request', 'rule_change_requires_schedule', 'email_reminders_disabled', 'personal_record_limit', 'todo_not_open', 'account_email_required', 'reminder_closed', 'delivery_in_flight_or_unknown', 'revision_conflict'].includes(code)) {
+          stage({ ...draft, attempt: undefined, conflict: code === 'revision_conflict' });
+          await useWorkbenchStore.getState().flushReminderDraft();
         }
       }
+      throw cause;
+    }
+  }
+  async function save(fields: ReminderEdit) {
+    if (draft.attempt) return;
+    await perform(async live => {
+      const attempt: ReminderAttempt = editing ? { kind: 'edit', id: editing.original.id, payload: { revision: editing.original.revision, ...fields } } : { kind: 'create', payload: { ...fields as ReminderFields, request_id: crypto.randomUUID() } };
+      stage({ ...draft, attempt }); await useWorkbenchStore.getState().flushReminderDraft();
+      if (live()) await sendAttempt(attempt, live);
     });
+  }
+  async function inspectAttempt(retry = false) {
+    const attempt = draft.attempt; if (!attempt) return;
+    await perform(async live => {
+      if (retry) { await useWorkbenchStore.getState().flushReminderDraft(); if (live()) await sendAttempt(attempt, live); return; }
+      let item: ServerReminder;
+      try { item = attempt.kind === 'create' ? await getReminderByRequest(attempt.payload.request_id) : await getServerReminder(attempt.id); }
+      catch (cause) { if (live() && cause instanceof Error && cause.message === 'record_not_found') { setNotice('暂未查到原提交，原请求仍可能在处理。可重试同一提交；不会生成新的创建标识。'); return; } throw cause; }
+      if (!live()) return;
+      if (attempt.kind === 'create') { await finish(item, live, '已找到原提交的提醒，未重复创建。'); return; }
+      const matches = Object.entries(attempt.payload).every(([key, value]) => key === 'revision' || (key === 'next_run_at' ? Date.parse(item.next_run_at || '') === Date.parse(String(value)) : item[key as keyof ServerReminder] === value));
+      if (item.revision > attempt.payload.revision && matches) await finish(item, live, '服务端当前内容与上次提交一致，草稿已结束核查。');
+      else if (item.revision !== attempt.payload.revision) { stage({ ...draft, attempt: undefined, conflict: true }); await useWorkbenchStore.getState().flushReminderDraft(); setError('服务端版本已变化，草稿已保留。请载入最新版本后重新编辑。'); }
+      else setNotice('尚未确认修改已提交。可以重试同一提交，原修订号会防止重复覆盖。');
+    });
+  }
+  async function discardDraft() {
+    if (draftDirty && !window.confirm(draft.attempt ? '上次提交可能已在服务端生效。放弃本机核查记录不会取消服务端提醒，之后新建可能重复。仍要放弃？' : '放弃当前本机提醒草稿？')) return;
+    await perform(async live => { await useWorkbenchStore.getState().removeReminderDraft(owner); if (live()) { blank(); setError(''); } });
   }
   async function reloadEditor() {
     if (!editing) return;
@@ -149,8 +215,7 @@ function ReminderWorkspace({ email }: { email: string }) {
       if (live()) {
         replace(latest);
         if (latest.status === 'active' || latest.status === 'paused') edit(latest, editing.resume);
-        else { setEditing(undefined); setNotice('提醒已结束，如需再次提醒请新建记录。'); }
-        setConflict(false);
+        else { await useWorkbenchStore.getState().removeReminderDraft(owner); if (live()) { blank(); setNotice('提醒已结束，如需再次提醒请新建记录。'); } }
       }
     });
   }
@@ -195,9 +260,20 @@ function ReminderWorkspace({ email }: { email: string }) {
       <div>
         <p className="mb-3 break-words text-xs text-ink-secondary">收件人固定为当前账号邮箱：{email}。时间按表单所选时区输入；本机笔记和待办不会自动上传。</p>
         {capabilities && !capabilities.email_reminders_enabled && <p className="mb-3 border border-line p-3 text-sm text-ink-secondary">邮件提醒功能当前未启用。管理员需同时开启邮件和提醒配置。</p>}
-        <ReminderEditor key={editorVersion} original={editing?.original} resume={editing?.resume} disabled={busy || (!editing && !capabilities?.email_reminders_enabled)} conflict={conflict} onSave={save} onDirty={() => setDraftDirty(true)} onReload={() => void reloadEditor()} onCancel={() => { if (draftDirty && !window.confirm('放弃当前未保存的提醒修改？')) return; setEditing(undefined); setConflict(false); setDraftDirty(false); setEditorVersion(value => value + 1); setError(''); }} />
+        <ReminderTemplates owner={owner} form={draft.form} disabled={busy || Boolean(draft.attempt)} onApply={changeForm} />
+        <p className="mb-3 text-xs text-ink-secondary" aria-label="提醒草稿保存状态">{storageError ? '本机草稿尚未确认保存，请重试保存后再提交。' : draftSaving ? '正在保存本机草稿…' : draftDirty ? '草稿已加密保存在本机，可刷新或锁库后继续。' : '输入会自动保存为本机加密草稿；提交才会发送到服务器。'}</p>
+        {(draftSaving || storageError) && <button className="work-command mb-3" disabled={busy} onClick={() => void perform(async () => { await useWorkbenchStore.getState().flushReminderDraft(); })}>保存本机草稿</button>}
+        {draft.attempt && <section aria-label="待核查提交" className="mb-4 border border-line p-3 text-sm"><p>上次提交尚未确认。先核查或重试原提交，避免重复创建或覆盖；不会自动重发。</p><div className="mt-2 flex flex-wrap gap-2"><button className="work-command" disabled={busy} onClick={() => void inspectAttempt()}>核查上次提交</button><button className="work-command" disabled={busy} onClick={() => void inspectAttempt(true)}>重试同一提交</button></div></section>}
+        <ReminderEditor key={editorVersion} original={editing?.original} form={draft.form} onChange={changeForm} disabled={busy || Boolean(draft.attempt) || (!editing && !capabilities?.email_reminders_enabled)} conflict={conflict} onSave={save} onReload={() => void reloadEditor()} onCancel={() => void discardDraft()} />
+        {draftDirty && <button className="work-command mt-3" disabled={busy} onClick={() => void discardDraft()}>放弃本机草稿</button>}
       </div>
       <div><h2 className="font-semibold">已安排提醒</h2><p className="mt-2 text-xs text-ink-secondary">按创建顺序从新到旧，每页最多 20 条。刷新查看新记录；已打开的编辑草稿会保留。</p>
+        <form className="mt-3 grid gap-2" onSubmit={event => { event.preventDefault(); void perform(async live => { const page = await listServerReminders(undefined, undefined, filterInput); if (live()) { firstPage(page); setFilters({ ...filterInput }); } }); }}><fieldset disabled={busy} className="grid min-w-0 gap-2">
+          <label className="work-label">搜索提醒<input className="work-input" maxLength={200} placeholder="搜索主题或正文" value={filterInput.q || ''} onChange={event => setFilterInput({ ...filterInput, q: event.target.value })} /></label>
+          <div className="grid grid-cols-2 gap-2"><label className="work-label">筛选状态<select className="work-input" value={filterInput.status || ''} onChange={event => setFilterInput({ ...filterInput, status: event.target.value as ReminderFilters['status'] || undefined })}><option value="">全部状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="work-label">筛选重复规则<select className="work-input" value={filterInput.recurrence || ''} onChange={event => setFilterInput({ ...filterInput, recurrence: event.target.value as ReminderFilters['recurrence'] || undefined })}><option value="">全部规则</option>{Object.entries(recurrenceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>
+          <button className="work-command justify-self-start" type="submit">搜索 / 筛选</button>
+        </fieldset></form>
+        {(filters.q || filters.status || filters.recurrence) && <p className="mt-2 text-xs">当前结果：{filters.q || '全部主题'} · {filters.status ? statusLabels[filters.status] : '全部状态'} · {filters.recurrence ? recurrenceLabels[filters.recurrence] : '全部规则'}</p>}
         {reminderPage && <Pager name="提醒" depth={reminderCursors.length} count={reminders.length} next={reminderPage.next_cursor} busy={busy} onPage={direction => void turnReminders(direction)} />}
         {!reminders.length && <p className="mt-4 text-sm text-ink-secondary">{busy ? '正在读取提醒…' : reminderCursors.length > 1 ? '本页已无记录，可返回上一页或刷新。' : '还没有服务端提醒。'}</p>}
         <div className="mt-3 grid gap-3">{reminders.map(item => <article aria-label={'提醒：' + item.subject} key={item.id} className="min-w-0 border border-line p-4">

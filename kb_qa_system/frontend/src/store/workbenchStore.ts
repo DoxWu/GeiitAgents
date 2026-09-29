@@ -15,6 +15,7 @@ import { undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
 import type { RenamePlan } from '@/fileOrganizer/plan';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
 import { completeToolModel } from '@/services/officeToolModel';
+import { reminderOwner, validateReminderDraft, validateReminderTemplate, type ReminderDraft, type ReminderTemplate } from '@/personal/reminderDraft';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -27,8 +28,24 @@ const accountRequests = new Set<string>();
 let accountLookup: AbortController | null = null;
 // Disk compensation may outlive a locked vault. Keep this fence until it settles.
 let organizerInFlight = false;
+let reminderSaveTimer: ReturnType<typeof setTimeout> | undefined;
+let reminderDraftVersion = 0;
+
+function requireReminderOwner(owner: string) {
+  const auth = useAuthStore.getState();
+  if (!vault || !useWorkbenchStore.getState().unlocked || !auth.isAuthenticated || !auth.user || owner !== reminderOwner(auth.user.id, auth.user.email)) throw new Error('请解锁密钥库并使用草稿所属账号。');
+}
+function clearReminderTimer() { clearTimeout(reminderSaveTimer); reminderSaveTimer = undefined; }
 
 interface WorkbenchState {
+  reminderDrafts: ReminderDraft[];
+  reminderTemplates: ReminderTemplate[];
+  reminderDraftSaving: boolean;
+  stageReminderDraft: (draft: ReminderDraft) => void;
+  flushReminderDraft: () => Promise<void>;
+  removeReminderDraft: (owner: string) => Promise<void>;
+  saveReminderTemplate: (template: ReminderTemplate) => Promise<void>;
+  removeReminderTemplate: (owner: string, id: string) => Promise<void>;
   organizerRuns: OrganizerRun[];
   organizerBusy: boolean;
   runFileOrganizer: (directory: OrganizerDirectoryHandle, plan: RenamePlan[], undoOf?: string) => Promise<string>;
@@ -125,7 +142,7 @@ async function persist(required = false) {
   const epoch = generation;
   try {
     const state = useWorkbenchStore.getState();
-    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, organizerRuns: state.organizerRuns });
+    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates });
     if (epoch === generation) useWorkbenchStore.setState({ storageError: null });
   } catch {
     const message = "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
@@ -135,6 +152,7 @@ async function persist(required = false) {
 }
 
 function eraseMemory() {
+  clearReminderTimer();
   generation++;
   for (const controller of controllers.values()) controller.abort();
   controllers.clear();
@@ -143,7 +161,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], organizerRuns: [], organizerBusy: organizerInFlight, currentId: null, running: {}, streamingContent: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, currentId: null, running: {}, streamingContent: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -185,6 +203,44 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
+  reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false,
+  stageReminderDraft: draft => {
+    requireReminderOwner(draft.owner); validateReminderDraft(draft);
+    if (!get().reminderDrafts.some(item => item.owner === draft.owner) && get().reminderDrafts.length >= 20) throw new Error('本机最多保存 20 个账号的提醒草稿。');
+    reminderDraftVersion++;
+    set(state => ({ reminderDrafts: [structuredClone(draft), ...state.reminderDrafts.filter(item => item.owner !== draft.owner)], reminderDraftSaving: true }));
+    clearReminderTimer();
+    reminderSaveTimer = setTimeout(() => { reminderSaveTimer = undefined; void get().flushReminderDraft().catch(() => {}); }, 400);
+  },
+  flushReminderDraft: async () => {
+    clearReminderTimer(); const epoch = generation, version = reminderDraftVersion;
+    await persist(true);
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+    if (version === reminderDraftVersion) set({ reminderDraftSaving: false });
+  },
+  removeReminderDraft: async owner => {
+    requireReminderOwner(owner); clearReminderTimer(); reminderDraftVersion++;
+    const original = get().reminderDrafts.find(item => item.owner === owner), epoch = generation;
+    set(state => ({ reminderDrafts: state.reminderDrafts.filter(item => item.owner !== owner), reminderDraftSaving: true }));
+    try { await get().flushReminderDraft(); }
+    catch (error) {
+      if (original && epoch === generation && get().unlocked && !get().reminderDrafts.some(item => item.owner === owner)) set(state => ({ reminderDrafts: [original, ...state.reminderDrafts], reminderDraftSaving: true }));
+      throw error;
+    }
+  },
+  saveReminderTemplate: async template => {
+    requireReminderOwner(template.owner); validateReminderTemplate(template);
+    const existing = get().reminderTemplates.find(item => item.owner === template.owner && item.id === template.id);
+    if (!existing && (get().reminderTemplates.filter(item => item.owner === template.owner).length >= 30 || get().reminderTemplates.length >= 100)) throw new Error('每个账号最多保存 30 个模板，本机最多 100 个。');
+    const { id, owner, subject, body, timezone, recurrence } = template;
+    set(state => ({ reminderTemplates: [{ id, owner, subject, body, timezone, recurrence, name: template.name.trim() }, ...state.reminderTemplates.filter(item => item !== existing)] }));
+    await persist(true);
+  },
+  removeReminderTemplate: async (owner, id) => {
+    requireReminderOwner(owner);
+    set(state => ({ reminderTemplates: state.reminderTemplates.filter(item => item.owner !== owner || item.id !== id) }));
+    await persist(true);
+  },
   organizerRuns: [], organizerBusy: false,
   cancelFileOrganizer: () => { artifactOperations.get('file-organizer')?.abort(); },
   runFileOrganizer: async (directory, plan, undoOf) => {
@@ -313,16 +369,19 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const toolRuns = (data.toolRuns ?? []).map(tool => tool.status === 'running' ? { ...tool, status: 'interrupted' as const, finishedAt: unlockedAt,
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
     const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
-    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], organizerRuns, organizerBusy: organizerInFlight,
+    set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index])) await persist();
   },
   lock: async () => {
+    // Queue the current draft snapshot before clearing memory; flush below waits
+    // for it even when the 400 ms autosave debounce has not elapsed.
+    if (get().unlocked && get().reminderDraftSaving) { clearReminderTimer(); void persist().catch(() => {}); }
     const epoch = ++generation;
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], organizerRuns: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
+    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], currentId: null, running: {}, streamingContent: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();

@@ -5,16 +5,19 @@ import { chromium, expect } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { createServer } from 'node:net';
 
-const output = path.resolve('../../.tools/reminder-edit-qa'), backend = 'http://127.0.0.1:18763';
+const probe = createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
+const output = path.resolve('../../.tools/reminder-edit-qa'), backend = 'http://127.0.0.1:' + port;
 await mkdir(output, { recursive: true });
 const service = spawn('python', ['-c', "import runpy; runpy.run_path('tests/reminder_qa_server.py', run_name='__main__')"], {
   cwd: path.resolve('../backend'), windowsHide: true,
-  env: { ...process.env, DEBUG: 'true', DATABASE_URL: 'postgresql+psycopg://fixture@127.0.0.1:1/fixture', PYTHONPATH: [path.resolve('../../.tools/python-ops'), process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter) },
+  env: { ...process.env, REMINDER_QA_PORT: String(port), DEBUG: 'true', DATABASE_URL: 'postgresql+psycopg://fixture@127.0.0.1:1/fixture', PYTHONPATH: [path.resolve('../../.tools/python-ops'), process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let serviceOutput = ''; service.stdout.on('data', data => { serviceOutput += data; }); service.stderr.on('data', data => { serviceOutput += data; });
-let browser;
+let browser, page;
 try {
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -25,16 +28,28 @@ try {
   if (!ready) throw new Error('QA fixture did not start: ' + serviceOutput.slice(-3000));
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, timezoneId: 'America/Los_Angeles' });
-  const page = await context.newPage(), errors = [];
+  page = await context.newPage(); const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const user = { id: 1, username: 'qa-user', email: 'qa@example.test', is_active: true, is_superuser: false, user_type: 'regular', created_at: '2026-01-01T00:00:00Z' };
   await context.addInitScript(user => {
     localStorage.setItem('kb_auth_tokens', JSON.stringify({ access_token: 'synthetic-fixture', refresh_token: 'synthetic-fixture', token_type: 'bearer' }));
     localStorage.setItem('kb_auth_user', JSON.stringify(user));
   }, user);
+  let dropCreate = false, dropPatch = false;
+  const creates = [], patches = [];
   await context.route('**/api/v1/**', async route => {
     const url = new URL(route.request().url());
-    if (url.pathname.startsWith('/api/v1/personal/')) return route.fulfill({ response: await route.fetch({ url: backend + url.pathname + url.search }) });
+    if (url.pathname.startsWith('/api/v1/personal/')) {
+      const method = route.request().method(), creating = method === 'POST' && url.pathname.endsWith('/reminders'), patching = method === 'PATCH';
+      if (creating) creates.push(route.request().postDataJSON());
+      if (patching) patches.push(route.request().postDataJSON());
+      const response = await route.fetch({ url: backend + url.pathname + url.search });
+      if (!response.ok()) console.log(JSON.stringify({ failedFixturePath: url.pathname, status: response.status(), detail: (await response.json()).detail }));
+      // Commit to the real isolated DB, then lose only the client response.
+      if (creating && dropCreate) { dropCreate = false; expect(response.status()).toBe(201); return route.abort('failed'); }
+      if (patching && dropPatch) { dropPatch = false; expect(response.status()).toBe(200); return route.abort('failed'); }
+      return route.fulfill({ response });
+    }
     if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: user });
     return route.fulfill({ json: {} });
   });
@@ -128,7 +143,76 @@ try {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: '刷新邮件提醒' }).click();
   await expect(page.getByRole('article', { name: '提醒：翻页期间新增' })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.getByText('提醒模板', { exact: true }).click();
+  await page.getByLabel('选择提醒模板').selectOption('weekly-report');
+  await page.getByRole('button', { name: '应用模板', exact: true }).click();
+  await expect(page.getByLabel('提醒重复规则')).toHaveValue('weekly');
+  await page.getByLabel('提醒主题').fill('跨刷新提醒草稿');
+  await page.getByLabel('提醒内容').fill('本机加密恢复的合成内容。');
+  await page.getByLabel('提醒时间').fill('2099-05-01T09:00');
+  await page.getByLabel('新模板名称').fill('草稿验收模板');
+  await page.getByRole('button', { name: '将当前内容保存为模板' }).click();
+  await expect(page.getByLabel('选择提醒模板')).toContainText('草稿验收模板');
+  await expect(page.getByLabel('提醒草稿保存状态')).toContainText('草稿已加密');
+  const saved = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  expect(saved).not.toContain('跨刷新提醒草稿'); expect(saved).not.toContain('草稿验收模板');
+  async function reload() {
+    await page.reload();
+    await page.getByLabel('解锁口令', { exact: true }).fill('reminder-qa-fixture');
+    await page.getByRole('button', { name: '解锁', exact: true }).click();
+    await page.getByRole('button', { name: '笔记与待办', exact: true }).click();
+    await page.getByRole('button', { name: '邮件提醒', exact: true }).click();
+    await expect(page.getByRole('button', { name: '刷新邮件提醒' })).toBeEnabled();
+  }
+  const originalCreates = creates.length;
+  await reload();
+  await expect(page.getByLabel('提醒主题')).toHaveValue('跨刷新提醒草稿');
+  await expect(page.getByLabel('提醒时间')).toHaveValue('2099-05-01T09:00');
+  expect(creates).toHaveLength(originalCreates);
+  await page.getByText('提醒模板', { exact: true }).click();
+  await expect(page.getByLabel('选择提醒模板')).toContainText('草稿验收模板');
+  dropCreate = true;
+  await expect(page.getByLabel('提醒内容')).toHaveValue('本机加密恢复的合成内容。');
+  await expect(page.getByRole('button', { name: '保存提醒', exact: true })).toBeEnabled();
+  await page.screenshot({ path: path.join(output, 'restored-draft.png'), fullPage: true });
+  await page.getByRole('button', { name: '保存提醒', exact: true }).click();
+  await expect(page.getByRole('region', { name: '待核查提交' })).toBeVisible();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await reload();
+  await expect(page.getByLabel('提醒内容')).toBeDisabled();
+  await page.getByRole('button', { name: '核查上次提交' }).click();
+  await expect(page.getByRole('status')).toContainText('未重复创建');
+  expect(creates).toHaveLength(originalCreates + 1);
+  const recovered = await (await fetch(backend + '/api/v1/personal/reminders/by-request/' + creates.at(-1).request_id)).json();
+  await page.getByRole('article', { name: '提醒：跨刷新提醒草稿', exact: true }).getByRole('button', { name: '编辑 / 改期' }).click();
+  await page.getByLabel('提醒内容').fill('已接受但响应丢失的修改。');
+  dropPatch = true; const originalPatches = patches.length;
+  await page.getByRole('button', { name: '保存修改' }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await reload();
+  await page.getByRole('button', { name: '核查上次提交' }).click();
+  await expect(page.getByRole('status')).toContainText('当前内容与上次提交一致');
+  expect(patches).toHaveLength(originalPatches + 1);
+  const patched = await (await fetch(backend + '/api/v1/personal/reminders/' + recovered.id)).json();
+  expect(patched.revision).toBe(2);
+  await page.getByLabel('搜索提醒').fill('分页提醒');
+  await page.getByLabel('筛选状态').selectOption('completed');
+  await page.getByRole('button', { name: '搜索 / 筛选', exact: true }).click();
+  await expect(page.getByRole('article')).toHaveCount(20);
+  await page.getByRole('button', { name: '下一页提醒', exact: true }).click();
+  await expect(page.getByRole('navigation', { name: '提醒分页' })).toContainText('第 2 页');
+  expect((await page.locator('article h3').allTextContents()).every(subject => subject.startsWith('分页提醒'))).toBe(true);
+  await page.screenshot({ path: path.join(output, 'drafts-search-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByLabel('搜索提醒').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'drafts-search-mobile.png') });
   expect(errors).toEqual([]);
   await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, backend: 'real FastAPI routes + isolated SQLite memory', deviceZone: 'America/Los_Angeles', reminderZone: 'Asia/Shanghai', checks: ['create', 'schedule and weekly rule edit', 'revision conflict retains draft', 'explicit latest reload', 'uncertain paused delivery dismissal', 'overdue reschedule and resume', '63 reminders across four pages, insertion boundary and return navigation', '55 deliveries across three pages', '390px layout'], emailsSent: 0, pageErrors: errors }, null, 2));
-  console.log('Reminder real HTTP editing, 63-reminder/55-delivery pagination and 390px QA passed.');
+  await writeFile(path.join(output, 'drafts-result.json'), JSON.stringify({ passed: true, scope: 'Production browser / real isolated FastAPI and SQLite / no email sender', checks: ['encrypted draft and template reload', 'no auto submission', 'POST accepted then response lost recovered by request ID', 'PATCH accepted then response lost checked without replay', 'server search and filtered pagination', '390px'], emailsSent: 0 }));
+  console.log('Reminder real HTTP editing/pagination plus encrypted drafts/templates, lost-response recovery, search and 390px QA passed.');
+} catch (error) {
+  console.log(JSON.stringify({ alerts: await page?.getByRole('alert').allTextContents().catch(() => []), statuses: await page?.getByRole('status').allTextContents().catch(() => []) }));
+  await page?.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); throw error;
 } finally { await browser?.close(); service.kill(); }

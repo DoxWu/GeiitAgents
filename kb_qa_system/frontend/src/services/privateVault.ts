@@ -69,6 +69,8 @@ export class PrivateVault {
           || data.toolRuns !== undefined && !Array.isArray(data.toolRuns)
           || data.artifacts !== undefined && !Array.isArray(data.artifacts)
           || data.personalItems !== undefined && !Array.isArray(data.personalItems)
+          || data.reminderDrafts !== undefined && !Array.isArray(data.reminderDrafts)
+          || data.reminderTemplates !== undefined && !Array.isArray(data.reminderTemplates)
           || data.organizerRuns !== undefined && !Array.isArray(data.organizerRuns)) throw new Error();
       } catch {
         throw new Error("口令错误或本机密钥库已损坏。");
