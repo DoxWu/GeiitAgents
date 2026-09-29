@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-organizer"
+description = "Choose temporary directories and perform guarded flat-file operations within those grants."
+commands.allow = ["organizer_pick_directory", "organizer_access", "organizer_release_directory"]

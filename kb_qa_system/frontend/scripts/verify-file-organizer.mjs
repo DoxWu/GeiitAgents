@@ -17,10 +17,12 @@ await context.addInitScript(() => {
   window.organizerQaFailAfterFirstDelete = false;
   window.showDirectoryPicker = async () => {
     const root = await navigator.storage.getDirectory();
-    const directory = await root.getDirectoryHandle('organizer-qa-fixture', { create: true });
+    const directory = await root.getDirectoryHandle(window.organizerQaTarget ? 'organizer-qa-target' : 'organizer-qa-fixture', { create: true });
     let sourceDeletes = 0;
     return {
       name: directory.name,
+      qaDirectory: directory,
+      isSameEntry: other => directory.isSameEntry(other.qaDirectory),
       values: () => directory.values(),
       getFileHandle: (...args) => directory.getFileHandle(...args),
       removeEntry: async name => {
@@ -33,13 +35,13 @@ await context.addInitScript(() => {
     };
   };
 });
-async function files() {
-  return page.evaluate(async () => {
-    const root = await navigator.storage.getDirectory(), directory = await root.getDirectoryHandle('organizer-qa-fixture');
+async function files(target = false) {
+  return page.evaluate(async target => {
+    const root = await navigator.storage.getDirectory(), directory = await root.getDirectoryHandle(target ? 'organizer-qa-target' : 'organizer-qa-fixture');
     const result = {};
     for await (const [name, handle] of directory.entries()) result[name] = await (await handle.getFile()).text();
     return result;
-  });
+  }, target);
 }
 async function openOrganizer(reload = false) {
   if (reload) {
@@ -99,6 +101,20 @@ try {
   await failed.getByRole('button', { name: '核验目录', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('目录核验完成');
   expect(await files()).toEqual(before);
+  await page.getByRole('button', { name: '重新读取目录' }).click();
+  await page.getByRole('checkbox', { name: '移动到另一个目录', exact: true }).check();
+  await page.evaluate(() => { window.organizerQaTarget = true; });
+  await page.getByRole('button', { name: '选择目标目录', exact: true }).click();
+  await expect(page.getByText('目标目录：organizer-qa-target', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '生成变更清单' }).click();
+  await page.getByRole('button', { name: '应用可整理项目', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('整理已完成');
+  expect(await files()).toEqual({}); expect(await files(true)).toEqual(before);
+  const moved = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'organizer-qa-fixture → organizer-qa-target' }) });
+  await moved.locator('summary').click(); await moved.getByRole('button', { name: '预览撤销' }).click();
+  await page.getByRole('button', { name: '确认撤销所选目录中的变更' }).click();
+  await expect(page.getByRole('status')).toContainText('撤销已完成');
+  expect(await files()).toEqual(before); expect(await files(true)).toEqual({});
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('heading', { name: '本机整理历史' }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'mobile.png') });
@@ -106,6 +122,6 @@ try {
   expect(requests.filter(url => url.includes('/api/')).length).toBe(requestCount);
   expect(requests.some(url => /onnx|embedding|chat\/completions|private-models\/.*complete/.test(url))).toBe(false);
   expect(errors).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, filesystem: 'Chromium OPFS with injected directory picker', rename: true, encryptedReload: true, explicitUndo: true, realSourceDeletionCompensated: true, readOnlyInspection: true, mobileWidth: 390, pageErrors: errors }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, filesystem: 'Chromium OPFS with injected directory picker', rename: true, encryptedReload: true, explicitUndo: true, crossDirectoryMoveAndUndo: true, realSourceDeletionCompensated: true, readOnlyInspection: true, mobileWidth: 390, pageErrors: errors }, null, 2));
   console.log('Real OPFS rename, encrypted reload, undo, failure compensation, inspection and 390px layout passed.');
 } finally { await context.close(); await browser.close(); }

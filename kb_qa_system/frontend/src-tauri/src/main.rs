@@ -7,6 +7,8 @@ use tokio::sync::oneshot;
 
 mod local_stream;
 mod local_tools;
+#[cfg(windows)]
+mod organizer;
 
 #[derive(Default)]
 struct Requests(Mutex<HashMap<String, oneshot::Sender<()>>>);
@@ -167,9 +169,12 @@ async fn complete_local_tools(request_id: String, base_url: String, api_key: Str
 }
 
 fn main() {
-    tauri::Builder::default().manage(Requests::default())
-        .invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model])
-        .run(tauri::generate_context!()).expect("Desktop runtime failed");
+    let builder = tauri::Builder::default().manage(Requests::default());
+    #[cfg(windows)]
+    let builder = builder.manage(organizer::Directories::default()).invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model, organizer::organizer_pick_directory, organizer::organizer_release_directory, organizer::organizer_access]);
+    #[cfg(not(windows))]
+    let builder = builder.invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model]);
+    builder.run(tauri::generate_context!()).expect("Desktop runtime failed");
 }
 
 #[cfg(test)]

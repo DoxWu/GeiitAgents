@@ -3,6 +3,7 @@
 import type { OrganizerDirectoryEntry, OrganizerDirectoryHandle, OrganizerFileHandle } from './apply';
 
 export class MemoryDirectory implements OrganizerDirectoryHandle {
+  async isSameEntry(other: OrganizerDirectoryHandle) { return other === this; }
   name = 'fixture-directory';
   files = new Map<string, File>();
   identities = new Map<string, object>();

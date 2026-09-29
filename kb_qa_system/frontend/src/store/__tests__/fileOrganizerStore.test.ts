@@ -125,3 +125,18 @@ it('reconciles an interrupted completed undo and marks its original as undone', 
   await store.getState().inspectOrganizerRun(directory, undo.id);
   expect(store.getState().organizerRuns.map(run => run.status)).toEqual(['succeeded', 'undone']);
 });
+it('persists both native directory identities and requires reverse selection for cross-directory undo', async () => {
+  const source = Object.assign(fixture(), { identity: 'source-id' }); source.name = 'source';
+  const target = Object.assign(new MemoryDirectory({}), { identity: 'target-id' }); target.name = 'target';
+  const sourceRetain = vi.fn(), sourceRelease = vi.fn(); Object.assign(source, { retain: sourceRetain, release: sourceRelease });
+  const id = await store.getState().runFileOrganizer(source, plan, undefined, target);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().organizerRuns[0]).toMatchObject({ kind: 'move', directoryIdentity: 'source-id', destinationIdentity: 'target-id', destinationName: 'target' });
+  await expect(store.getState().inspectOrganizerRun(source, id)).rejects.toThrow('源目录与目标目录');
+  await expect(store.getState().runFileOrganizer(source, [], id, target)).rejects.toThrow('不一致');
+  await store.getState().inspectOrganizerRun(source, id, target);
+  await store.getState().runFileOrganizer(target, [], id, source);
+  expect(names(source)).toEqual(['b.txt', 'confidential-a.txt']); expect(names(target)).toEqual([]);
+  expect(store.getState().organizerRuns[0]).toMatchObject({ kind: 'undo', directoryIdentity: 'target-id', destinationIdentity: 'source-id' });
+  expect(sourceRetain).toHaveBeenCalledTimes(3); expect(sourceRelease).toHaveBeenCalledTimes(3);
+});

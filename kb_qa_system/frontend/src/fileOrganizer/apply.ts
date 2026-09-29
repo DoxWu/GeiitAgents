@@ -6,9 +6,16 @@ export interface OrganizerFileHandle {
   getFile(): Promise<File>;
   createWritable(): Promise<OrganizerWritable>;
   isSameEntry?(other: OrganizerFileHandle): Promise<boolean>;
+  fingerprint?(): Promise<string>;
+  copyFrom?(source: OrganizerFileHandle): Promise<void>;
+  removeIfMatches?(sha256: string): Promise<void>;
 }
 export interface OrganizerDirectoryHandle {
   name?: string;
+  identity?: string;
+  isSameEntry?(other: OrganizerDirectoryHandle): Promise<boolean>;
+  retain?(): void;
+  release?(): void;
   values(): AsyncIterable<OrganizerDirectoryEntry>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<OrganizerFileHandle>;
   removeEntry(name: string): Promise<void>;
@@ -26,23 +33,24 @@ export const MAX_BATCH_BYTES = 256 * 1024 * 1024;
 let running = false;
 
 /** Read-only reconciliation; it never guesses which partial operations to replay. */
-export async function inspectRenameOutcome(directory: OrganizerDirectoryHandle, changes: RecordedRename[]): Promise<{ outcome: 'applied' | 'not-applied' | 'mixed'; retainedFiles: string[] }> {
-  return exclusively(() => inspect(directory, changes));
+export async function inspectRenameOutcome(directory: OrganizerDirectoryHandle, changes: RecordedRename[], destination = directory): Promise<{ outcome: 'applied' | 'not-applied' | 'mixed'; retainedFiles: string[] }> {
+  return exclusively(() => inspect(directory, changes, destination));
 }
-async function inspect(directory: OrganizerDirectoryHandle, changes: RecordedRename[]): Promise<{ outcome: 'applied' | 'not-applied' | 'mixed'; retainedFiles: string[] }> {
+async function inspect(directory: OrganizerDirectoryHandle, changes: RecordedRename[], destination: OrganizerDirectoryHandle): Promise<{ outcome: 'applied' | 'not-applied' | 'mixed'; retainedFiles: string[] }> {
   if (!changes.length || changes.length > 500) throw new Error('整理记录无效。');
   const current = await entries(directory);
+  const targetEntries = destination === directory ? current : await entries(destination);
   let applied = true, original = true;
   const retainedFiles: string[] = [];
   for (const item of changes) {
     if (!validFileName(item.source) || !validFileName(item.target) || !validFileName(item.stage)) throw new Error('整理记录包含无效文件名。');
-    const check = async (name: string) => {
-      if (current.get(fileNameKey(name))?.kind !== 'file') return false;
-      return matches(await directory.getFileHandle(name), item);
+    const check = async (handle: OrganizerDirectoryHandle, listing: typeof current, name: string) => {
+      if (listing.get(fileNameKey(name))?.kind !== 'file') return false;
+      return matches(await handle.getFileHandle(name), item);
     };
-    applied = applied && !current.has(fileNameKey(item.source)) && await check(item.target);
-    original = original && !current.has(fileNameKey(item.target)) && await check(item.source);
-    if (current.has(fileNameKey(item.stage))) retainedFiles.push(item.stage);
+    applied = applied && !current.has(fileNameKey(item.source)) && await check(destination, targetEntries, item.target);
+    original = original && !targetEntries.has(fileNameKey(item.target)) && await check(directory, current, item.source);
+    if (current.has(fileNameKey(item.stage))) retainedFiles.push((destination !== directory ? '源目录/' : '') + item.stage);
   }
   return { outcome: applied ? 'applied' : original ? 'not-applied' : 'mixed', retainedFiles };
 }
@@ -63,9 +71,15 @@ async function digest(file: File): Promise<string> {
 }
 async function matches(handle: OrganizerFileHandle, item: RecordedRename) {
   const file = await handle.getFile();
-  return file.size === item.size && await digest(file) === item.sha256;
+  return file.size === item.size && await fingerprint(handle, file) === item.sha256;
 }
-async function writeFile(handle: OrganizerFileHandle, file: Blob) {
+async function fingerprint(handle: OrganizerFileHandle, file: File) {
+  if (file.size > MAX_FILE_BYTES) throw new Error('单个文件最多 64 MiB，请分开处理较大文件。');
+  return handle.fingerprint ? handle.fingerprint() : digest(file);
+}
+async function writeFile(handle: OrganizerFileHandle, source: OrganizerFileHandle) {
+  if (handle.copyFrom) return handle.copyFrom(source);
+  const file = await source.getFile();
   const writer = await handle.createWritable();
   try { await writer.write(file); await writer.close(); }
   catch (error) {
@@ -89,12 +103,14 @@ async function removeOwned(directory: OrganizerDirectoryHandle, owned: OwnedFile
   if (!current) return;
   if (owned.handle.isSameEntry && !await owned.handle.isSameEntry(current)) throw new Error('文件已被替换，保留现场。');
   if (owned.complete ? !await matches(current, owned.item) : (await current.getFile()).size !== 0) throw new Error('文件内容已改变，保留现场。');
-  await directory.removeEntry(owned.name);
+  if (current.removeIfMatches) await current.removeIfMatches(owned.complete ? owned.item.sha256 : 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+  else await directory.removeEntry(owned.name);
 }
 
 /** Compensating batch, not an OS transaction. Persist metadata before writes.
  * Retain staged files until commit or verified restoration of each source. */
 export async function applyRenamePlan(directory: OrganizerDirectoryHandle, plan: RenamePlan[], options: {
+  destination?: OrganizerDirectoryHandle;
   signal?: AbortSignal;
   beforeWrite?: (prepared: RenamePreparation) => Promise<void>;
 } = {}): Promise<RenameResult> {
@@ -117,29 +133,34 @@ async function exclusively<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function apply(directory: OrganizerDirectoryHandle, ready: RenamePlan[], options: {
+  destination?: OrganizerDirectoryHandle;
   signal?: AbortSignal; beforeWrite?: (prepared: RenamePreparation) => Promise<void>;
 }): Promise<RenameResult> {
   const guard = () => { if (options.signal?.aborted) throw new DOMException('文件整理已取消。', 'AbortError'); };
   guard();
+  const destination = options.destination ?? directory;
+  const moving = destination !== directory;
+  if (moving && (directory.isSameEntry && await directory.isSameEntry(destination))) throw new Error('源目录与目标目录相同，请使用目录内整理。');
   if (!ready.length || ready.length > 500) throw new Error('每次请选择 1–500 个可整理文件。');
   const initial = await entries(directory), sources = new Set<string>(), targets = new Set<string>();
+  const occupied = moving ? await entries(destination) : initial;
   for (const item of ready) {
     if (!validFileName(item.source) || !validFileName(item.target)) throw new Error('仅支持安全的单层文件名，请重新生成清单。');
     const source = fileNameKey(item.source), target = fileNameKey(item.target);
-    if (sources.has(source) || targets.has(target) || source === target) throw new Error('整理计划包含重复文件名或仅大小写变化。');
+    if (sources.has(source) || targets.has(target) || !moving && source === target) throw new Error('整理计划包含重复文件名或仅大小写变化。');
     if (initial.get(source)?.kind !== 'file' || initial.get(source)?.name !== item.source) throw new Error('目录内容已改变：' + item.source);
-    if (initial.has(target)) throw new Error('检测到目标文件名冲突：' + item.target);
+    if (occupied.has(target)) throw new Error('检测到目标文件名冲突：' + item.target);
     sources.add(source); targets.add(target);
   }
   const prepared: RenamePreparation = { id: crypto.randomUUID(), changes: [] };
   let total = 0;
   for (const [index, item] of ready.entries()) {
     guard();
-    const file = await (await directory.getFileHandle(item.source)).getFile();
+    const handle = await directory.getFileHandle(item.source), file = await handle.getFile();
     if (file.size !== item.size || item.modifiedAt !== undefined && file.lastModified !== item.modifiedAt) throw new Error('源文件自预览后已改变：' + item.source);
     total += file.size;
     if (total > MAX_BATCH_BYTES) throw new Error('单次整理最多 256 MiB，请分批处理。');
-    const sha256 = await digest(file);
+    const sha256 = await fingerprint(handle, file);
     if (item.sha256 !== undefined && sha256 !== item.sha256) throw new Error('文件内容已改变，不能撤销：' + item.source);
     prepared.changes.push({ source: item.source, target: item.target, size: file.size, sha256, stage: '.geiit-stage-' + prepared.id + '-' + index });
   }
@@ -150,21 +171,23 @@ async function apply(directory: OrganizerDirectoryHandle, ready: RenamePlan[], o
       guard(); const source = await directory.getFileHandle(item.source);
       if (!await matches(source, item)) throw new Error('源文件已改变：' + item.source);
       const stage = await createOwned(directory, item.stage, item, stages);
-      await writeFile(stage.handle, await source.getFile());
+      await writeFile(stage.handle, source);
       if (!await matches(stage.handle, item)) throw new Error('暂存校验失败。');
       stage.complete = true;
     }
     for (const stage of stages) {
-      guard(); const target = await createOwned(directory, stage.item.target, stage.item, targetsOwned);
-      await writeFile(target.handle, await stage.handle.getFile());
+      guard(); const target = await createOwned(destination, stage.item.target, stage.item, targetsOwned);
+      await writeFile(target.handle, stage.handle);
       if (!await matches(target.handle, stage.item)) throw new Error('目标校验失败。');
       target.complete = true;
     }
     for (const item of prepared.changes) {
       guard();
-      if (!await matches(await directory.getFileHandle(item.source), item) || !await matches(await directory.getFileHandle(item.target), item)) throw new Error('目录在执行中被修改，已停止删除源文件。');
+      const source = await directory.getFileHandle(item.source);
+      if (!await matches(source, item) || !await matches(await destination.getFileHandle(item.target), item)) throw new Error('目录在执行中被修改，已停止删除源文件。');
       deletionAttempts.add(item.source); // removeEntry may delete and then reject.
-      await directory.removeEntry(item.source);
+      if (source.removeIfMatches) await source.removeIfMatches(item.sha256);
+      else await directory.removeEntry(item.source);
     }
   } catch (error) {
     const retained = new Set<string>(), unsafe = new Set<string>();
@@ -175,14 +198,16 @@ async function apply(directory: OrganizerDirectoryHandle, ready: RenamePlan[], o
         if (!source && deletionAttempts.has(item.source)) {
           if (!stage.complete || !await matches(stage.handle, item)) throw new Error('暂存副本不可用。');
           const restored = await createOwned(directory, item.source, item, []);
-          await writeFile(restored.handle, await stage.handle.getFile()); source = restored.handle;
+          await writeFile(restored.handle, stage.handle); source = restored.handle;
         }
         if (!source || !await matches(source, item)) throw new Error('源文件未恢复或已被其他程序改变。');
       } catch { unsafe.add(item.source); }
     }
     for (const owned of [...targetsOwned, ...stages]) {
-      if (unsafe.has(owned.item.source)) { retained.add(owned.name); continue; }
-      try { await removeOwned(directory, owned); } catch { retained.add(owned.name); }
+      const target = targetsOwned.includes(owned), location = target ? destination : directory;
+      const label = moving ? (target ? '目标目录/' : '源目录/') + owned.name : owned.name;
+      if (unsafe.has(owned.item.source)) { retained.add(label); continue; }
+      try { await removeOwned(location, owned); } catch { retained.add(label); }
     }
     if (unsafe.size || retained.size) throw new OrganizerRecoveryError([...retained], error);
     throw error;
@@ -190,6 +215,6 @@ async function apply(directory: OrganizerDirectoryHandle, ready: RenamePlan[], o
   // Commit reached. Cleanup failure is a warning, never roll back after a stage
   // has been deleted: all renamed files already hold verified data.
   const retainedFiles: string[] = [];
-  for (const stage of stages) { try { await removeOwned(directory, stage); } catch { retainedFiles.push(stage.name); } }
+  for (const stage of stages) { try { await removeOwned(directory, stage); } catch { retainedFiles.push((moving ? '源目录/' : '') + stage.name); } }
   return { ...prepared, retainedFiles, warnings: retainedFiles.length ? ['整理已完成，但有暂存副本未能清理，请核对后手动清理。'] : [] };
 }

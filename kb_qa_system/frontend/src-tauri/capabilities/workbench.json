@@ -3,5 +3,5 @@
   "identifier": "workbench",
   "description": "Only the bundled main window can invoke local model requests.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-local-model"]
+  "permissions": ["core:default", "allow-local-model", "allow-organizer"]
 }
