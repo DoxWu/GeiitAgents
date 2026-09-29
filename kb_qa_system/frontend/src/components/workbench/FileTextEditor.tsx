@@ -4,6 +4,9 @@ import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
 import { draftText, textBytes, textFormat, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
 import { compareArtifactText } from '@/officeTasks/artifactDiff';
 import { useWorkbenchStore } from '@/store/workbenchStore';
+import { selectTextHistory } from '@/fileOrganizer/historyView';
+import { useFileHistory } from './useFileHistory';
+import { FileHistoryControls, FileHistoryDetails } from './FileHistoryControls';
 
 function download(text: string, name: string) {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
@@ -17,6 +20,7 @@ function formatLabel(text: string) {
 }
 export function FileTextEditor() {
   const store = useWorkbenchStore(), draft = store.fileEditDraft;
+  const history = useFileHistory(store.fileEditVersions, selectTextHistory);
   const [directory, setDirectory] = useState<OrganizerDirectoryHandle | null>(null);
   const [names, setNames] = useState<string[]>([]), [name, setName] = useState('');
   const [acknowledged, setAcknowledged] = useState(false), [loading, setLoading] = useState(false);
@@ -97,8 +101,9 @@ export function FileTextEditor() {
     <section className="space-y-3 border-t border-line pt-4" aria-label="文本版本历史"><h3 className="font-semibold">文本版本历史</h3>
       <p className="text-xs text-ink-secondary">最多 50 条、前后文本合计 2 MiB，存储配额可能更早耗尽；不自动淘汰版本。中断后先核验；核验只比较当前内容，不会重放写入。原生写入会尝试失败回滚，但不保证断电时自动恢复。</p>
       {!store.fileEditVersions.length && <p className="text-sm">暂无文本版本</p>}
-      {store.fileEditVersions.map(record => <details className="rounded border border-line p-3" key={record.id}><summary className="cursor-pointer break-all text-sm">{record.directoryName} / {record.name} · {statusLabels[record.status]} · {new Date(record.createdAt).toLocaleString()}</summary>
-        <p className="mt-2 break-all text-xs">记录 {record.id}{record.restoredFrom ? ' · 恢复自 ' + record.restoredFrom : ''}</p>
+      <FileHistoryControls {...history} label="文本历史" statuses={statusLabels} busy={busy} />
+      {history.rows.map(record => <FileHistoryDetails key={record.id} summary={<>{record.directoryName} / {record.name} · {statusLabels[record.status]} · {new Date(record.createdAt).toLocaleString()}</>}>{() => <>
+        <p className="mt-2 break-all text-xs">记录 {record.id}{record.restoredFrom ? ' · 恢复自 ' + record.restoredFrom : ''}{record.batch ? ' · 批次 ' + record.batch.id : ''}</p>
         {record.error && <p className="mt-2 break-words text-sm text-danger">{record.error}</p>}
         {record.inspection && <p className="mt-2 text-sm">最近核验：{record.inspection.outcome === 'after' ? '当前文件与写入版本一致' : record.inspection.outcome === 'before' ? '当前文件与原文一致' : '当前文件不同或已被替换，请保留现场'}（{new Date(record.inspection.checkedAt).toLocaleString()}）</p>}
         <div className="mt-3 flex flex-wrap gap-2"><button className="work-command" disabled={busy || !directory} onClick={() => directory && void act(() => store.inspectFileEdit(directory, record.id, acknowledged))}>核验当前文件</button>
@@ -106,7 +111,7 @@ export function FileTextEditor() {
           <button className="work-command" onClick={() => download(record.before.text, '历史原文-' + record.name)}>导出历史原文（明文）</button>
           <button className="work-command" onClick={() => download(record.after.text, '历史写入-' + record.name)}>导出历史写入（明文）</button>
           <button className="work-command" disabled={busy || !['succeeded', 'not-applied', 'not-started'].includes(record.status)} onClick={() => { if (window.confirm('删除这条文本历史后将无法通过它恢复。请先导出需要的原文。继续？')) void act(() => store.removeFileEditVersion(record.id)); }}>删除文本记录</button></div>
-      </details>)}
+      </>}</FileHistoryDetails>)}
     </section>
   </div></section>;
 }

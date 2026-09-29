@@ -1,6 +1,7 @@
 import { webcrypto } from 'node:crypto';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { FileTextBatch } from '../FileTextBatch';
 import { MemoryDirectory } from '@/fileOrganizer/testDirectory';
 import { useWorkbenchStore as store } from '@/store/workbenchStore';
@@ -38,5 +39,6 @@ it('shows partial history on failure and only retries saving records', async () 
   vi.spyOn(localStorage, 'setItem').mockImplementation((key, value) => { if (failed) throw new Error('quota'); original(key, value); }); directory.onClose = () => { failed = true; };
   click('确认写入批次'); await waitFor(() => expect(button('重试批次记录保存')).toBeEnabled()); expect(directory.closes).toBe(1);
   failed = false; click('重试批次记录保存'); await waitFor(() => expect(store.getState().storageError).toBeNull()); expect(directory.closes).toBe(1);
-  expect(screen.getByText(/b.txt · 未执行/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText(/fixture-directory · 2\/2/));
+  expect(await screen.findByText(/b.txt · 未执行/)).toBeInTheDocument();
 });

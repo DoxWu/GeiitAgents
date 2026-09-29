@@ -6,6 +6,9 @@ import { assertRunDirectories, undoPlan, type OrganizerRun } from '@/fileOrganiz
 import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { FileTextEditor } from './FileTextEditor';
+import { selectOrganizerHistory } from '@/fileOrganizer/historyView';
+import { useFileHistory } from './useFileHistory';
+import { FileChangeList, FileHistoryControls, FileHistoryDetails } from './FileHistoryControls';
 const FileTextBatch = lazy(() => import('./FileTextBatch').then(m => ({ default: m.FileTextBatch })));
 
 function download(content: string, name: string, type: string) {
@@ -40,6 +43,7 @@ export function FileOrganizer() {
 }
 function RenameFiles() {
   const store = useWorkbenchStore();
+  const history = useFileHistory(store.organizerRuns, selectOrganizerHistory);
   const [files, setFiles] = useState<LocalFileEntry[]>([]), [prefix, setPrefix] = useState('归档');
   const [plan, setPlan] = useState<RenamePlan[]>([]), [undoOf, setUndoOf] = useState<string>();
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [loading, setLoading] = useState(false);
@@ -163,19 +167,19 @@ function RenameFiles() {
       <section className="mt-6 border-t border-line pt-4" aria-label="整理历史">
         <h2 className="font-semibold">本机整理历史</h2><p className="mt-2 text-xs text-ink-secondary">记录加密保存文件名、摘要和暂存位置，不保存文件内容或目录权限。重开后请重新选择原目录；中断记录先核验，不自动重放。导出记录为明文。</p>
         {!store.organizerRuns.length && <p className="mt-3 text-sm">暂无整理记录</p>}
-        {store.organizerRuns.map(run => <details className="mt-3 rounded border border-line p-3" key={run.id}>
-          <summary className="cursor-pointer break-all text-sm">{run.kind === 'undo' ? '撤销' : '整理'} · {run.directoryName}{run.destinationName ? ' → ' + run.destinationName : ''} · {statuses[run.status]} · {new Date(run.createdAt).toLocaleString()}</summary>
+        <FileHistoryControls {...history} label="整理历史" statuses={statuses} busy={busy} />
+        {history.rows.map(run => <FileHistoryDetails key={run.id} summary={<>{run.kind === 'undo' ? '撤销' : '整理'} · {run.directoryName}{run.destinationName ? ' → ' + run.destinationName : ''} · {statuses[run.status]} · {new Date(run.createdAt).toLocaleString()}</>}>{() => <>
           <p className="mt-2 break-all text-xs">核验时选择源目录：{run.directoryName}{run.destinationName ? '；目标目录：' + run.destinationName : '（目录内整理）'}。预览撤销前也按此顺序选择，随后自动交换移动方向。暂存文件位于记录的源目录。</p>
           <p className="mt-2 text-xs">记录 {run.id}</p>{run.error && <p className="mt-2 text-sm text-danger">{run.error}</p>}{run.warnings?.map(warning => <p className="mt-2 text-sm" key={warning}>{warning}</p>)}
           {!!run.retainedFiles?.length && <p className="mt-2 break-all text-sm">保留副本：{run.retainedFiles.join('、')}</p>}
-          <ul className="mt-2 text-xs">{run.changes.map(item => <li className="mt-2 break-all" key={item.source}>{item.source} → {item.target}<br />SHA-256：{item.sha256}<br />暂存位置（成功后通常已清理）：{item.stage}</li>)}</ul>
+          <FileChangeList items={run.changes} render={item => <li className="mt-2 break-all" key={item.source}>{item.source} → {item.target}<br />SHA-256：{item.sha256}<br />暂存位置（成功后通常已清理）：{item.stage}</li>} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="work-command" disabled={busy || !directory || !!run.destinationName !== !!destination || run.kind === 'undo' || run.status !== 'succeeded'} onClick={() => previewUndo(run)}><Undo2 size={15} />预览撤销</button>
             <button className="work-command" disabled={busy || !directory || run.status === 'undone'} onClick={() => void inspect(run)}>核验目录</button>
             <button className="work-command" onClick={() => download(JSON.stringify(run, null, 2), '整理记录-' + run.id + '.json', 'application/json;charset=utf-8')}>导出记录</button>
             <button className="work-command" disabled={busy || ['running', 'interrupted', 'needs-attention'].includes(run.status) || !!run.retainedFiles?.length} onClick={() => { if (window.confirm('删除此历史记录后无法通过它撤销。继续？')) void store.removeOrganizerRun(run.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}>删除记录</button>
           </div>
-        </details>)}
+        </>}</FileHistoryDetails>)}
       </section>
     </div></div>
   </section>;

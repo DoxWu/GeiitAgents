@@ -5,6 +5,9 @@ import { type TextBatchRule, type TextBatchRow } from '@/fileOrganizer/textBatch
 import { textBytes, type FileEditVersion } from '@/fileOrganizer/textEdit';
 import { compareArtifactText } from '@/officeTasks/artifactDiff';
 import { useWorkbenchStore } from '@/store/workbenchStore';
+import { selectTextBatches } from '@/fileOrganizer/historyView';
+import { useFileHistory } from './useFileHistory';
+import { FileHistoryControls, FileHistoryDetails } from './FileHistoryControls';
 
 const labels: Record<FileEditVersion['status'], string> = { 'not-started': '未执行', running: '写入中', succeeded: '已完成或核验一致', 'not-applied': '核验为原文', interrupted: '中断待核验', 'needs-attention': '待核验' };
 function download(records: FileEditVersion[]) {
@@ -30,10 +33,7 @@ export function FileTextBatch() {
   useEffect(() => { mounted.current = true; const grants = handles.current; return () => { mounted.current = false; useWorkbenchStore.getState().cancelFileEditBatch(); for (const d of grants) d.release?.(); grants.clear(); }; }, []);
   useEffect(() => { const rows = preview?.rows.filter(r => r.draft && r.after && !r.error) ?? []; setSelected(rows.map(r => r.id)); setView(rows[0]?.id || ''); setConfirmed(false); }, [preview]);
   const busy = loading || store.organizerBusy;
-  const batches = useMemo(() => {
-    const result = new Map<string, FileEditVersion[]>(); for (const r of store.fileEditVersions) if (r.batch) result.set(r.batch.id, [...(result.get(r.batch.id) ?? []), r]);
-    return [...result].map(([id, rows]) => ({ id, rows: rows.sort((a, b) => a.batch!.index - b.batch!.index) }));
-  }, [store.fileEditVersions]);
+  const history = useFileHistory(store.fileEditVersions, selectTextBatches);
   async function act(operation: () => Promise<void>) {
     if (working.current) return; working.current = true; setLoading(true); setError(''); setNotice('');
     try { await operation(); } catch (e) { if (mounted.current && (e as DOMException).name !== 'AbortError') setError(e instanceof Error ? e.message : '批次操作失败。'); }
@@ -69,10 +69,12 @@ export function FileTextBatch() {
       <div className="flex flex-wrap gap-2"><button className="work-command bg-brand text-white" disabled={busy || !confirmed || !selected.length || !directory || (!directory.identity && !ack) || !!store.storageError} onClick={() => directory && void act(async () => { await store.commitFileEditBatch(directory, preview.id, selected, ack); if (mounted.current) setNotice('所选文件已全部写入并校验，版本已加密保存。'); })}>确认写入批次</button><button className="work-command" disabled={busy} onClick={() => store.cancelFileEditBatch()}>取消批次预览</button></div>
     </section>}
     <section className="space-y-3 border-t border-line pt-4" aria-label="批量文本历史"><h3 className="font-semibold">批次历史与恢复</h3><p className="text-xs">恢复只接受当前仍与该批次写入版一致的文件；外部改动、已是原文或未执行的条目不会恢复。恢复也要预览确认并新增版本。记录可在单文件历史中核验、导出和删除；这里只显示仍保留的记录。</p>
-      {batches.map(batch => <details key={batch.id} className="rounded border border-line p-3"><summary className="cursor-pointer break-all text-sm">{batch.rows[0].directoryName} · {batch.rows.length}/{batch.rows[0].batch!.total} 条 · {new Date(batch.rows[0].createdAt).toLocaleString()} · {batch.id}</summary>
+      <p className="text-xs">搜索与状态需匹配同一文件，命中后显示完整批次；核验、恢复和导出仍使用整组保留记录。</p>
+      <FileHistoryControls {...history} label="批次历史" statuses={labels} busy={busy} />
+      {history.rows.map(batch => <FileHistoryDetails key={batch.id} summary={<>{batch.rows[0].directoryName} · {batch.rows.length}/{batch.rows[0].batch!.total} 条 · {new Date(batch.createdAt).toLocaleString()} · {batch.id}</>}>{() => <>
         <ul className="my-3 space-y-1 text-sm">{batch.rows.map(r => <li className="break-all" key={r.id}>{r.name} · {labels[r.status]}{r.error ? ' · ' + r.error : ''}{r.inspection ? ' · 核验：' + r.inspection.outcome : ''}</li>)}</ul>
         <div className="flex flex-wrap gap-2"><button className="work-command" disabled={busy || !directory} onClick={() => directory && void act(async () => { for (const r of batch.rows) { if (!mounted.current) return; await store.inspectFileEdit(directory, r.id, ack); } })}>核验批次文件</button><button className="work-command" disabled={busy || !directory || !!store.fileEditDraft || !!store.storageError} onClick={() => directory && void act(() => store.prepareFileEditBatch(directory, [], null, ack, batch.id))}>预览恢复批次原文</button><button className="work-command" onClick={() => download(batch.rows)}>导出批次记录（明文）</button></div>
-      </details>)}
+      </>}</FileHistoryDetails>)}
     </section>
   </div></section>;
 }

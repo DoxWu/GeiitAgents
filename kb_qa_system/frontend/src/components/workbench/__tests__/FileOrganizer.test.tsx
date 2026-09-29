@@ -60,7 +60,7 @@ it('disables all editing and duplicate apply while the action is in progress', a
 it('shows uncertain records and offers read-only reconciliation, without automatic replay', async () => {
   state.organizerRuns = [{ ...record, status: 'interrupted', retainedFiles: ['.geiit-stage-fixture'] }];
   const user = userEvent.setup(); render(<FileOrganizer />);
-  await user.click(screen.getByText(/中断待核验/));
+  await user.click(screen.getByText(/整理 · fixture-directory.*中断待核验/));
   expect(screen.getByRole('button', { name: '删除记录' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '预览撤销' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: '选择可整理目录' })); await screen.findByText('当前可写目录：fixture-directory');
