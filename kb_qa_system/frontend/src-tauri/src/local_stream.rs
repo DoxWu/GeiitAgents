@@ -6,6 +6,10 @@ const MAX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TEXT: usize = 1_000_000; // UTF-16 units, matching the frontend limit.
 type Sink<'a> = dyn FnMut(&str) -> Result<(), String> + Send + 'a;
 
+fn finish_reason(value: &serde_json::Value) -> &'static str {
+    match value.as_str() { Some("stop") => "stop", Some("length") => "length", Some("content_filter") => "content_filter", Some("tool_calls") => "tool_calls", _ => "unknown" }
+}
+
 #[derive(Default)]
 struct TextStream {
     bytes: usize,
@@ -17,6 +21,7 @@ struct TextStream {
     done: bool,
     content: String,
     text_len: usize,
+    reason: Option<&'static str>,
 }
 
 impl TextStream {
@@ -59,14 +64,15 @@ impl TextStream {
         if value.get("error").is_some_and(|error| !error.is_null()) { return Err("Model stream failed".into()); }
         let choices = value["choices"].as_array().ok_or("Invalid stream event")?;
         // The request asks for one answer. Never merge other choice indices.
-        let choice = choices.iter().find(|choice| choice["index"].is_null() || choice["index"].as_u64() == Some(0));
+        let choice = choices.iter().find(|choice| choices.len() == 1 && choice["index"].is_null() || choice["index"].as_u64() == Some(0));
         if let Some(choice) = choice {
+            if !choice["delta"].is_null() && !choice["delta"].is_object() { return Err("Invalid model delta".into()); }
             if let Some(delta) = choice["delta"]["content"].as_str() {
                 self.text_len += delta.encode_utf16().count();
                 if self.text_len > MAX_TEXT { return Err("Response too large".into()); }
                 if !delta.is_empty() { sink(delta)?; self.content.push_str(delta); }
             } else if !choice["delta"]["content"].is_null() { return Err("Unsupported model content".into()); }
-            if choice["finish_reason"].as_str().is_some_and(|reason| !reason.is_empty()) { self.done = true; }
+            if choice["finish_reason"].as_str().is_some_and(|reason| !reason.is_empty()) { self.reason = Some(finish_reason(&choice["finish_reason"])); self.done = true; }
         }
         Ok(())
     }
@@ -79,7 +85,7 @@ impl TextStream {
         // A clean TCP EOF alone cannot prove that generation completed.
         if !self.done { return Err("Model stream ended before completion".into()); }
         if self.content.trim().is_empty() { return Err("Empty response".into()); }
-        Ok(Completion { content: self.content })
+        Ok(Completion { content: self.content, finish_reason: self.reason.unwrap_or("unknown") })
     }
 }
 
@@ -108,17 +114,41 @@ pub async fn fetch_completion(
             if bytes.len() + chunk.len() > MAX_BYTES { return Err("Response too large".into()); }
             bytes.extend_from_slice(&chunk);
         }
-        let data: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid response")?;
-        let content = data["choices"][0]["message"]["content"].as_str().filter(|content| !content.trim().is_empty()).ok_or("Empty response")?;
+        let data: serde_json::Value = serde_json::from_slice(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes)).map_err(|_| "Invalid response")?;
+        if data.get("error").is_some_and(|error| !error.is_null()) { return Err("Model response failed".into()); }
+        let choices = data["choices"].as_array().ok_or("Invalid response")?;
+        let choice = choices.iter().find(|choice| choices.len() == 1 && choice["index"].is_null() || choice["index"].as_u64() == Some(0)).ok_or("Missing answer")?;
+        let content = choice["message"]["content"].as_str().filter(|content| !content.trim().is_empty()).ok_or("Empty response")?;
         if content.encode_utf16().count() > MAX_TEXT { return Err("Response too large".into()); }
         sink(content)?;
-        Ok(Completion { content: content.into() })
+        Ok(Completion { content: content.into(), finish_reason: finish_reason(&choice["finish_reason"]) })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_protocol_corpus_matches_text_and_reason_at_every_split() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../../../test_fixtures/model_text_stream.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let wire = case["wire"].as_str().unwrap().as_bytes();
+            for split in 0..=wire.len() {
+                let result = (|| {
+                    let mut stream = TextStream::default();
+                    stream.push(&wire[..split], &mut |_| Ok(()))?;
+                    stream.push(&wire[split..], &mut |_| Ok(()))?;
+                    stream.finish(&mut |_| Ok(()))
+                })();
+                if let Some(content) = case["content"].as_str() {
+                    let result = result.unwrap();
+                    assert_eq!(result.content, content, "{}", case["name"]);
+                    assert_eq!(result.finish_reason, case["reason"].as_str().unwrap());
+                } else { assert!(result.is_err(), "{}", case["name"]); }
+            }
+        }
+    }
 
     fn parse(chunks: &[&[u8]]) -> Result<(String, Vec<String>), String> {
         let mut deltas = Vec::new();

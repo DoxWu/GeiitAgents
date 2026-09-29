@@ -1,6 +1,7 @@
 import { apiClient, getStoredTokens } from "@/api/client";
 import { API_BASE_URL } from "@/utils/constants";
 import type { ModelProfile } from "@/types/workbench";
+import { finishReason, readModelResponse, type FinishReason } from './modelStream';
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
@@ -39,6 +40,7 @@ export async function completeModel(
   profile: ModelProfile, apiKey: string,
   messages: { role: string; content: string }[], signal: AbortSignal,
   onChunk?: (chunk: string) => void,
+  onFinish?: (reason: FinishReason) => void,
 ): Promise<string> {
   validateProfile(profile);
   if (signal.aborted) throw new DOMException("已取消", "AbortError");
@@ -47,15 +49,8 @@ export async function completeModel(
     try {
       const body = { base_url: profile.baseUrl, model: profile.model, messages, ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) };
       if (onChunk) {
-        let content = "";
-        let failure = "";
-        await apiClient.streamPost("/private-models/complete/stream", body, {
-          onChunk: (chunk) => { content += chunk; onChunk(chunk); },
-          onError: (message) => { failure = message; },
-        }, signal, { headers: { "X-Model-Api-Key": apiKey } });
-        if (failure) throw new Error(failure);
-        if (!content.trim()) throw new Error("模型没有返回有效内容。");
-        return content;
+        const result = await relayStream('/private-models/complete/stream', body, signal, onChunk, { 'X-Model-Api-Key': apiKey });
+        onFinish?.(result.finishReason); return result.content;
       }
       const result = await apiClient.post<{ content: string }>("/private-models/complete", body, { headers: { "X-Model-Api-Key": apiKey }, signal, cache: "no-store", redirect: "error" });
       return result.content;
@@ -82,12 +77,13 @@ export async function completeModel(
     signal.addEventListener("abort", abort, { once: true });
     try {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
-      const result = await invoke<{ content: string }>(channel ? "stream_local_model" : "complete_local_model", {
+      const result = await invoke<{ content: string; finish_reason?: string }>(channel ? "stream_local_model" : "complete_local_model", {
         requestId, baseUrl: profile.baseUrl, apiKey, model: profile.model, messages, maxTokens: profile.maxTokens,
         ...(channel ? { onChunk: channel } : {}),
       });
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
       if (callbackFailed || typeof result?.content !== 'string' || !result.content.trim() || result.content.length > 1_000_000) throw new Error();
+      onFinish?.(finishReason(result.finish_reason));
       return result.content;
     } catch {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
@@ -104,51 +100,11 @@ export async function completeModel(
       body: JSON.stringify({ model: profile.model, messages, max_tokens: profile.maxTokens, stream: Boolean(onChunk) }),
       signal, redirect: "error", cache: "no-store", credentials: "omit",
     });
-    if (!response.ok) throw new Error();
-    if (!response.body) throw new Error();
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let body = "";
-    let size = 0;
-    const streamed = response.headers.get("content-type")?.toLowerCase().includes("text/event-stream") ?? false;
-    let content = "";
-    let sseBuffer = "";
-    const consumeSse = (chunk: string) => {
-      sseBuffer += chunk;
-      const lines = sseBuffer.split(/\r?\n/);
-      sseBuffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const value = line.slice(5).trim();
-        if (!value || value === "[DONE]") continue;
-        const delta = JSON.parse(value).choices?.[0]?.delta?.content;
-        if (typeof delta === "string") { content += delta; onChunk?.(delta); }
-      }
-    };
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new Error(); }
-        const text = decoder.decode(value, { stream: true });
-        if (streamed) consumeSse(text); else body += text;
-      }
-      const finalText = decoder.decode();
-      if (streamed) consumeSse(finalText + "\n\n"); else body += finalText;
-    } finally { reader.releaseLock(); }
-    if (streamed) {
-      if (!content.trim() || content.length > 1_000_000) throw new Error();
-      return content;
-    }
-    const data = JSON.parse(body);
-    content = data.choices?.[0]?.message?.content;
-    if (typeof content !== "string" || !content.trim() || content.length > 1_000_000) throw new Error();
-    onChunk?.(content);
-    return content;
+    const result = await readModelResponse(response, signal, onChunk);
+    onFinish?.(result.finishReason); return result.content;
   } catch {
     if (signal.aborted) throw new DOMException("已取消", "AbortError");
-    throw new Error("无法连接本机模型。请检查服务和模型名称；浏览器需允许跨域，桌面版无需配置浏览器跨域。");
+    throw new Error("本机模型请求失败或输出中断。请检查服务、模型名称和跨域设置。");
   }
 }
 
@@ -160,17 +116,27 @@ export async function getAccountModel(signal: AbortSignal): Promise<{ model: str
 export async function completeAccountModel(
   messages: { role: string; content: string }[], signal: AbortSignal,
   onChunk?: (chunk: string) => void,
+  onFinish?: (reason: FinishReason) => void,
 ): Promise<{ content: string; model: string }> {
   if (!onChunk) return apiClient.post("/private-models/account/complete", { messages }, { signal, cache: "no-store", redirect: "error" });
-  let content = "";
-  let model = "账号云端模型";
-  let failure = "";
-  await apiClient.streamPost("/private-models/account/complete/stream", { messages }, {
-    onChunk: (chunk) => { content += chunk; onChunk(chunk); },
-    onDone: (data) => { if (typeof data.content === "string" && data.content) content = data.content; if (data.model) model = data.model; },
-    onError: (message) => { failure = message; },
-  }, signal);
-  if (failure) throw new Error(failure);
-  if (!content.trim()) throw new Error("模型没有返回有效内容。");
-  return { content, model };
+  const result = await relayStream('/private-models/account/complete/stream', { messages }, signal, onChunk);
+  onFinish?.(result.finishReason); return { content: result.content, model: result.model || '账号云端模型' };
+}
+
+async function relayStream(endpoint: string, body: unknown, signal: AbortSignal, onChunk: (text: string) => void, headers: Record<string, string> = {}) {
+  const token = getStoredTokens()?.access_token;
+  if (!token) throw new Error('请先登录知识库账号。');
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', body: JSON.stringify(body), signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...headers }, cache: 'no-store', redirect: 'error', credentials: 'omit' });
+    if (response.status === 401 || response.status === 403) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(response.status === 401 ? '请重新登录知识库账号。' : '当前账号无权使用此模型连接。');
+    }
+    return await readModelResponse(response, signal, onChunk, true);
+  } catch (error) {
+    if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+    if (error instanceof Error && ['请重新登录知识库账号。', '当前账号无权使用此模型连接。'].includes(error.message)) throw error;
+    throw new Error('云端模型请求失败或输出中断，请检查连接和模型权限后重试。');
+  }
 }

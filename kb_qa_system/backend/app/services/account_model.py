@@ -53,22 +53,16 @@ async def complete_account(request: AccountCompletion) -> dict:
         raise PrivateModelError(502, "账号云端模型暂不可用，请稍后重试。") from None
 
 
-async def stream_account(request: AccountCompletion) -> AsyncGenerator[str, None]:
+async def stream_account(request: AccountCompletion, completion=None) -> AsyncGenerator[str, None]:
     """Yield chunks from the existing account-managed provider."""
     try:
         async with asyncio.timeout(120):
             client = await asyncio.to_thread(select_account_client)
-            size = 0
-            emitted = False
-            async with aclosing(client.astream(model_messages(request))) as stream:
+            metadata = completion if completion is not None else {}
+            async with aclosing(client.astream_workbench([message.model_dump() for message in request.messages], metadata)) as stream:
                 async for chunk in stream:
-                    size += len(chunk.encode("utf-8"))
-                    if size > 2 * 1024 * 1024:
-                        raise PrivateModelError(502, "模型响应超过大小限制。")
-                    if chunk:
-                        emitted = True
-                        yield chunk
-            if not emitted:
+                    yield chunk
+            if "finish_reason" not in metadata:
                 raise PrivateModelError(502, "账号云端模型暂不可用，请稍后重试。")
     except PrivateModelError:
         raise

@@ -32,6 +32,16 @@ beforeEach(async () => {
 });
 afterEach(async () => { await store.getState().lock(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+it('persists a reported output limit alongside text through vault reload', async () => {
+  vi.mocked(completeModel).mockImplementation(async (_profile, _key, _messages, _signal, onChunk, onFinish) => {
+    onChunk?.('partial'); onFinish?.('length'); return 'partial';
+  });
+  const id = store.getState().newConversation(); await store.getState().send(id, 'question');
+  expect(store.getState().conversations[0].messages.at(-1)).toMatchObject({ content: 'partial', finishReason: 'length' });
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().conversations[0].messages.at(-1)).toMatchObject({ content: 'partial', finishReason: 'length' });
+});
+
 it("routes concurrent replies back to their own conversations", async () => {
   const pending = new Map<string, (value: string) => void>();
   vi.mocked(completeModel).mockImplementation((_p, _key, messages) => new Promise((resolve) => pending.set(messages[0].content, resolve)));
@@ -187,7 +197,7 @@ it("uses the authorized account model when no personal connection exists", async
   expect(store.getState().conversations[0].profileId).toBe(ACCOUNT_MODEL_ID);
   await store.getState().send(id, "hello");
   expect(completeModel).not.toHaveBeenCalled();
-  expect(completeAccountModel).toHaveBeenCalledWith([{ role: "user", content: "hello" }], expect.any(AbortSignal), expect.any(Function));
+  expect(completeAccountModel).toHaveBeenCalledWith([{ role: "user", content: "hello" }], expect.any(AbortSignal), expect.any(Function), expect.any(Function));
   expect(store.getState().conversations[0].messages[1]).toMatchObject({ content: "cloud reply", model: "actual-server-model" });
 });
 

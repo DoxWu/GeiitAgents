@@ -8,6 +8,7 @@ import { ModelConnections } from "@/components/workbench/ModelConnections";
 import { OfficeTasks } from "@/components/workbench/OfficeTasks";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import type { LocalDocument } from "@/types/workbench";
+import { finishLabel } from '@/services/modelStream';
 import "@/styles/workbench.css";
 
 const PersonalItems = lazy(() => import('@/components/workbench/PersonalItems').then(module => ({ default: module.PersonalItems })));
@@ -68,7 +69,7 @@ export default function WorkbenchPage() {
   }
   function download() {
     if (!conversation) return;
-    const contents = `# ${conversation.title}\n\n` + conversation.messages.map((m) => `## ${m.role === "user" ? "用户" : m.model || "助手"}\n\n${m.content}`).join("\n\n");
+    const contents = `# ${conversation.title}\n\n` + conversation.messages.map((m) => `## ${m.role === "user" ? "用户" : m.model || "助手"}\n\n${m.content}${m.finishReason ? '\n\n> ' + finishLabel(m.finishReason) : ''}`).join("\n\n");
     const url = URL.createObjectURL(new Blob([contents], { type: "text/markdown;charset=utf-8" }));
     const a = window.document.createElement("a"); a.href = url; a.download = `${conversation.title.replace(/[<>:"/\\|?*]/g, "_")}.md`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -130,7 +131,7 @@ export default function WorkbenchPage() {
                 {!available && <button className="work-command mx-auto mt-5" onClick={() => setTab("models")}><Plus size={16} />添加模型连接</button>}
                 {authenticated && !state.accountModel && <button className="work-command mx-auto mt-3" disabled={state.accountLoading} onClick={() => void state.refreshAccountModel()}>刷新账号模型</button>}
               </div>}
-              {conversation?.messages.map((message) => <article key={message.id} className="min-w-0 border-b border-line pb-5"><p className="mb-2 text-xs font-medium text-ink-secondary">{message.role === "user" ? "你" : message.model || "助手"}</p><PrivateMarkdown content={message.content} /></article>)}
+              {conversation?.messages.map((message) => <article key={message.id} className="min-w-0 border-b border-line pb-5"><p className="mb-2 text-xs font-medium text-ink-secondary">{message.role === "user" ? "你" : message.model || "助手"}</p><PrivateMarkdown content={message.content} />{message.finishReason && <p className="mt-3 text-xs text-ink-secondary" aria-label="模型停止原因">{finishLabel(message.finishReason)}</p>}</article>)}
               {running && state.streamingContent[conversation?.id ?? ''] && <article className="min-w-0 border-b border-line pb-5" aria-label="流式回答"><p className="mb-2 text-xs font-medium text-ink-secondary">模型输出中</p><PrivateMarkdown content={state.streamingContent[conversation?.id ?? '']} /></article>}
               {running && <p role="status" className="flex items-center gap-2 text-sm text-ink-secondary"><Loader2 size={16} className="animate-spin" />模型处理中...</p>}
               {(error || conversation && state.errors[conversation.id]) && <p role="alert" className="text-sm text-danger">{error || state.errors[conversation!.id]}</p>}

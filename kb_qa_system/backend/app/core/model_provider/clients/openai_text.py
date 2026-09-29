@@ -24,6 +24,8 @@ from typing import AsyncGenerator, List, Optional
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
+import httpx
+from app.core.model_text_stream import read_text_response
 from tenacity import (
     Retrying,
     stop_after_attempt,
@@ -126,6 +128,29 @@ class OpenAITextClient(TextModelClient):
             if is_retryable(error):
                 self.breaker.record_failure()
             raise
+
+    async def astream_workbench(self, messages: list[dict], completion: dict):
+        """Strict text transport, retaining terminal proof lost by SDK text chunks.
+
+        Uses this selected provider's model/key/temperature without mutating KB
+        clients or silently retrying a partially consumed answer.
+        """
+        if self.breaker.is_open():
+            raise CircuitBreakerOpenError(self.breaker.service, self.breaker.get_retry_after())
+        try:
+            async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=httpx.Timeout(90, connect=10)) as client:
+                async with client.stream("POST", self.config.api_base.rstrip("/") + "/chat/completions",
+                                         headers={"Authorization": "Bearer " + self.config.api_key},
+                                         json={"model": self.config.model, "messages": messages, "stream": True,
+                                               "temperature": self.config.temperature}) as response:
+                    response.raise_for_status()
+                    async for text in read_text_response(response, completion):
+                        yield text
+            self.breaker.record_success()
+        except Exception:
+            self.breaker.record_failure()
+            # No raw provider errors or headers enter logging/monitoring.
+            raise ValueError("Workbench model stream failed") from None
 
     @property
     def last_token_output(self) -> int:

@@ -553,11 +553,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         if (epoch !== generation || controller.signal.aborted || !get().unlocked || controllers.get(id) !== controller) return;
         set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }));
       };
-      const result = useAccount ? await completeAccountModel(input, controller.signal, onChunk) : {
-        content: await completeModel(profile!, secret!.apiKey, input, controller.signal, onChunk), model: profile!.model,
+      let finishReason: WorkMessage['finishReason'] = 'unknown';
+      const onFinish = (reason: NonNullable<WorkMessage['finishReason']>) => { finishReason = reason; };
+      const result = useAccount ? await completeAccountModel(input, controller.signal, onChunk, onFinish) : {
+        content: await completeModel(profile!, secret!.apiKey, input, controller.signal, onChunk, onFinish), model: profile!.model,
       };
       if (epoch !== generation || controller.signal.aborted) return;
-      const message: WorkMessage = { id: crypto.randomUUID(), role: "assistant", ...result, createdAt: new Date().toISOString() };
+      const message: WorkMessage = { id: crypto.randomUUID(), role: "assistant", ...result, finishReason, createdAt: new Date().toISOString() };
       set((state) => ({ conversations: state.conversations.map((c) => c.id === id ? { ...c, messages: [...c.messages, message], updatedAt: message.createdAt } : c) }));
       await persist();
     } catch (error) {

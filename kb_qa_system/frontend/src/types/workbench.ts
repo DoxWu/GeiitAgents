@@ -9,6 +9,7 @@ export interface ModelProfile {
 }
 
 export interface WorkMessage {
+  finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   role: "user" | "assistant";
   content: string;

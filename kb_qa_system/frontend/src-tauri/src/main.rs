@@ -20,7 +20,7 @@ struct Message {
 }
 
 #[derive(Serialize, Debug)]
-struct Completion { content: String }
+struct Completion { content: String, finish_reason: &'static str }
 
 #[derive(Serialize)]
 struct TextDelta { content: String }

@@ -25,26 +25,24 @@ it("omits an unset limit from the serialized relay payload", async () => {
 
 it("streams relay completions through the authenticated SSE endpoint", async () => {
   vi.mocked(getStoredTokens).mockReturnValue({ access_token: "test" } as ReturnType<typeof getStoredTokens>);
-  vi.mocked(apiClient.streamPost).mockImplementation(async (_endpoint, _body, callbacks) => {
-    callbacks.onChunk?.("第一段");
-    callbacks.onChunk?.("第二段");
-  });
+  const wire = [{ type: 'chunk', content: '第一段' }, { type: 'chunk', content: '第二段' }, { type: 'done', content: '第一段第二段', finish_reason: 'length' }].map(value => 'data: ' + JSON.stringify(value) + '\n\n').join('');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(wire, { headers: { 'content-type': 'text/event-stream' } })));
   const received: string[] = [];
-  await expect(completeModel({ ...profile, mode: "relay", baseUrl: "https://models.example/v1" }, "fixture-key", [{ role: "user", content: "hi" }], new AbortController().signal, chunk => received.push(chunk))).resolves.toBe("第一段第二段");
-  expect(apiClient.streamPost).toHaveBeenCalledWith("/private-models/complete/stream", expect.objectContaining({ model: "test" }), expect.any(Object), expect.any(AbortSignal), { headers: { "X-Model-Api-Key": "fixture-key" } });
+  const finished = vi.fn();
+  await expect(completeModel({ ...profile, mode: "relay", baseUrl: "https://models.example/v1" }, "fixture-key", [{ role: "user", content: "hi" }], new AbortController().signal, chunk => received.push(chunk), finished)).resolves.toBe("第一段第二段");
+  expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/private-models/complete/stream'), expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer test', 'X-Model-Api-Key': 'fixture-key' }), cache: 'no-store', redirect: 'error' }));
+  expect(finished).toHaveBeenCalledExactlyOnceWith('length');
   expect(received).toEqual(["第一段", "第二段"]);
 });
 
 it("streams account model completions when a callback is supplied", async () => {
-  vi.mocked(apiClient.streamPost).mockImplementation(async (_endpoint, _body, callbacks) => {
-    callbacks.onChunk?.("账号");
-    callbacks.onDone?.({ content: "账号模型回答", model: "server-model" });
-  });
+  const wire = [{ type: 'chunk', content: '账号模型回答' }, { type: 'done', content: '账号模型回答', model: 'server-model' }].map(value => 'data: ' + JSON.stringify(value) + '\n\n').join('');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(wire, { headers: { 'content-type': 'text/event-stream' } })));
   const { completeAccountModel } = await import("../workbenchModel");
   const received: string[] = [];
   await expect(completeAccountModel([{ role: "user", content: "hi" }], new AbortController().signal, chunk => received.push(chunk))).resolves.toEqual({ content: "账号模型回答", model: "server-model" });
-  expect(apiClient.streamPost).toHaveBeenCalledWith("/private-models/account/complete/stream", { messages: [{ role: "user", content: "hi" }] }, expect.any(Object), expect.any(AbortSignal));
-  expect(received).toEqual(["账号"]);
+  expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/private-models/account/complete/stream'), expect.objectContaining({ headers: expect.not.objectContaining({ 'X-Model-Api-Key': expect.anything() }) }));
+  expect(received).toEqual(["账号模型回答"]);
 });
 
 it.each([0, -1, 1.5, NaN, 2147483648])("rejects an invalid explicit limit (%s)", (limit) => {

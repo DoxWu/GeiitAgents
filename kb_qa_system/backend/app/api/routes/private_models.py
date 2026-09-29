@@ -1,6 +1,7 @@
 """Authenticated ephemeral completions for the desktop workbench."""
 
 import json
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -93,11 +94,13 @@ async def complete_stream(request: Request):
 
     async def events():
         content = []
+        completion = {}
         try:
-            async for chunk in stream_private(data, api_key):
-                content.append(chunk)
-                yield sse({"type": "chunk", "content": chunk})
-            yield sse({"type": "done", "content": "".join(content), "model": data.model})
+            async with aclosing(stream_private(data, api_key, completion)) as stream:
+                async for chunk in stream:
+                    content.append(chunk)
+                    yield sse({"type": "chunk", "content": chunk})
+            yield sse({"type": "done", "content": "".join(content), "model": data.model, "finish_reason": completion.get("finish_reason", "unknown")})
         except PrivateModelError as exc:
             yield sse({"type": "error", "content": str(exc)})
 
@@ -129,11 +132,13 @@ async def account_complete_stream(request: Request, user=Depends(get_current_act
 
     async def events():
         content = []
+        completion = {}
         try:
-            async for chunk in stream_account(data):
-                content.append(chunk)
-                yield sse({"type": "chunk", "content": chunk})
-            yield sse({"type": "done", "content": "".join(content), "model": "账号云端模型"})
+            async with aclosing(stream_account(data, completion)) as stream:
+                async for chunk in stream:
+                    content.append(chunk)
+                    yield sse({"type": "chunk", "content": chunk})
+            yield sse({"type": "done", "content": "".join(content), "model": "账号云端模型", "finish_reason": completion.get("finish_reason", "unknown")})
         except PrivateModelError as exc:
             yield sse({"type": "error", "content": str(exc)})
 

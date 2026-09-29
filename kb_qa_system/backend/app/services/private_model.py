@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.schemas.private_model import PrivateCompletion, PrivateModelList
+from app.core.model_text_stream import read_text_response
 
 
 class PrivateModelError(Exception):
@@ -153,7 +154,7 @@ async def list_private_models(request: PrivateModelList, api_key: str) -> dict:
         raise PrivateModelError(502, "获取模型列表超时或格式无效，可继续手填模型名称。") from None
 
 
-async def stream_private(request: PrivateCompletion, api_key: str) -> AsyncGenerator[str, None]:
+async def stream_private(request: PrivateCompletion, api_key: str, completion=None) -> AsyncGenerator[str, None]:
     """Yield provider SSE text deltas without exposing the provider response body."""
     _validate_api_key(api_key)
     url, host, tls_name = await public_endpoint(request.base_url)
@@ -164,8 +165,6 @@ async def stream_private(request: PrivateCompletion, api_key: str) -> AsyncGener
     }
     if request.max_tokens is not None:
         body["max_tokens"] = request.max_tokens
-    total = 0
-    emitted = False
     try:
         async with asyncio.timeout(120):
             async with httpx.AsyncClient(
@@ -182,24 +181,8 @@ async def stream_private(request: PrivateCompletion, api_key: str) -> AsyncGener
                         if code == 429:
                             raise PrivateModelError(429, "模型服务额度或速率已达上限。")
                         raise PrivateModelError(502, "模型服务请求失败，请检查接口地址和模型名称。")
-                    async for line in response.aiter_lines():
-                        total += len(line.encode("utf-8"))
-                        if total > 2 * 1024 * 1024:
-                            raise PrivateModelError(502, "模型响应超过大小限制。")
-                        if not line.startswith("data:"):
-                            continue
-                        value = line[5:].strip()
-                        if not value or value == "[DONE]":
-                            continue
-                        try:
-                            delta = json.loads(value).get("choices", [{}])[0].get("delta", {}).get("content")
-                        except (IndexError, TypeError, ValueError, AttributeError):
-                            raise PrivateModelError(502, "模型连接超时或返回格式无效。") from None
-                        if isinstance(delta, str) and delta:
-                            emitted = True
-                            yield delta
-        if not emitted:
-            raise PrivateModelError(502, "模型连接超时或返回格式无效。")
+                    async for delta in read_text_response(response, completion):
+                        yield delta
     except PrivateModelError:
         raise
     except Exception:
