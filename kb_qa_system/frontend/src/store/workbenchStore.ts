@@ -1,3 +1,4 @@
+import type { TextBatchPlan, TextBatchPreview, TextBatchRule } from '@/fileOrganizer/textBatch';
 import { create } from "zustand";
 import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
 import type { VaultBackupSummary } from '@/services/vaultBackup';
@@ -22,13 +23,15 @@ import type { RenamePlan } from '@/fileOrganizer/plan';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
 import { completeToolModel } from '@/services/officeToolModel';
 import { reminderOwner, validateReminderDraft, validateReminderTemplate, type ReminderDraft, type ReminderTemplate } from '@/personal/reminderDraft';
-import { assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
+import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
 let vault: PrivateVault | null = null;
 let secrets: VaultData["profiles"] = [];
 let generation = 0;
+let textBatchGeneration = 0;
+let textBatchPlan: { plan: TextBatchPlan; directory: OrganizerDirectoryHandle } | null = null;
 let personalImportGeneration = 0;
 let personalImportPlan: { id: string; plan: PersonalImportPlan } | null = null;
 let transferGeneration = 0;
@@ -55,6 +58,10 @@ function requireReminderOwner(owner: string) {
 function clearReminderTimer() { clearTimeout(reminderSaveTimer); reminderSaveTimer = undefined; }
 
 interface WorkbenchState {
+  textBatchPreview: TextBatchPreview | null;
+  prepareFileEditBatch: (directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | null, acknowledged: boolean, restoreBatchId?: string) => Promise<void>;
+  commitFileEditBatch: (directory: OrganizerDirectoryHandle, id: string, selected: string[], acknowledged: boolean) => Promise<void>;
+  cancelFileEditBatch: () => void;
   personalImportBusy: boolean;
   personalImportPreview: PersonalImportPreview | null;
   personalImportResult: (PersonalImportResult & { id: string; saved: boolean }) | null;
@@ -212,6 +219,7 @@ function vaultSnapshot(): VaultData {
 }
 
 function eraseMemory() {
+  textBatchGeneration++; textBatchPlan = null;
   personalImportGeneration++; personalImportPlan = null;
   transferGeneration++; preparedRestore = null;
   clearFileEditTimer();
@@ -225,7 +233,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -309,6 +317,64 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       // Replacing ciphertext neither unlocks the vault nor replays any task.
       eraseMemory(); set({ storageError: null });
     } finally { if (token === transferGeneration) set({ vaultTransferBusy: false }); }
+  },
+  cancelFileEditBatch: () => { textBatchGeneration++; textBatchPlan = null; set({ textBatchPreview: null }); },
+  prepareFileEditBatch: async (directory, names, rule, acknowledged, restoreBatchId) => {
+    if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件操作完成。');
+    if (get().storageError || get().fileEditDraft) throw new Error('请先保存本机记录并完成或丢弃单文件草稿。');
+    get().cancelFileEditBatch(); const epoch = generation, request = textBatchGeneration;
+    const selectedNames = [...names], selectedRule = rule ? structuredClone(rule) : null;
+    organizerInFlight = true; set({ organizerBusy: true }); directory.retain?.();
+    const guard = () => { if (epoch !== generation || request !== textBatchGeneration || !get().unlocked) throw new Error('批次读取已取消或密钥库已锁定。'); };
+    try {
+      const { prepareTextBatch } = await import('@/fileOrganizer/textBatch'); guard();
+      const plan = await prepareTextBatch(directory, selectedNames, selectedRule, get().fileEditVersions, acknowledged, guard, restoreBatchId); guard();
+      textBatchPlan = { plan, directory }; set({ textBatchPreview: { id: plan.id, directoryName: plan.directoryName, mode: plan.mode, rows: structuredClone(plan.rows) } });
+    } finally { directory.release?.(); organizerInFlight = false; set({ organizerBusy: false }); }
+  },
+  commitFileEditBatch: async (directory, id, selected, acknowledged) => {
+    if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件操作完成。');
+    if (get().storageError || get().fileEditDraft) throw new Error('请先保存本机记录并完成或丢弃单文件草稿。');
+    const prepared = textBatchPlan;
+    if (!prepared || prepared.plan.id !== id || prepared.directory !== directory) throw new Error('批次预览已失效，请重新读取。');
+    const epoch = generation, request = textBatchGeneration, selection = [...selected], controller = new AbortController();
+    organizerInFlight = true; set({ organizerBusy: true }); directory.retain?.(); artifactOperations.set('file-organizer', controller);
+    const guard = () => { if (epoch !== generation || request !== textBatchGeneration || !get().unlocked || controller.signal.aborted) throw new Error('批次已停止；已发出的写入可能完成，请核验历史。'); };
+    let currentId: string | undefined, finishedFile = false;
+    try {
+      const { batchVersions } = await import('@/fileOrganizer/textBatch');
+      guard();
+      const versions = batchVersions(prepared.plan, selection, get().fileEditVersions, new Date().toISOString());
+      const drafts = selection.map(id => prepared.plan.rows.find(row => row.id === id)!.draft!);
+      await withTextBatch(async access => {
+        // Check the whole selection before registering any write; each file is
+        // checked again just before its own write under the same operation lock.
+        for (const draft of drafts) { guard(); await access.verify(directory, draft, acknowledged); }
+        guard(); textBatchPlan = null;
+        set(state => ({ textBatchPreview: null, fileEditVersions: [...versions, ...state.fileEditVersions] }));
+        await persist(true); guard();
+        for (let index = 0; index < versions.length; index++) {
+          guard(); currentId = versions[index].id; finishedFile = false;
+          await access.write(directory, drafts[index], versions[index].after, { acknowledged, guard, beforeWrite: async () => {
+            guard(); set(state => ({ fileEditVersions: state.fileEditVersions.map(r => r.id === currentId ? { ...r, status: 'running', updatedAt: new Date().toISOString() } : r) }));
+            await persist(true); guard();
+          } });
+          finishedFile = true;
+          if (epoch !== generation || !get().unlocked) { guard(); }
+          set(state => ({ fileEditVersions: state.fileEditVersions.map(r => r.id === currentId ? { ...r, status: 'succeeded', updatedAt: new Date().toISOString() } : r) }));
+          await persist(true); guard();
+        }
+      });
+    } catch (error) {
+      if (!finishedFile && currentId && epoch === generation && get().unlocked) {
+        set(state => ({ fileEditVersions: state.fileEditVersions.map(r => r.id === currentId && r.status === 'running' ? { ...r, status: 'needs-attention', updatedAt: new Date().toISOString(), error: error instanceof Error ? error.message : '写入未确认，请核验。' } : r) }));
+        await persist();
+      }
+      throw error;
+    } finally {
+      directory.release?.(); if (artifactOperations.get('file-organizer') === controller) artifactOperations.delete('file-organizer');
+      organizerInFlight = false; set({ organizerBusy: false });
+    }
   },
   fileEditDraft: null, fileEditVersions: [], fileEditSaving: false,
   openFileEdit: async (directory, name, acknowledged, restoreId) => {
@@ -399,14 +465,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       const outcome = current.identity !== record.before.identity ? 'different' : current.sha256 === record.after.sha256 ? 'after' : current.sha256 === record.before.sha256 ? 'before' : 'different';
       const now = new Date().toISOString();
       set(state => ({ fileEditVersions: state.fileEditVersions.map(r => r.id === id ? { ...r, inspection: { outcome, checkedAt: now },
-        ...(r.status === 'succeeded' || r.status === 'not-applied' ? {} : { status: outcome === 'after' ? 'succeeded' : outcome === 'before' ? 'not-applied' : 'needs-attention', error: undefined }), updatedAt: now } : r) }));
+        ...(r.status === 'succeeded' || r.status === 'not-applied' || r.status === 'not-started' ? {} : { status: outcome === 'after' ? 'succeeded' : outcome === 'before' ? 'not-applied' : 'needs-attention', error: undefined }), updatedAt: now } : r) }));
       await persist(true);
     } finally { directory.release?.(); organizerInFlight = false; set({ organizerBusy: false }); }
   },
   removeFileEditVersion: async id => {
     if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件操作完成。');
     const record = get().fileEditVersions.find(r => r.id === id);
-    if (!record || !['succeeded', 'not-applied'].includes(record.status)) throw new Error('请先核验未完成的文本记录并保留恢复版本。');
+    if (!record || !['succeeded', 'not-applied', 'not-started'].includes(record.status)) throw new Error('请先核验未完成的文本记录并保留恢复版本。');
     set(state => ({ fileEditVersions: state.fileEditVersions.filter(r => r.id !== id) })); await persist(true);
   },
   reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false,
@@ -648,7 +714,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
   },
-  unlocked: false, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
+  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -687,12 +753,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
     const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
     const fileEditVersions = (data.fileEditVersions ?? []).map(r => r.status === 'running' ? { ...r, status: 'interrupted' as const, updatedAt: unlockedAt, error: '写入期间中断，文件可能已经变更；请先核验，不自动重放。' } : r);
-    set({ unlocked: true, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
+    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
   },
   lock: async () => {
-    get().cancelVaultTransfer(); get().cancelPersonalImport();
+    get().cancelVaultTransfer(); get().cancelPersonalImport(); get().cancelFileEditBatch();
     // Queue the current draft snapshot before clearing memory; flush below waits
     // for it even when the 400 ms autosave debounce has not elapsed.
     if (get().unlocked && (get().reminderDraftSaving || get().personalDraftSaving || get().fileEditSaving)) { clearReminderTimer(); clearPersonalTimer(); clearFileEditTimer(); void persist().catch(() => {}); }
@@ -700,7 +766,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();

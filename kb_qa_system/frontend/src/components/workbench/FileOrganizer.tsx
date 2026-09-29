@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FolderOpen, RefreshCw, Undo2 } from 'lucide-react';
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { makeRenamePlan, planMarkdown, type LocalFileEntry, type RenamePlan } from '@/fileOrganizer/plan';
@@ -6,6 +6,7 @@ import { assertRunDirectories, undoPlan, type OrganizerRun } from '@/fileOrganiz
 import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { FileTextEditor } from './FileTextEditor';
+const FileTextBatch = lazy(() => import('./FileTextBatch').then(m => ({ default: m.FileTextBatch })));
 
 function download(content: string, name: string, type: string) {
   const url = URL.createObjectURL(new Blob([content], { type }));
@@ -29,12 +30,13 @@ async function listDirectory(handle: OrganizerDirectoryHandle) {
   return { files, stages };
 }
 export function FileOrganizer() {
-  const [tab, setTab] = useState<'organize' | 'edit'>('organize');
+  const [tab, setTab] = useState<'organize' | 'edit' | 'batch'>('organize');
   const busy = useWorkbenchStore(state => state.organizerBusy);
-  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex gap-2 border-b border-line px-4 py-2" role="tablist" aria-label="文件操作">
+  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex flex-wrap gap-2 border-b border-line px-4 py-2" role="tablist" aria-label="文件操作">
     <button role="tab" aria-selected={tab === 'organize'} className="work-command" disabled={busy} onClick={() => setTab('organize')}>名称与位置整理</button>
     <button role="tab" aria-selected={tab === 'edit'} className="work-command" disabled={busy} onClick={() => setTab('edit')}>文本内容编辑</button>
-  </div>{tab === 'organize' ? <RenameFiles /> : <FileTextEditor />}</div>;
+    <button role="tab" aria-selected={tab === 'batch'} className="work-command" disabled={busy} onClick={() => setTab('batch')}>批量文本编辑</button>
+  </div>{tab === 'organize' ? <RenameFiles /> : tab === 'edit' ? <FileTextEditor /> : <Suspense fallback={<p className="p-4">正在加载批量编辑…</p>}><FileTextBatch /></Suspense>}</div>;
 }
 function RenameFiles() {
   const store = useWorkbenchStore();

@@ -10,7 +10,7 @@ function download(text: string, name: string) {
   const link = document.createElement('a'); link.href = url; link.download = name; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-const statusLabels: Record<FileEditVersion['status'], string> = { running: '写入中', succeeded: '已完成或核验一致', 'not-applied': '核验为原文', interrupted: '中断待核验', 'needs-attention': '待核验' };
+const statusLabels: Record<FileEditVersion['status'], string> = { 'not-started': '批次未执行', running: '写入中', succeeded: '已完成或核验一致', 'not-applied': '核验为原文', interrupted: '中断待核验', 'needs-attention': '待核验' };
 function formatLabel(text: string) {
   const format = textFormat(text);
   return `${textBytes(text).length} 字节 · ${format.newline.toUpperCase()} · ${format.bom ? '有' : '无'} UTF-8 BOM · ${/[\r\n]$/.test(text) ? '有' : '无'}末尾换行`;
@@ -105,7 +105,7 @@ export function FileTextEditor() {
           <button className="work-command" disabled={busy || !directory || !!draft} onClick={() => directory && void act(async () => { await store.openFileEdit(directory, record.name, acknowledged, record.id); if (mounted.current) setPreviewId(useWorkbenchStore.getState().fileEditDraft?.editId || ''); })}>预览恢复此记录原文</button>
           <button className="work-command" onClick={() => download(record.before.text, '历史原文-' + record.name)}>导出历史原文（明文）</button>
           <button className="work-command" onClick={() => download(record.after.text, '历史写入-' + record.name)}>导出历史写入（明文）</button>
-          <button className="work-command" disabled={busy || !['succeeded', 'not-applied'].includes(record.status)} onClick={() => { if (window.confirm('删除这条文本历史后将无法通过它恢复。请先导出需要的原文。继续？')) void act(() => store.removeFileEditVersion(record.id)); }}>删除文本记录</button></div>
+          <button className="work-command" disabled={busy || !['succeeded', 'not-applied', 'not-started'].includes(record.status)} onClick={() => { if (window.confirm('删除这条文本历史后将无法通过它恢复。请先导出需要的原文。继续？')) void act(() => store.removeFileEditVersion(record.id)); }}>删除文本记录</button></div>
       </details>)}
     </section>
   </div></section>;

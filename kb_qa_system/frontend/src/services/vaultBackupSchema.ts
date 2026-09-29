@@ -61,7 +61,7 @@ const organizer = obj({ id, ...directory, destinationName: optional(str(1000, 1)
   changes: arr(obj({ source: filename, target: filename, stage: filename, size: num(64 * 1024 * 1024), sha256: hash }), 500), error: optional(str(100000)), warnings: optional(arr(str(10000), 100)), retainedFiles: optional(arr(str(1000, 1), 1500)) });
 const snapshot = obj({ text: str(256 * 1024), sha256: hash, identity: optional(hash) });
 const fileDraft = obj({ id, editId: id, ...directory, name: filename, before: snapshot, content: str(256 * 1024), newline: one('lf', 'crlf', 'cr', 'mixed'), bom: bool, restoredFrom: optional(id), restoreText: optional(str(256 * 1024)) });
-const fileVersion = obj({ id, draftId: id, ...directory, name: filename, before: snapshot, after: snapshot, status: one('running', 'succeeded', 'not-applied', 'interrupted', 'needs-attention'), createdAt: date, updatedAt: date, restoredFrom: optional(id), error: optional(str(100000)), inspection: optional(obj({ outcome: one('before', 'after', 'different'), checkedAt: date })) });
+const fileVersion = obj({ id, draftId: id, ...directory, name: filename, before: snapshot, after: snapshot, batch: optional(obj({ id, index: num(19), total: num(20, 1) })), status: one('not-started', 'running', 'succeeded', 'not-applied', 'interrupted', 'needs-attention'), createdAt: date, updatedAt: date, restoredFrom: optional(id), error: optional(str(100000)), inspection: optional(obj({ outcome: one('before', 'after', 'different'), checkedAt: date })) });
 const schema = obj({ workflows: optional(arr(workflow, 30)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)),
   personalItems: optional(arr(personalItem, 500)), personalDrafts: optional(arr(personalDraft, 100)), reminderDrafts: optional(arr(reminderDraft, 20)), reminderTemplates: optional(arr(reminderTemplate, 100)), organizerRuns: optional(arr(organizer, 100)), fileEditDraft: optional(nullable(fileDraft)), fileEditVersions: optional(arr(fileVersion, 50)) });
 
@@ -122,6 +122,16 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     const checkSnapshot = async (s: { text: string; sha256: string }) => { textBytes(s.text); if (await sha256Text(s.text) !== s.sha256) fail(); };
     if (data.fileEditDraft) { validateDraft(data.fileEditDraft); await checkSnapshot(data.fileEditDraft.before); }
     let bytes = 0;
+    const batches = new Map<string, { total: number; indices: Set<number>; names: Set<string>; directory: string }>();
+    for (const r of data.fileEditVersions ?? []) {
+      if (r.status === 'not-started' && !r.batch) fail();
+      if (!r.batch) continue;
+      const { id, index, total } = r.batch, directory = JSON.stringify([r.directoryName, r.directoryIdentity]);
+      if (index >= total) fail();
+      const batch = batches.get(id) ?? { total, indices: new Set<number>(), names: new Set<string>(), directory };
+      if (batch.total !== total || batch.directory !== directory || batch.indices.has(index) || batch.names.has(r.name.toLowerCase())) fail();
+      batch.indices.add(index); batch.names.add(r.name.toLowerCase()); batches.set(id, batch);
+    }
     for (const r of data.fileEditVersions ?? []) { validateTextName(r.name); await checkSnapshot(r.before); await checkSnapshot(r.after); bytes += textBytes(r.before.text).length + textBytes(r.after.text).length; }
     if (bytes > MAX_VERSION_BYTES) fail();
     for (const r of data.organizerRuns ?? []) {
