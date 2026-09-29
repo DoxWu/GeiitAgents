@@ -4,7 +4,7 @@ import { MAX_VAULT_BACKUP_BYTES, type VaultBackupSummary } from '@/services/vaul
 
 const fields: [keyof VaultBackupSummary, string][] = [['profiles', '模型连接'], ['apiKeys', '模型 API Key'], ['conversations', '对话'], ['messages', '消息'], ['tasks', '办公任务'], ['artifacts', '文档与图表成果'], ['personalItems', '笔记与待办'], ['personalDrafts', '笔记/待办草稿'], ['reminderDrafts', '邮件提醒草稿'], ['reminderTemplates', '提醒模板'], ['organizerRuns', '文件整理记录'], ['fileEditVersions', '文本版本'], ['fileEditDrafts', '文本编辑草稿']];
 function Summary({ summary }: { summary: VaultBackupSummary }) {
-  return <div className="space-y-3"><p className="text-sm">备份时间：{new Date(summary.exportedAt).toLocaleString()}</p><dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">{fields.map(([key, label]) => <div className="rounded border border-line p-2" key={key}><dt className="text-ink-secondary">{label}</dt><dd className="mt-1 font-medium">{summary[key]}</dd></div>)}</dl></div>;
+  return <div className="space-y-3"><p className="text-sm">备份时间：{new Date(summary.exportedAt).toLocaleString()} · 工作流定义 {summary.workflows} 个</p><dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">{fields.map(([key, label]) => <div className="rounded border border-line p-2" key={key}><dt className="text-ink-secondary">{label}</dt><dd className="mt-1 font-medium">{summary[key]}</dd></div>)}</dl></div>;
 }
 export function WorkbenchBackup({ onUnlock }: { onUnlock: () => void }) {
   const store = useWorkbenchStore();

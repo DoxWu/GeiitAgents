@@ -6,6 +6,7 @@ import { validatePersonalDraft } from '@/personal/itemDraft';
 import { validateReminderDraft, validateReminderTemplate } from '@/personal/reminderDraft';
 import { textBytes, validateDraft, validateTextName, MAX_VERSION_BYTES } from '@/fileOrganizer/textEdit';
 import { validFileName } from '@/fileOrganizer/plan';
+import { validateWorkflow, validateWorkflowInput } from '@/workflows/definition';
 
 type Check = (value: unknown) => void;
 const fail = (): never => { throw new Error('备份内容无效、超限或版本不兼容，当前工作台未更改。'); };
@@ -31,10 +32,12 @@ const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: s
   messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
 const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)) };
 const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'line'), unit: str(20) });
-const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools'), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), summary: optional(str(1_000_000)),
+const workflow: Check = value => { validateWorkflow(value); };
+const workflowInput: Check = value => { validateWorkflowInput(value); };
+const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), summary: optional(str(1_000_000)),
   title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50) });
 const finishReason = optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown'));
-const tool = obj({ id, taskId: id, finishReason, tool: one('model.complete', 'document.edit', 'document.restore', 'document.export-docx', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document'),
+const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('model.complete', 'document.edit', 'document.restore', 'document.export-docx', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document'),
   callId: optional(id), arguments: optional(str(1_000_000)), result: optional(str(1_000_000)), sourceArtifactId: optional(id), previousArtifactId: optional(id), outputArtifactId: optional(id), outputSha256: optional(hash), outputName: optional(str(300)), converterVersion: optional(str(100)), warnings: optional(arr(str(10000), 100)), status, model: optional(str(1000)), startedAt: date, finishedAt: optional(date), error: optional(str(100000)) });
 const artifact = obj({ id, taskId: id, finishReason, kind: one('markdown', 'svg'), version: num(50, 1), parentArtifactId: optional(id), restoredFromArtifactId: optional(id), name: str(300, 1), mimeType: one('text/markdown', 'image/svg+xml'), content: str(1_000_001), sha256: hash, createdAt: date });
 const itemInput = { kind: one('note', 'todo'), title: str(120), content: str(20000), tags: arr(str(30), 8), status: optional(one('open', 'done', 'cancelled')), priority: optional(one('normal', 'high', 'low')), dueAt: optional(nullable(date)) };
@@ -59,7 +62,7 @@ const organizer = obj({ id, ...directory, destinationName: optional(str(1000, 1)
 const snapshot = obj({ text: str(256 * 1024), sha256: hash, identity: optional(hash) });
 const fileDraft = obj({ id, editId: id, ...directory, name: filename, before: snapshot, content: str(256 * 1024), newline: one('lf', 'crlf', 'cr', 'mixed'), bom: bool, restoredFrom: optional(id), restoreText: optional(str(256 * 1024)) });
 const fileVersion = obj({ id, draftId: id, ...directory, name: filename, before: snapshot, after: snapshot, status: one('running', 'succeeded', 'not-applied', 'interrupted', 'needs-attention'), createdAt: date, updatedAt: date, restoredFrom: optional(id), error: optional(str(100000)), inspection: optional(obj({ outcome: one('before', 'after', 'different'), checkedAt: date })) });
-const schema = obj({ profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)),
+const schema = obj({ workflows: optional(arr(workflow, 30)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)),
   personalItems: optional(arr(personalItem, 500)), personalDrafts: optional(arr(personalDraft, 100)), reminderDrafts: optional(arr(reminderDraft, 20)), reminderTemplates: optional(arr(reminderTemplate, 100)), organizerRuns: optional(arr(organizer, 100)), fileEditDraft: optional(nullable(fileDraft)), fileEditVersions: optional(arr(fileVersion, 50)) });
 
 function unique(values: { id: string }[]) { if (new Set(values.map(v => v.id)).size !== values.length) fail(); }
@@ -81,6 +84,7 @@ function safeSvg(content: string) {
 export async function validateVaultBackup(value: unknown): Promise<VaultData> {
   try {
     schema(value); const data = value as VaultData;
+    unique(data.workflows ?? []);
     for (const rows of [data.profiles, data.conversations, data.taskRuns ?? [], data.toolRuns ?? [], data.artifacts ?? [], data.personalItems ?? [], data.personalDrafts ?? [], data.reminderTemplates ?? [], data.organizerRuns ?? [], data.fileEditVersions ?? []]) unique(rows);
     for (const p of data.profiles) { validateProfile(p); if (/[^\x21-\x7e]/.test(p.apiKey)) fail(); }
     for (const c of data.conversations) unique(c.messages);
@@ -91,10 +95,20 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     for (const t of data.reminderTemplates ?? []) validateReminderTemplate(t);
     const tasks = new Map((data.taskRuns ?? []).map(t => [t.id, t])), artifacts = new Map((data.artifacts ?? []).map(a => [a.id, a])), tools = new Map((data.toolRuns ?? []).map(t => [t.id, t]));
     for (const t of tasks.values()) {
+      if ((t.type === 'workflow.run') !== Boolean(t.workflow)) fail();
+      if (t.workflow) {
+        const steps = t.toolRunIds.map(id => tools.get(id)).filter(step => step?.workflowNodeId);
+        if (new Set(steps.map(step => step!.workflowNodeId)).size !== steps.length) fail();
+        if (t.status === 'succeeded' && (steps.length !== t.workflow.definition.nodes.length || steps.some(step => step!.status !== 'succeeded'))) fail();
+      }
       if (new Set(t.artifactIds).size !== t.artifactIds.length || new Set(t.toolRunIds).size !== t.toolRunIds.length) fail();
       if (t.artifactIds.some(id => artifacts.get(id)?.taskId !== t.id) || t.toolRunIds.some(id => tools.get(id)?.taskId !== t.id)) fail();
     }
     for (const t of tools.values()) {
+      if (t.workflowNodeId) {
+        const node = tasks.get(t.taskId)?.workflow?.definition.nodes.find(n => n.id === t.workflowNodeId);
+        if (!node || t.tool !== (node.kind === 'generate_document' ? 'model.complete' : `office.${node.kind}`)) fail();
+      } else if (tasks.get(t.taskId)?.workflow && t.tool !== 'document.export-docx') fail();
       if (!tasks.get(t.taskId)?.toolRunIds.includes(t.id)) fail();
       for (const reference of [t.sourceArtifactId, t.previousArtifactId, t.outputArtifactId]) {
         if (reference && artifacts.get(reference)?.taskId !== t.taskId) fail();

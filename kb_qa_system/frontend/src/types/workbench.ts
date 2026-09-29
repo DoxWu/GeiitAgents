@@ -30,7 +30,8 @@ export type TaskStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'int
 
 export interface TaskRun {
   id: string;
-  type: 'document.generate-markdown' | 'chart.generate' | 'office.tools';
+  type: 'document.generate-markdown' | 'chart.generate' | 'office.tools' | 'workflow.run';
+  workflow?: { definition: import('@/workflows/definition').WorkflowDefinition; input: import('@/workflows/definition').WorkflowInput };
   officeInput?: import('@/officeTasks/toolRunner').OfficeToolInput;
   summary?: string;
   chartInput?: import('@/officeTasks/chart').ChartInput;
@@ -48,6 +49,7 @@ export interface TaskRun {
 }
 
 export interface ToolRun {
+  workflowNodeId?: string;
   finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   taskId: string;
@@ -85,6 +87,7 @@ export interface WorkArtifact {
 }
 
 export interface VaultData {
+  workflows?: import('@/workflows/definition').WorkflowDefinition[];
   fileEditDraft?: import('@/fileOrganizer/textEdit').FileEditDraft | null;
   fileEditVersions?: import('@/fileOrganizer/textEdit').FileEditVersion[];
   personalDrafts?: import('@/personal/itemDraft').PersonalDraft[];

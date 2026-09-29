@@ -1,0 +1,112 @@
+import { webcrypto } from 'node:crypto';
+import { TextDecoder, TextEncoder } from 'node:util';
+import { Blob as NodeBlob } from 'node:buffer';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { useWorkbenchStore as store, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from '../workbenchStore';
+import { useAuthStore } from '../authStore';
+import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
+import { completeModel, completeAccountModel } from '@/services/workbenchModel';
+import { importVaultBackup } from '@/services/vaultBackup';
+import { validateVaultBackup } from '@/services/vaultBackupSchema';
+
+vi.mock('@/services/workbenchModel', async original => ({ ...await original<typeof import('@/services/workbenchModel')>(), completeModel: vi.fn(), completeAccountModel: vi.fn() }));
+const profile = { id: 'workflow-model', name: 'fixture', mode: 'local' as const, baseUrl: 'http://127.0.0.1:11434/v1', model: 'fixture-model' };
+beforeEach(async () => {
+  vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextDecoder', TextDecoder); vi.stubGlobal('TextEncoder', TextEncoder); vi.stubGlobal('Blob', NodeBlob);
+  localStorage.clear(); vi.mocked(completeModel).mockReset(); vi.mocked(completeAccountModel).mockReset();
+  useAuthStore.setState({ user: null, isAuthenticated: false }); store.setState({ accountModel: null });
+  await store.getState().unlock('1234');
+});
+afterEach(async () => { await store.getState().lock(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+const input = { reference: 'workflow-private-material', csv: 'month,sales\nJan,12' };
+async function definition(model = false) {
+  const a = newWorkflowNode(model ? 'generate_document' : 'inspect_csv', 0), b = newWorkflowNode('create_document', 1);
+  return store.getState().saveWorkflow({ ...newWorkflow(), name: 'workflow-private-name', nodes: [a, b], edges: [{ from: a.id, to: b.id }] });
+}
+it('saves revisions, freezes runtime snapshots, restores encrypted history and roundtrips backup', async () => {
+  const saved = await definition();
+  const pending = store.getState().startWorkflow(saved.id, saved.revision, input, '', false);
+  await vi.waitFor(() => expect(store.getState().taskRuns).toHaveLength(1));
+  const changed = await store.getState().saveWorkflow({ ...saved, name: 'new-version' });
+  const originalId = await pending;
+  expect(store.getState().taskRuns.find(t => t.id === originalId)?.workflow?.definition).toMatchObject({ revision: 1, name: 'workflow-private-name' });
+  await expect(store.getState().startWorkflow(saved.id, 1, input, '', false)).rejects.toThrow('修订已变化');
+  const id = await store.getState().startWorkflow(changed.id, changed.revision, input, '', false);
+  expect(store.getState().taskRuns.find(t => t.id === id)).toMatchObject({ status: 'succeeded', workflow: { definition: { revision: 2 } } });
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/workflow-private|new-version/);
+  await store.getState().lock(); expect(store.getState().workflows).toEqual([]); await store.getState().unlock('1234');
+  expect(store.getState().workflows[0].revision).toBe(2);
+  await expect(store.getState().saveWorkflow(saved)).rejects.toThrow('其他编辑器');
+  const backup = await store.getState().exportWorkbenchBackup('5678', false), restored = await importVaultBackup(backup.file, '5678');
+  expect(restored.summary.workflows).toBe(1); expect(restored.data.workflows).toEqual(store.getState().workflows);
+  expect(restored.data.taskRuns).toEqual(store.getState().taskRuns);
+  const malformed = structuredClone(restored.data); malformed.taskRuns![0].workflow!.definition.edges.push({ from: 'missing', to: 'missing' });
+  await expect(validateVaultBackup(malformed)).rejects.toThrow();
+  await store.getState().removeWorkflow(changed.id, 2); expect(store.getState().taskRuns.find(t => t.id === id)?.workflow?.definition.name).toBe('new-version');
+});
+it('enforces explicit cloud consent and account permissions before recording a run', async () => {
+  const d = await definition(true);
+  await store.getState().saveProfile({ ...profile, mode: 'relay', baseUrl: 'https://fixture.example/v1' }, 'fixture-key');
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('明确授权');
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, ACCOUNT_MODEL_ID, true)).rejects.toThrow('权限');
+  expect(store.getState().taskRuns).toHaveLength(0); expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
+});
+it('uses strict incremental model route and saves final reasons without persisting previews', async () => {
+  const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, chunk, finish) => { chunk!('stream'); finish!('stop'); return '# result'; });
+  const id = await store.getState().startWorkflow(d.id, d.revision, input, profile.id, false);
+  expect(completeModel).toHaveBeenCalledTimes(1); expect(store.getState().taskRuns.find(t => t.id === id)?.artifactIds).toHaveLength(2);
+  expect(store.getState().generationPreviews).toEqual({});
+  const data = (await importVaultBackup((await store.getState().exportWorkbenchBackup('5678', false)).file, '5678')).data;
+  expect(data).not.toHaveProperty('generationPreviews'); expect(data.artifacts?.some(a => a.finishReason === 'stop')).toBe(true);
+});
+it.each(['cancel', 'lock'] as const)('handles %s during a model request without late artifacts or downstream execution', async reason => {
+  const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation((_p, _k, _m, _s, chunk) => new Promise(resolve => { chunk?.('partial'); finish = resolve; }));
+  const pending = store.getState().startWorkflow(d.id, d.revision, input, profile.id, false), rejected = expect(pending).rejects.toThrow();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  const id = store.getState().taskRuns[0].id;
+  if (reason === 'lock') await store.getState().lock(); else store.getState().cancelTask(id);
+  expect(vi.mocked(completeModel).mock.calls[0][3].aborted).toBe(true);
+  finish('late'); await rejected;
+  if (reason === 'lock') await store.getState().unlock('1234');
+  expect(store.getState().artifacts).toHaveLength(0); expect(store.getState().taskRuns[0].status).toBe(reason === 'lock' ? 'interrupted' : 'cancelled');
+  expect(store.getState().toolRuns).toHaveLength(1);
+});
+it('stops on partial model output and keeps its artifact in portable backups', async () => {
+  const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, _c, finish) => { finish!('length'); return 'partial'; });
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('未报告正常完成');
+  expect(store.getState().taskRuns[0].status).toBe('failed'); expect(store.getState().artifacts).toHaveLength(1);
+  const backup = await store.getState().exportWorkbenchBackup('5678', false);
+  expect((await importVaultBackup(backup.file, '5678')).data.artifacts?.[0].finishReason).toBe('length');
+});
+it('blocks execution when initial run record cannot persist', async () => {
+  const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
+  vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new DOMException('quota'); });
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('保存失败');
+  expect(completeModel).not.toHaveBeenCalled(); expect(store.getState().taskRuns[0].status).toBe('failed');
+});
+it('retains completed artifacts on storage failure and retryStorage never reruns the model', async () => {
+  const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, _c, finish) => { finish!('stop'); return 'saved result'; });
+  const original = localStorage.setItem.bind(localStorage);
+  const spy = vi.spyOn(localStorage, 'setItem').mockImplementation((key, value) => { if (store.getState().artifacts.length) throw new DOMException('quota'); original(key, value); });
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('保存失败');
+  expect(store.getState().artifacts).toHaveLength(1); expect(store.getState().toolRuns).toHaveLength(1);
+  spy.mockRestore(); await store.getState().retryStorage(); await store.getState().lock(); await store.getState().unlock('1234');
+  expect(store.getState().artifacts[0].content).toBe('saved result\n'); expect(store.getState().taskRuns[0].status).toBe('failed');
+  expect(completeModel).toHaveBeenCalledTimes(1);
+});
+it('aborts an authorized account workflow on logout and rejects late completion', async () => {
+  useAuthStore.setState({ isAuthenticated: true, user: { id: 42, email: 'workflow@example.test', username: 'fixture', is_active: true, is_superuser: false, user_type: 'regular', created_at: '' } });
+  store.setState({ accountModel: { userId: 42, model: 'account-fixture' } });
+  const d = await definition(true); let finish!: (value: { content: string; model: string }) => void;
+  vi.mocked(completeAccountModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().startWorkflow(d.id, d.revision, input, ACCOUNT_MODEL_ID, true), rejected = expect(pending).rejects.toThrow();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  useAuthStore.setState({ isAuthenticated: false, user: null }); expect(vi.mocked(completeAccountModel).mock.calls[0][1].aborted).toBe(true);
+  finish({ content: 'late', model: 'fixture' }); await rejected;
+  expect(store.getState().artifacts).toHaveLength(0); expect(store.getState().taskRuns[0].status).toBe('cancelled');
+});

@@ -1,0 +1,122 @@
+import { useEffect, useRef, useState } from 'react';
+import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
+import { NODE_LABELS, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
+import { WorkflowCanvas } from './WorkflowCanvas';
+import { ToolArtifact } from './ToolArtifact';
+import { GenerationPreview } from './GenerationPreview';
+import { finishLabel } from '@/services/modelStream';
+import type { TaskStatus } from '@/types/workbench';
+
+const statuses: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+export function Workflows() {
+  const store = useWorkbenchStore();
+  const [draft, setDraft] = useState<WorkflowDefinition>(() => newWorkflow()), [dirty, setDirty] = useState(false), [selected, setSelected] = useState('');
+  const [input, setInput] = useState<WorkflowInput>({ reference: '', csv: '' });
+  const [from, setFrom] = useState(''), [to, setTo] = useState(''), [profileId, setProfileId] = useState('');
+  const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
+  const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    mounted.current = true;
+    const warn = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => { mounted.current = false; window.removeEventListener('beforeunload', warn); };
+  }, []);
+  const chosen = profileId || store.profiles[0]?.id || (store.accountModel ? ACCOUNT_MODEL_ID : '');
+  const profile = store.profiles.find(p => p.id === chosen), usesModel = draft.nodes.some(n => n.kind === 'generate_document');
+  const cloud = usesModel && (chosen === ACCOUNT_MODEL_ID || profile?.mode === 'relay');
+  const signature = JSON.stringify([profile, store.accountModel, chosen]);
+  useEffect(() => { setConsent(false); }, [signature]);
+  const node = draft.nodes.find(n => n.id === selected);
+  const runs = store.taskRuns.filter(t => t.type === 'workflow.run'), run = runs.find(t => t.id === selectedRun) ?? runs[0];
+  const artifact = store.artifacts.find(a => a.id === artifactId && run?.artifactIds.includes(a.id)) ?? store.artifacts.find(a => run?.artifactIds.includes(a.id));
+  function change(next: WorkflowDefinition) { setDraft(next); setDirty(true); setConsent(false); setNotice(''); }
+  function patchNode(id: string, patch: Partial<WorkflowNode>) { change({ ...draft, nodes: draft.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }); }
+  function load(definition: WorkflowDefinition) {
+    if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
+    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setFrom(''); setTo(''); setConsent(false); setError(''); setNotice('');
+  }
+  async function save() {
+    setBusy(true); setError('');
+    try { const saved = await store.saveWorkflow(draft); if (mounted.current) { setDraft(clone(saved)); setDirty(false); setNotice(`工作流已加密保存 · 修订 ${saved.revision}`); } }
+    catch (e) {
+      if (mounted.current) {
+        // A storage failure can leave the valid new revision in memory. Keep it
+        // editable and let retryStorage persist it without a second execution.
+        const current = useWorkbenchStore.getState().workflows.find(d => d.id === draft.id);
+        if (current && current.revision === draft.revision + 1 && JSON.stringify(current.nodes) === JSON.stringify(draft.nodes) && JSON.stringify(current.edges) === JSON.stringify(draft.edges) && current.name === draft.name.trim()) setDraft(clone(current));
+        setError(e instanceof Error ? e.message : '保存失败。');
+      }
+    } finally { if (mounted.current) setBusy(false); }
+  }
+  function connect() {
+    try { const next = { ...draft, edges: [...draft.edges, { from, to }] }; validateWorkflow(next); change(next); setError(''); }
+    catch (e) { setError(e instanceof Error ? e.message : '无法连接。'); }
+  }
+  async function start() {
+    if (starting.current) return;
+    starting.current = true; setError(''); setSelectedRun(''); setArtifactId('');
+    const allowed = consent; setConsent(false);
+    try { const id = await store.startWorkflow(draft.id, draft.revision, input, chosen, allowed); if (mounted.current) setSelectedRun(id); }
+    catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '工作流执行失败。'); }
+    finally { starting.current = false; }
+  }
+  return <section aria-label="可视化工作流" className="min-h-0 min-w-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5">
+    <div><h1 className="text-xl font-semibold">可视化工作流</h1><p className="mt-2 text-sm text-ink-secondary">把本次输入交给工具，连线将前置步骤结果交给后续文档步骤。手动运行，按依赖顺序串行执行；不自动发邮件或修改外部文件。</p></div>
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="work-label min-w-0 flex-1">已保存工作流<select aria-label="已保存工作流" className="work-input" value={store.workflows.some(d => d.id === draft.id) ? draft.id : ''} disabled={busy} onChange={e => { const saved = store.workflows.find(d => d.id === e.target.value); if (saved) load(saved); }}><option value="">未保存</option>{store.workflows.map(d => <option key={d.id} value={d.id}>{d.name} · 修订 {d.revision}</option>)}</select></label>
+      <button className="work-command" disabled={busy} onClick={() => load(newWorkflow())}>新建工作流</button>
+      <button className="work-command" disabled={busy || !draft.revision} onClick={() => { if (window.confirm('删除此工作流定义？已运行任务与成果会保留。')) { setBusy(true); void store.removeWorkflow(draft.id, draft.revision).then(() => { if (mounted.current) { setDraft(newWorkflow()); setDirty(false); } }).catch(e => { if (mounted.current) setError(String(e.message)); }).finally(() => { if (mounted.current) setBusy(false); }); } }}>删除定义</button>
+    </div>
+    <fieldset disabled={busy} className="min-w-0 space-y-4">
+      <label className="work-label">工作流名称<input className="work-input" maxLength={100} value={draft.name} onChange={e => change({ ...draft, name: e.target.value })} /></label>
+      <div className="flex flex-wrap gap-2">{(Object.entries(NODE_LABELS) as [WorkflowNodeKind, string][]).map(([kind, label]) => <button key={kind} className="work-command" disabled={draft.nodes.length >= 12} onClick={() => { const next = newWorkflowNode(kind, draft.nodes.length); change({ ...draft, nodes: [...draft.nodes, next] }); setSelected(next.id); }}>添加{label}</button>)}</div>
+      <WorkflowCanvas definition={draft} selected={selected} onSelect={setSelected} onMove={(id, x, y) => patchNode(id, { x, y })} />
+      {node && <section className="grid min-w-0 gap-3 rounded border border-line p-4 sm:grid-cols-2" aria-label="步骤配置">
+        <label className="work-label">步骤标题<input className="work-input" value={node.title} maxLength={80} onChange={e => patchNode(node.id, { title: e.target.value })} /></label>
+        <button className="work-command justify-self-start self-end" onClick={() => { change({ ...draft, nodes: draft.nodes.filter(n => n.id !== node.id), edges: draft.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelected(''); }}>删除步骤及连线</button>
+        {node.kind === 'create_document' || node.kind === 'generate_document' ? <>
+          <label className="work-label sm:col-span-2">{node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={node.kind === 'generate_document' ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
+          <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{node.kind === 'generate_document' ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
+        </> : node.kind === 'render_chart' ? <>
+          <label className="work-label">分类列（从 1 开始）<input className="work-input" type="number" min={1} max={12} value={node.categoryColumn + 1} onChange={e => patchNode(node.id, { categoryColumn: Number(e.target.value) - 1 })} /></label>
+          <label className="work-label">图表类型<select aria-label="图表类型" className="work-input" value={node.chartType} onChange={e => patchNode(node.id, { chartType: e.target.value as 'bar' | 'line' })}><option value="bar">柱状图</option><option value="line">折线图</option></select></label>
+          <fieldset className="sm:col-span-2"><legend className="mb-2 text-sm">数值列（选择 1–6 列，从 1 开始）</legend><div className="flex flex-wrap gap-3">{Array.from({ length: 12 }, (_, i) => <label key={i} className="flex gap-1 text-sm"><input type="checkbox" checked={node.valueColumns.includes(i)} onChange={e => patchNode(node.id, { valueColumns: e.target.checked ? [...node.valueColumns, i].sort((a, b) => a - b) : node.valueColumns.filter(v => v !== i) })} />{i + 1}</label>)}</div></fieldset>
+          <label className="work-label">单位<input className="work-input" maxLength={20} value={node.unit} onChange={e => patchNode(node.id, { unit: e.target.value })} /></label>
+        </> : <p className="text-sm text-ink-secondary">检查本次 CSV 的表头与数据；不会执行单元格公式。</p>}
+      </section>}
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+        <label className="work-label">前置步骤<select aria-label="前置步骤" className="work-input" value={from} onChange={e => setFrom(e.target.value)}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
+        <label className="work-label">后续步骤<select aria-label="后续步骤" className="work-input" value={to} onChange={e => setTo(e.target.value)}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
+        <button className="work-command self-end" disabled={!from || !to} onClick={connect}>连接步骤</button>
+      </div>
+      {!!draft.edges.length && <ul className="space-y-2">{draft.edges.map(e => <li key={e.from + ':' + e.to} className="flex flex-wrap items-center gap-2 text-sm"><span>{draft.nodes.find(n => n.id === e.from)?.title} → {draft.nodes.find(n => n.id === e.to)?.title}</span><button className="work-command" onClick={() => change({ ...draft, edges: draft.edges.filter(edge => edge !== e) })}>移除此连线</button></li>)}</ul>}
+      <div className="flex flex-wrap items-center gap-3"><button className="work-command bg-brand text-white" onClick={() => void save()} disabled={!draft.nodes.length}>保存工作流</button><span className="text-sm text-ink-secondary">{dirty ? '有未保存修改；离开此任务类型前请保存。' : draft.revision ? `已保存修订 ${draft.revision}` : '尚未保存'} · 最多 12 个步骤 / 6 个模型步骤</span></div>
+    </fieldset>
+    <section aria-label="工作流运行输入" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">本次运行输入</h2>
+      <label className="work-label">工作流参考材料<textarea aria-label="工作流参考材料" className="work-input min-h-24" maxLength={50000} value={input.reference} onChange={e => { setInput({ ...input, reference: e.target.value }); setConsent(false); }} /></label>
+      <label className="work-label">工作流 CSV<textarea aria-label="工作流 CSV" className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv} onChange={e => { setInput({ ...input, csv: e.target.value }); setConsent(false); }} placeholder={'月份,销量\n一月,12\n二月,18'} /></label>
+      <p className="text-xs text-ink-secondary">CSV 最多 50 行、12 列；输入随运行快照加密保存。节点不会读取其他文件。执行中可离开页签；锁库/关闭会中断，不自动重放。</p>
+      {usesModel && <label className="work-label">工作流模型<select aria-label="工作流模型" className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setConsent(false); }}><option value="">选择模型</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
+      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果（最多 {draft.nodes.filter(n => n.kind === 'generate_document').length} 次模型请求，可能计费）</label>}
+      <button className="work-command bg-brand text-white" disabled={busy || dirty || !draft.revision || Boolean(store.storageError) || usesModel && !chosen || Boolean(cloud && !consent) || runs.some(r => r.status === 'running' && r.workflow?.definition.id === draft.id)} onClick={() => void start()}>手动运行工作流</button>
+    </section>
+    {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
+    {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}
+    <section aria-label="工作流运行历史" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">运行历史</h2>
+      <label className="work-label">选择工作流运行<select aria-label="选择工作流运行" className="work-input" value={run?.id || ''} onChange={e => { setSelectedRun(e.target.value); setArtifactId(''); }}>{!runs.length && <option value="">暂无记录</option>}{runs.map(r => <option key={r.id} value={r.id}>{r.title} · 修订 {r.workflow?.definition.revision} · {statuses[r.status]} · {new Date(r.createdAt).toLocaleString()}</option>)}</select></label>
+      {run && <><p className="font-medium">{statuses[run.status]} · {run.artifactIds.length} 个成果</p>{run.error && <p className="text-sm text-danger">{run.error}</p>}{run.summary && <p className="text-sm">{run.summary}</p>}
+        <div className="flex flex-wrap gap-2">{run.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(run.id)}>停止工作流</button> : <>
+          <button className="work-command" onClick={() => { if (run.workflow) { if (dirty && !window.confirm('放弃尚未保存修改并复制历史快照？')) return; const copy = { ...clone(run.workflow.definition), id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() }; setDraft(copy); setDirty(true); setInput(clone(run.workflow.input)); setProfileId(run.profileId); setConsent(false); setSelected(copy.nodes[0]?.id || ''); setNotice('已复制历史快照；保存后可作为新任务重新运行，可能再次计费。'); } }}>复制快照为新工作流</button>
+          <button className="work-command" onClick={() => { if (window.confirm('删除本次运行和成果？工作流定义保留。')) void store.removeTask(run.id).catch(e => { if (mounted.current) setError(e.message); }); }}>删除运行</button>
+        </>}</div>
+        {run.status === 'running' && store.generationPreviews[run.id] && <GenerationPreview value={store.generationPreviews[run.id]} label="工作流模型生成预览" />}
+        <ol className="space-y-2">{run.toolRunIds.map(id => store.toolRuns.find(t => t.id === id)).filter(Boolean).map(t => <li className="rounded border border-line p-3 text-sm" key={t!.id}><details><summary>{run.workflow?.definition.nodes.find(n => n.id === t!.workflowNodeId)?.title || t!.tool} · {statuses[t!.status]}</summary>{t!.finishReason && <p>{finishLabel(t!.finishReason)}</p>}{t!.error && <p>{t!.error}</p>}{t!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{t!.result}</pre>}</details></li>)}</ol>
+        {!!run.artifactIds.length && <label className="work-label">选择工作流成果<select aria-label="选择工作流成果" className="work-input" value={artifact?.id || ''} onChange={e => setArtifactId(e.target.value)}>{store.artifacts.filter(a => run.artifactIds.includes(a.id)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
+        {artifact && <ToolArtifact key={artifact.id} artifact={artifact} running={run.status === 'running'} />}
+      </>}
+    </section>
+  </div></section>;
+}

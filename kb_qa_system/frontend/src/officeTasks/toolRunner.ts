@@ -21,7 +21,7 @@ function objectArgs(call: ToolCall, keys: string[]): Record<string, unknown> {
 }
 const safeName = (title: string) => title.replace(/[<>:"/\\|?*]/g, '_').replace(/[. ]+$/, '') || 'artifact';
 
-async function execute(call: ToolCall, input: OfficeToolInput, taskId: string, signal: AbortSignal): Promise<{ result: Record<string, unknown>; artifact?: WorkArtifact }> {
+export async function executeOfficeTool(call: ToolCall, input: OfficeToolInput, taskId: string, signal: AbortSignal): Promise<{ result: Record<string, unknown>; artifact?: WorkArtifact }> {
   abort(signal);
   if (call.function.name === 'inspect_csv') {
     objectArgs(call, []);
@@ -82,8 +82,8 @@ export async function runOfficeTools(taskId: string, input: OfficeToolInput, sig
       abort(signal); executed++;
       const step: ToolRun = { id: crypto.randomUUID(), taskId, tool: `office.${call.function.name}`, callId: call.id, arguments: call.function.arguments, status: 'running', startedAt: new Date().toISOString() };
       await checkpoint({ step }); abort(signal);
-      let result: Awaited<ReturnType<typeof execute>>;
-      try { result = await execute(call, clean, taskId, signal); }
+      let result: Awaited<ReturnType<typeof executeOfficeTool>>;
+      try { result = await executeOfficeTool(call, clean, taskId, signal); }
       catch (error) { abort(signal); result = { result: { ok: false, error: error instanceof Error ? error.message : '工具执行失败。' } }; }
       abort(signal);
       const serialized = JSON.stringify(result.result);

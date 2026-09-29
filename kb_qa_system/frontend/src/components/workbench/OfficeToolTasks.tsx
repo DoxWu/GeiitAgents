@@ -3,40 +3,10 @@ import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
 import type { TaskStatus, WorkArtifact } from '@/types/workbench';
-import { PrivateMarkdown } from './LocalMarkdown';
+import { ToolArtifact } from './ToolArtifact';
 
 const statusText: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 const toolText: Record<string, string> = { 'model.tools': '请求模型', 'office.inspect_csv': '读取 CSV', 'office.render_chart': '生成图表', 'office.create_document': '创建文档', 'document.export-docx': '导出 Word' };
-function download(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function ToolArtifact({ artifact, running }: { artifact: WorkArtifact; running: boolean }) {
-  const [url, setUrl] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const mounted = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => {
-    if (artifact.kind !== 'svg') return;
-    const value = URL.createObjectURL(new Blob([artifact.content], { type: artifact.mimeType })); setUrl(value);
-    return () => URL.revokeObjectURL(value);
-  }, [artifact]);
-  async function docx() {
-    setBusy(true); setError('');
-    try {
-      const result = await useWorkbenchStore.getState().exportArtifactDocx(artifact.id);
-      if (mounted.current) { download(new Blob([result.bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), result.name); setError(result.warnings.join('；')); }
-    } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : '导出失败。'); }
-    finally { if (mounted.current) setBusy(false); }
-  }
-  return <section aria-label="多步骤任务成果" className="mt-4 min-w-0 border-t border-line pt-4">
-    <h3 className="break-all font-medium">{artifact.name}</h3>
-    <div className="my-3 flex flex-wrap gap-2"><button className="work-command" onClick={() => download(new Blob([artifact.content], { type: artifact.mimeType }), artifact.name)}>下载成果</button>
-      {artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} onClick={() => void docx()}>{busy ? '正在导出…' : '导出 Word'}</button>}</div>
-    {error && <p role="status" className="text-sm">{error}</p>}
-    {artifact.kind === 'markdown' ? <PrivateMarkdown content={artifact.content} /> : <div className="overflow-x-auto bg-white">{url && <img src={url} alt={artifact.name} className="max-w-none" />}</div>}
-  </section>;
-}
-
 export function OfficeToolTasks() {
   const store = useWorkbenchStore(), userId = useAuthStore(s => s.isAuthenticated ? s.user?.id : undefined);
   const [input, setInput] = useState<OfficeToolInput>({ title: '', instruction: '', sourceContent: '', csv: '' });
