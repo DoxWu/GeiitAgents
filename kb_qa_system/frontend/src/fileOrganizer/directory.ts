@@ -29,6 +29,8 @@ class NativeFile implements OrganizerFileHandle {
   async createWritable(): Promise<never> { throw new Error('原生文件仅允许校验后的本机复制。'); }
   async isSameEntry(other: OrganizerFileHandle) { return other instanceof NativeFile && this.identity === other.identity; }
   fingerprint() { return access<string>({ op: 'hash', ...this.fields() }); }
+  readText() { return access<{ text: string; sha256: string; identity: string }>({ op: 'read_text', ...this.fields() }); }
+  async replaceText(text: string, sha256: string) { await access({ op: 'write_text', ...this.fields(), text, sha256 }); }
   async copyFrom(source: OrganizerFileHandle) {
     if (!(source instanceof NativeFile)) throw new Error('不能混用浏览器与原生目录。');
     await access({ op: 'copy', ...this.fields(), source_token: source.token, source_name: source.name, source_identity: source.identity });

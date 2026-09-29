@@ -1,8 +1,11 @@
 import { fileNameKey, validFileName, type RenamePlan } from './plan';
+import { exclusively } from './operationLock';
 
 export interface OrganizerDirectoryEntry { kind: string; name: string; getFile?: () => Promise<File> }
 export interface OrganizerWritable { write(data: Blob): Promise<void>; close(): Promise<void>; abort?(): Promise<void> }
 export interface OrganizerFileHandle {
+  readText?(): Promise<{ text: string; sha256: string; identity?: string }>;
+  replaceText?(text: string, sha256: string): Promise<void>;
   getFile(): Promise<File>;
   createWritable(): Promise<OrganizerWritable>;
   isSameEntry?(other: OrganizerFileHandle): Promise<boolean>;
@@ -30,7 +33,6 @@ export class OrganizerRecoveryError extends Error {
 }
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_BATCH_BYTES = 256 * 1024 * 1024;
-let running = false;
 
 /** Read-only reconciliation; it never guesses which partial operations to replay. */
 export async function inspectRenameOutcome(directory: OrganizerDirectoryHandle, changes: RecordedRename[], destination = directory): Promise<{ outcome: 'applied' | 'not-applied' | 'mixed'; retainedFiles: string[] }> {
@@ -116,20 +118,6 @@ export async function applyRenamePlan(directory: OrganizerDirectoryHandle, plan:
 } = {}): Promise<RenameResult> {
   const snapshot = plan.filter(item => item.status === 'ready').map(item => ({ ...item }));
   return exclusively(() => apply(directory, snapshot, options));
-}
-
-async function exclusively<T>(operation: () => Promise<T>): Promise<T> {
-  const execute = async (): Promise<T> => {
-    if (running) throw new Error('已有文件整理正在运行，请稍后再试。');
-    running = true;
-    try { return await operation(); }
-    finally { running = false; }
-  };
-  if (typeof navigator !== 'undefined' && navigator.locks) return navigator.locks.request('geiit-file-organizer', { ifAvailable: true }, lock => {
-    if (!lock) throw new Error('其他窗口正在整理文件，请稍后再试。');
-    return execute();
-  });
-  return execute();
 }
 
 async function apply(directory: OrganizerDirectoryHandle, ready: RenamePlan[], options: {

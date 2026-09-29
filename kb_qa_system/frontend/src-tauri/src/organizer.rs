@@ -1,13 +1,15 @@
 //! Windows-only, picker-scoped, flat-directory operations. IPC never accepts paths.
 //! Keep ancestor directory handles open without FILE_SHARE_DELETE, reject reparse
-//! points/hard links, and hash/delete through one locked handle. No file bytes in IPC.
+//! points/hard links, and hash/delete through one locked handle. Only explicit
+//! MD/TXT editing carries bounded (256 KiB) UTF-8 content over IPC.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::UNIX_EPOCH};
+use std::{collections::HashMap, fs::{File, OpenOptions}, io::{Read, Write, Seek, SeekFrom}, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::UNIX_EPOCH};
 use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
 use windows_sys::Win32::{Foundation::GENERIC_READ, Storage::FileSystem::*};
 
 const MAX_FILE: u64 = 64 * 1024 * 1024;
+const MAX_TEXT: usize = 256 * 1024;
 const IO_ERROR: &str = "文件不可访问、被占用或权限不足。请检查所选目录。";
 fn io_error(error: std::io::Error) -> String {
     if error.kind() == std::io::ErrorKind::NotFound { "NotFoundError".into() } else { IO_ERROR.into() }
@@ -86,6 +88,8 @@ pub enum Operation {
     Hash { token: String, name: String, identity: String },
     Copy { token: String, name: String, identity: String, source_token: String, source_name: String, source_identity: String },
     Remove { token: String, name: String, identity: String, sha256: String },
+    ReadText { token: String, name: String, identity: String },
+    WriteText { token: String, name: String, identity: String, sha256: String, text: String },
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,10 +123,41 @@ fn hash(file: &mut File) -> Result<String, String> {
     }
     Ok(format!("{:x}", digest.finalize()))
 }
+fn text_name(name: &str) -> Result<(), String> {
+    validate_name(name)?;
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    if ext != "md" && ext != "txt" { return Err("仅支持 MD/TXT 文本编辑。".into()); }
+    Ok(())
+}
+fn validate_text(bytes: &[u8]) -> Result<&str, String> {
+    if bytes.len() > MAX_TEXT { return Err("文本编辑单文件最多 256 KiB。".into()); }
+    let text = std::str::from_utf8(bytes).map_err(|_| "文件不是有效 UTF-8。")?;
+    if text.chars().any(|c| (c <= '\u{1f}' && !['\t', '\r', '\n'].contains(&c)) || c == '\u{7f}') { return Err("文件含有二进制控制字符。".into()); }
+    Ok(text)
+}
+fn read_text(file: &mut File) -> Result<String, String> {
+    if file.metadata().map_err(io_error)?.len() > MAX_TEXT as u64 { return Err("文本编辑单文件最多 256 KiB。".into()); }
+    file.seek(SeekFrom::Start(0)).map_err(io_error)?;
+    let mut bytes = Vec::new(); file.take(MAX_TEXT as u64 + 1).read_to_end(&mut bytes).map_err(io_error)?;
+    Ok(validate_text(&bytes)?.to_owned())
+}
+fn put_bytes(file: &mut File, bytes: &[u8]) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(0))?; file.write_all(bytes)?; file.set_len(bytes.len() as u64)?; file.sync_all()
+}
+// In-place guarded write, not atomic replacement or a power-loss guarantee.
+// Keep the same locked handle for write, verification and best-effort rollback.
+fn write_with_rollback(file: &mut File, before: &[u8], after: &[u8], writer: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>) -> Result<(), String> {
+    let expected = format!("{:x}", Sha256::digest(after));
+    if writer(file, after).is_ok() && hash(file).as_deref() == Ok(expected.as_str()) { return Ok(()); }
+    let original = format!("{:x}", Sha256::digest(before));
+    if put_bytes(file, before).is_ok() && hash(file).as_deref() == Ok(original.as_str()) {
+        Err("写入失败，已校验恢复原文。请核验记录后重试。".into())
+    } else { Err("写入与原文恢复未能完成，请保留文件并从加密历史导出原文进行人工恢复。".into()) }
+}
 fn execute(registry: &Registry, operation: Operation) -> Result<serde_json::Value, String> {
     use Operation::*;
     let tokens = match &operation {
-        List { token } | Stat { token, .. } | Create { token, .. } | Hash { token, .. } | Remove { token, .. } => vec![token],
+        List { token } | Stat { token, .. } | Create { token, .. } | Hash { token, .. } | Remove { token, .. } | ReadText { token, .. } | WriteText { token, .. } => vec![token],
         Copy { token, source_token, .. } => vec![token, source_token],
     };
     // Temporarily exclude directory-data writes while resolving child paths.
@@ -146,6 +181,20 @@ fn execute(registry: &Registry, operation: Operation) -> Result<serde_json::Valu
         Stat { token, name, identity } => Ok(serde_json::json!(file_info(&open(registry, &token, &name, identity.as_deref(), false, false, false)?)?)),
         Create { token, name } => Ok(serde_json::json!(file_info(&open(registry, &token, &name, None, true, false, false)?)?)),
         Hash { token, name, identity } => Ok(serde_json::json!(hash(&mut open(registry, &token, &name, Some(&identity), false, false, false)?)?)),
+        ReadText { token, name, identity } => {
+            text_name(&name)?;
+            let mut file = open(registry, &token, &name, Some(&identity), false, false, false)?;
+            let text = read_text(&mut file)?;
+            Ok(serde_json::json!({ "sha256": format!("{:x}", Sha256::digest(text.as_bytes())), "text": text, "identity": identity }))
+        }
+        WriteText { token, name, identity, sha256, text } => {
+            text_name(&name)?; validate_text(text.as_bytes())?;
+            let mut file = open(registry, &token, &name, Some(&identity), false, false, true)?;
+            let before = read_text(&mut file)?;
+            if format!("{:x}", Sha256::digest(before.as_bytes())) != sha256 { return Err("文件已在外部修改，已停止写入。".into()); }
+            write_with_rollback(&mut file, before.as_bytes(), text.as_bytes(), put_bytes)?;
+            Ok(serde_json::Value::Null)
+        }
         Copy { token, name, identity, source_token, source_name, source_identity } => {
             let mut source = open(registry, &source_token, &source_name, Some(&source_identity), false, false, false)?;
             if source.metadata().map_err(io_error)?.len() > MAX_FILE { return Err("单个文件最多 64 MiB。".into()); }
@@ -269,5 +318,52 @@ mod tests {
         assert!(execute(&registry, copy()).is_err());
         std::fs::write(&b, "").unwrap(); File::options().write(true).open(&a).unwrap().set_len(MAX_FILE + 1).unwrap();
         assert!(execute(&registry, copy()).is_err()); assert_eq!(std::fs::metadata(&b).unwrap().len(), 0);
+    }
+    #[test]
+    fn text_write_preserves_bom_unicode_newlines_and_truncates_on_locked_handle() {
+        let (root, registry, token, _) = fixture(); let path = root.path().join("source/a.md");
+        let original = "\u{feff}# 合成🙂\r\nlong original\r\n";
+        std::fs::write(&path, original).unwrap(); let id = stat(&registry, &token, "a.md").identity;
+        let read = execute(&registry, Operation::ReadText { token: token.clone(), name: "a.md".into(), identity: id.clone() }).unwrap();
+        assert_eq!(read["text"], original);
+        let after = "\u{feff}短\r\n";
+        execute(&registry, Operation::WriteText { token: token.clone(), name: "a.md".into(), identity: id.clone(), sha256: read["sha256"].as_str().unwrap().into(), text: after.into() }).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), after.as_bytes());
+        assert_eq!(stat(&registry, &token, "a.md").identity, id);
+        let new_sha = format!("{:x}", Sha256::digest(after.as_bytes()));
+        execute(&registry, Operation::WriteText { token, name: "a.md".into(), identity: id, sha256: new_sha, text: String::new() }).unwrap();
+        assert!(std::fs::read(path).unwrap().is_empty());
+    }
+    #[test]
+    fn text_write_refuses_stale_hash_identity_nontext_and_oversize_without_changes() {
+        let (root, registry, token, _) = fixture(); let path = root.path().join("source/a.txt");
+        std::fs::write(&path, "old").unwrap(); let id = stat(&registry, &token, "a.txt").identity;
+        let sha = format!("{:x}", Sha256::digest(b"old"));
+        let write = |text: String| Operation::WriteText { token: token.clone(), name: "a.txt".into(), identity: id.clone(), sha256: sha.clone(), text };
+        for text in ["x\0y".into(), "x".repeat(MAX_TEXT + 1)] { assert!(execute(&registry, write(text)).is_err()); }
+        std::fs::write(&path, "external").unwrap(); assert!(execute(&registry, write("new".into())).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "external");
+        std::fs::rename(&path, root.path().join("source/old.txt")).unwrap(); std::fs::write(&path, "old").unwrap();
+        assert!(execute(&registry, write("new".into())).is_err()); assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        for bytes in [vec![0xff], vec![0], vec![b'x'; MAX_TEXT + 1]] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(execute(&registry, Operation::ReadText { token: token.clone(), name: "a.txt".into(), identity: stat(&registry, &token, "a.txt").identity }).is_err());
+        }
+        assert!(text_name("a.json").is_err()); assert!(text_name("../a.md").is_err());
+        assert!(serde_json::from_value::<Operation>(serde_json::json!({ "op": "write_text", "token": token, "name": "a.txt", "identity": id, "sha256": sha, "text": "new", "path": "C:\\ignored" })).is_err());
+    }
+    #[test]
+    fn failed_partial_text_write_restores_exact_bytes_and_reports_rollback_failure() {
+        let (root, registry, token, _) = fixture(); let path = root.path().join("source/a.txt");
+        let original = "\u{feff}原文\r\n".as_bytes(); std::fs::write(&path, original).unwrap();
+        let mut file = open(&registry, &token, "a.txt", None, false, false, true).unwrap();
+        let error = write_with_rollback(&mut file, original, b"changed", |file, _| {
+            file.seek(SeekFrom::Start(0))?; file.write_all(b"partial write that extends the file")?;
+            Err(std::io::Error::other("synthetic disk fault"))
+        }).unwrap_err();
+        assert!(error.contains("已校验恢复原文")); drop(file);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let mut readonly = open(&registry, &token, "a.txt", None, false, false, false).unwrap();
+        assert!(write_with_rollback(&mut readonly, original, b"changed", put_bytes).unwrap_err().contains("人工恢复"));
     }
 }

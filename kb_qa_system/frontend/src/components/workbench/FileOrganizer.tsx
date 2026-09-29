@@ -5,6 +5,7 @@ import { makeRenamePlan, planMarkdown, type LocalFileEntry, type RenamePlan } fr
 import { assertRunDirectories, undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
 import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
 import { useWorkbenchStore } from '@/store/workbenchStore';
+import { FileTextEditor } from './FileTextEditor';
 
 function download(content: string, name: string, type: string) {
   const url = URL.createObjectURL(new Blob([content], { type }));
@@ -28,6 +29,14 @@ async function listDirectory(handle: OrganizerDirectoryHandle) {
   return { files, stages };
 }
 export function FileOrganizer() {
+  const [tab, setTab] = useState<'organize' | 'edit'>('organize');
+  const busy = useWorkbenchStore(state => state.organizerBusy);
+  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex gap-2 border-b border-line px-4 py-2" role="tablist" aria-label="文件操作">
+    <button role="tab" aria-selected={tab === 'organize'} className="work-command" disabled={busy} onClick={() => setTab('organize')}>名称与位置整理</button>
+    <button role="tab" aria-selected={tab === 'edit'} className="work-command" disabled={busy} onClick={() => setTab('edit')}>文本内容编辑</button>
+  </div>{tab === 'organize' ? <RenameFiles /> : <FileTextEditor />}</div>;
+}
+function RenameFiles() {
   const store = useWorkbenchStore();
   const [files, setFiles] = useState<LocalFileEntry[]>([]), [prefix, setPrefix] = useState('归档');
   const [plan, setPlan] = useState<RenamePlan[]>([]), [undoOf, setUndoOf] = useState<string>();

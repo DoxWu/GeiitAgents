@@ -83,6 +83,8 @@ export interface WorkArtifact {
 }
 
 export interface VaultData {
+  fileEditDraft?: import('@/fileOrganizer/textEdit').FileEditDraft | null;
+  fileEditVersions?: import('@/fileOrganizer/textEdit').FileEditVersion[];
   personalDrafts?: import('@/personal/itemDraft').PersonalDraft[];
   reminderDrafts?: import('@/personal/reminderDraft').ReminderDraft[];
   reminderTemplates?: import('@/personal/reminderDraft').ReminderTemplate[];
