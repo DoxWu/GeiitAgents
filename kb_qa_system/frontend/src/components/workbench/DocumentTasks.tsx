@@ -3,6 +3,8 @@ import { CheckCircle2, ClipboardList, FileUp, Loader2, Play, RotateCcw, Square, 
 import { DocumentArtifact } from './DocumentArtifact';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import type { TaskRun } from '@/types/workbench';
+import { finishLabel } from '@/services/modelStream';
+import { GenerationPreview } from './GenerationPreview';
 
 const statusText: Record<TaskRun['status'], string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 
@@ -73,8 +75,8 @@ export function DocumentTasks() {
             <label className="work-label">生成模型<select aria-label="文档生成模型" className="work-input" required value={profileId} onChange={e => setProfileId(e.target.value)}><option value="">请选择模型</option>
               {store.profiles.map(item => <option key={item.id} value={item.id}>{item.name} · {item.model}</option>)}
               {store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>
-            <label className="work-label sm:col-span-2">生成要求<textarea className="work-input min-h-28 resize-y" required maxLength={10000} value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="例如：整理为项目周报，包含进展、风险、下周计划和待确认事项。" /></label>
-            <label className="work-label sm:col-span-2">参考材料（可选）<textarea className="work-input min-h-32 resize-y" maxLength={100000} value={sourceContent} onChange={e => { setSourceContent(e.target.value); if (!e.target.value) setSourceName(''); }} placeholder="粘贴文本，或选择 Markdown/TXT 文件" /></label>
+            <label className="work-label sm:col-span-2">生成要求<textarea aria-label="生成要求" className="work-input min-h-28 resize-y" required maxLength={10000} value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="例如：整理为项目周报，包含进展、风险、下周计划和待确认事项。" /></label>
+            <label className="work-label sm:col-span-2">参考材料（可选）<textarea aria-label="参考材料（可选）" className="work-input min-h-32 resize-y" maxLength={100000} value={sourceContent} onChange={e => { setSourceContent(e.target.value); if (!e.target.value) setSourceName(''); }} placeholder="粘贴文本，或选择 Markdown/TXT 文件" /></label>
           </fieldset>
           <div className="flex flex-wrap items-center gap-2"><button type="button" className="work-command" disabled={submitting} onClick={() => input.current?.click()}><FileUp size={16} />选择参考文件</button>
             {sourceName && <span className="max-w-72 truncate text-xs text-ink-secondary" title={sourceName}>{sourceName}</span>}
@@ -92,8 +94,10 @@ export function DocumentTasks() {
             {task.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(task.id)}><Square size={15} />停止</button> : <button className="work-command" onClick={() => reuse(task)}><RotateCcw size={15} />复用输入</button>}
             <button className="work-icon" title="删除任务" aria-label="删除任务" disabled={task.status === 'running'} onClick={() => { if (window.confirm('删除此任务、工具记录和成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}><Trash2 size={16} /></button></div>
           {task.error && <p className="mt-3 text-sm text-danger">{task.error}</p>}
+          {task.status === 'running' && store.generationPreviews[task.id] && <GenerationPreview value={store.generationPreviews[task.id]} label="文档生成中的预览" />}
           <details className="mt-4 text-sm"><summary className="cursor-pointer">执行记录 · {tools.length}</summary>{tools.map(tool => <div className="mt-2 break-words text-xs text-ink-secondary" key={tool.id}>
             <p>{tool.tool} · {statusText[tool.status]}{tool.model ? ` · ${tool.model}` : ''}{tool.sourceArtifactId ? ` · 源版本 ${artifacts.find(item => item.id === tool.sourceArtifactId)?.version ?? '未知'}` : ''}</p>
+            {tool.finishReason && <p>{finishLabel(tool.finishReason)}</p>}
             {tool.outputArtifactId && <p>{tool.previousArtifactId ? `基于版本 ${artifacts.find(item => item.id === tool.previousArtifactId)?.version ?? '未知'} · ` : ''}生成版本 {artifacts.find(item => item.id === tool.outputArtifactId)?.version ?? '未知'}</p>}
             {tool.outputName && <p>{tool.outputName} · SHA-256 {tool.outputSha256?.slice(0, 12)}…</p>}{tool.error && <p>{tool.error}</p>}{tool.warnings?.map(warning => <p key={warning}>{warning}</p>)}</div>)}</details>
           {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}

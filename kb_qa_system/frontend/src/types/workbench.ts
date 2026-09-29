@@ -48,6 +48,7 @@ export interface TaskRun {
 }
 
 export interface ToolRun {
+  finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   taskId: string;
   tool: 'model.complete' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
@@ -69,6 +70,7 @@ export interface ToolRun {
 }
 
 export interface WorkArtifact {
+  finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   taskId: string;
   kind: 'markdown' | 'svg';

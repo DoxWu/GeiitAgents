@@ -8,7 +8,9 @@ import type { ModelProfile, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConve
 import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
-import { buildDocumentMessages, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
+import { buildDocumentMessages, documentExportContent, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
+import { generationPreview, type GenerationPreview } from '@/services/generationPreview';
+import type { FinishReason } from '@/services/modelStream';
 import type { ChartInput } from '@/officeTasks/chart';
 import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
 import { inputFromDraft, validatePersonalDraft, type PersonalDraft } from '@/personal/itemDraft';
@@ -97,6 +99,7 @@ interface WorkbenchState {
   currentId: string | null;
   running: Record<string, boolean>;
   streamingContent: Record<string, string>;
+  generationPreviews: Record<string, GenerationPreview>;
   errors: Record<string, string>;
   storageError: string | null;
   accountModel: { userId: number; model: string } | null;
@@ -126,7 +129,7 @@ interface WorkbenchState {
   restoreArtifactVersion: (sourceId: string, expectedLatestId: string) => Promise<string>;
   exportArtifactDocx: (sourceId: string) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
   retryStorage: () => Promise<void>;
-  answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal) => Promise<{ content: string; model: string }>;
+  answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal, onPreview?: (value: GenerationPreview | null) => void) => Promise<{ content: string; model: string; finishReason: FinishReason }>;
 }
 
 function publicProfiles(): ModelProfile[] {
@@ -206,7 +209,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -236,7 +239,7 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
     const id = crypto.randomUUID(), toolId = crypto.randomUUID(), now = new Date().toISOString();
     const artifact: WorkArtifact = { id, taskId: task.id, kind: 'markdown', name: latest.name, mimeType: 'text/markdown',
       parentArtifactId: latest.id, version: latest.version + 1, content, sha256, createdAt: now,
-      ...(change.kind === 'restore' ? { restoredFromArtifactId: source.id } : {}) };
+      ...(change.kind === 'restore' ? { restoredFromArtifactId: source.id, ...(source.finishReason ? { finishReason: source.finishReason } : {}) } : {}) };
     set(state => ({ artifacts: [...state.artifacts, artifact],
       toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: change.kind === 'restore' ? 'document.restore' : 'document.edit',
         status: 'succeeded', sourceArtifactId: source.id, previousArtifactId: latest.id, outputArtifactId: id, startedAt: now, finishedAt: now }],
@@ -576,7 +579,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
   },
-  unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, errors: {}, storageError: null,
+  unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -616,7 +619,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
     const fileEditVersions = (data.fileEditVersions ?? []).map(r => r.status === 'running' ? { ...r, status: 'interrupted' as const, updatedAt: unlockedAt, error: '写入期间中断，文件可能已经变更；请先核验，不自动重放。' } : r);
     set({ unlocked: true, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
-      currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, errors: {}, storageError: null });
+      currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
   },
   lock: async () => {
@@ -628,7 +631,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, errors: {} });
+    set({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
@@ -756,7 +759,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!get().conversations.some(c => c.id === id)) {
       const conversation: WorkConversation = { id, kind: 'knowledge-answer', profileId: '',
         title: `知识回答 · ${answer.question.trim().slice(0, 28)}`, updatedAt: answer.createdAt,
-        messages: [{ id: answer.id, role: 'assistant', model: answer.model, createdAt: answer.createdAt, content: answerMarkdown(answer) }] };
+        messages: [{ id: answer.id, role: 'assistant', model: answer.model, createdAt: answer.createdAt, content: answerMarkdown(answer), ...(answer.finishReason ? { finishReason: answer.finishReason } : {}) }] };
       set(state => ({ conversations: [conversation, ...state.conversations] }));
     }
     // Retry persists the same record. Keep the in-memory copy on storage failure for export/retry.
@@ -795,20 +798,30 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       throw error;
     }
     const timeout = setTimeout(() => controller.abort(), 120000);
+    let finishReason: FinishReason = 'unknown';
+    const onFinish = (reason: FinishReason) => { finishReason = reason; };
+    const preview = generationPreview(controller.signal, () => epoch === generation && get().unlocked && controllers.get(token) === controller, value => {
+      if (epoch !== generation) return;
+      set(state => {
+        const generationPreviews = { ...state.generationPreviews };
+        if (value) generationPreviews[id] = value; else delete generationPreviews[id];
+        return { generationPreviews };
+      });
+    });
     try {
       if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
-      const result = account ? await completeAccountModel(messages, controller.signal) : {
-        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal), model: profile!.model,
+      const result = account ? await completeAccountModel(messages, controller.signal, preview.push, onFinish) : {
+        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal, preview.push, onFinish), model: profile!.model,
       };
       if (controller.signal.aborted || epoch !== generation) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
       const content = normalizeDocumentMarkdown(result.content), completedAt = new Date().toISOString();
       const artifact: WorkArtifact = { id: crypto.randomUUID(), taskId: id, kind: 'markdown', version: 1,
         name: `${clean.title.replace(/[<>:"/\\|?*]/g, '_') || 'document'}.md`, mimeType: 'text/markdown', content,
-        sha256: await sha256Text(content), createdAt: completedAt };
+        sha256: await sha256Text(content), createdAt: completedAt, finishReason };
       if (controller.signal.aborted || epoch !== generation) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
       set(state => ({ artifacts: [artifact, ...state.artifacts],
         taskRuns: state.taskRuns.map(item => item.id === id ? { ...item, status: 'succeeded', updatedAt: completedAt, artifactIds: [artifact.id], error: undefined } : item),
-        toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'succeeded', model: result.model, finishedAt: completedAt, error: undefined } : item) }));
+        toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'succeeded', model: result.model, finishReason, finishedAt: completedAt, error: undefined } : item) }));
       await persist(true);
       if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请解锁后检查任务成果。');
       return id;
@@ -822,7 +835,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       }
       throw error;
     } finally {
-      clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token);
+      preview.dispose(); clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token);
     }
   },
   startOfficeToolTask: async (profileId, input, allowCloud) => {
@@ -953,7 +966,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     try {
       await persist(true); guard();
       const { exportDocx } = await import('@/officeTasks/docxClient'); guard();
-      const result = await exportDocx(source.content, task.title, controller.signal); guard();
+      const result = await exportDocx(documentExportContent(source), task.title, controller.signal); guard();
       const hash = await crypto.subtle.digest('SHA-256', result.bytes); guard();
       const sha256 = Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, '0')).join('');
       const safeName = Array.from(source.name.replace(/\.md$/i, '')).map(char => char.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char).join('').slice(0, 100);
@@ -977,7 +990,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       artifacts: state.artifacts.filter(artifact => artifact.taskId !== id) }));
     await persist(true);
   },
-  answerKnowledge: async (profileId, question, sources, allowCloud, signal) => {
+  answerKnowledge: async (profileId, question, sources, allowCloud, signal, onPreview) => {
     if (!get().unlocked) throw new Error('请先解锁本机密钥库。');
     const messages = buildKnowledgeMessages(question, sources);
     const profile = get().profiles.find(item => item.id === profileId);
@@ -993,16 +1006,19 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     signal.addEventListener('abort', abort, { once: true });
     controllers.set(id, controller); if (account || profile?.mode === 'relay') accountRequests.add(id);
     const timeout = setTimeout(abort, 120000);
+    let finishReason: FinishReason = 'unknown';
+    const onFinish = (reason: FinishReason) => { finishReason = reason; };
+    const preview = generationPreview(controller.signal, () => epoch === generation && get().unlocked && controllers.get(id) === controller, value => onPreview?.(value));
     try {
       if (signal.aborted) abort();
       if (controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
-      const result = account ? await completeAccountModel(messages, controller.signal) : {
-        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal), model: profile!.model,
+      const result = account ? await completeAccountModel(messages, controller.signal, preview.push, onFinish) : {
+        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal, preview.push, onFinish), model: profile!.model,
       };
       if (controller.signal.aborted || epoch !== generation) throw new DOMException('请求已取消或密钥库已锁定', 'AbortError');
-      return result;
+      return { ...result, finishReason };
     } finally {
-      clearTimeout(timeout); signal.removeEventListener('abort', abort); controllers.delete(id); accountRequests.delete(id);
+      preview.dispose(); clearTimeout(timeout); signal.removeEventListener('abort', abort); controllers.delete(id); accountRequests.delete(id);
     }
   },
 }));

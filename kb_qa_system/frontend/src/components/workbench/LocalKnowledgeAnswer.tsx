@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact, downloadAnswer, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
+import type { GenerationPreview as Preview } from '@/services/generationPreview';
+import { finishLabel } from '@/services/modelStream';
+import { GenerationPreview } from './GenerationPreview';
 
 export default function LocalKnowledgeAnswer({ question, sources }: { question: string; sources: SearchHit[] }) {
   const store = useWorkbenchStore();
@@ -13,6 +16,7 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [answer, setAnswer] = useState<KnowledgeAnswerArtifact | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedId, setSavedId] = useState('');
   const savingRef = useRef(false);
@@ -21,24 +25,28 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
   const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
   const endpoint = profile?.baseUrl ?? (profileId === ACCOUNT_MODEL_ID ? '账号所配置的服务端模型供应商' : '尚未选择');
   const signature = JSON.stringify([profileId, profile, store.accountModel]);
+  const sourceSignature = JSON.stringify([question, sources.map(({ documentId, name, start, end, text }) => ({ documentId, name, start, end, text }))]);
   useEffect(() => {
-    setConsent(false); setAnswer(null); setError('');
-    controller.current?.abort(); setBusy(false);
-  }, [signature, store.unlocked]);
-  useEffect(() => () => controller.current?.abort(), []);
+    const previous = controller.current; controller.current = null; previous?.abort();
+    setConsent(false); setAnswer(null); setPreview(null); setError(''); setBusy(false);
+  }, [signature, store.unlocked, sourceSignature]);
+  useEffect(() => { setSelected(sources.map((_, i) => i)); }, [sources]);
+  useEffect(() => () => { const previous = controller.current; controller.current = null; previous?.abort(); }, []);
   function resetSelection(next: number[]) { setSelected(next); setConsent(false); setAnswer(null); }
   async function generate() {
     const request = new AbortController(); controller.current = request;
-    setBusy(true); setError(''); setAnswer(null);
+    setBusy(true); setError(''); setAnswer(null); setPreview(null);
     // Consent is per request and is never persisted or reused automatically.
     const allowed = consent; setConsent(false);
-    const chosen = selected.map(i => sources[i]);
+    const chosen = selected.map(i => ({ ...sources[i] }));
     try {
-      const result = await store.answerKnowledge(profileId, question, chosen, allowed, request.signal);
+      const result = await store.answerKnowledge(profileId, question, chosen, allowed, request.signal, value => {
+        if (controller.current === request && !request.signal.aborted) setPreview(value);
+      });
       if (!request.signal.aborted && controller.current === request) setAnswer(createAnswerArtifact(question, result, chosen));
     } catch (e) {
       if (controller.current === request) setError(request.signal.aborted ? '回答请求已停止。' : e instanceof Error ? e.message : '回答生成失败。');
-    } finally { if (controller.current === request) { controller.current = null; setBusy(false); } }
+    } finally { if (controller.current === request) { controller.current = null; setBusy(false); setPreview(null); } }
   }
   async function unlock() {
     setError('');
@@ -77,10 +85,12 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
         {profile?.mode === 'local' && <p className="lk-muted">请求发往上述本机接口；接口背后的模型是否完全离线取决于你自己的服务配置。</p>}
         <button className="lk-primary" disabled={!profileId || !selected.length || !!cloud && !consent} onClick={() => void generate()}>根据所选来源生成回答</button>
       </fieldset>
-      {busy && <div className="lk-actions"><span role="status">正在生成回答…</span><button onClick={() => controller.current?.abort()}>停止生成</button></div>}
+      {busy && <div className="lk-actions"><span role="status">正在生成回答…</span><button onClick={() => { setPreview(null); controller.current?.abort(); }}>停止生成</button></div>}
+      {busy && preview && <GenerationPreview value={preview} label="本地知识库回答生成中的预览" />}
     </>}
     {error && <p role="alert" className="lk-error">{error}</p>}
     {answer && <article className="lk-answer"><h3>回答 · {answer.model}</h3><pre>{answer.content}</pre>
+      {answer.finishReason && <p className="lk-muted" aria-label="回答生成状态">{finishLabel(answer.finishReason)}</p>}
       <p className="lk-muted">导出文件含问题、回答和来源原文，文件本身不加密。保存到工作台后为本机加密的独立只读记录，不会再次发送给模型。</p>
       <div className="lk-actions"><button onClick={() => {
         try { downloadAnswer(answer); } catch { setError('导出失败，请检查下载设置后重试。'); }

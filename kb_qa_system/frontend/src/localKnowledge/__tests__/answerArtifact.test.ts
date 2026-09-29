@@ -13,6 +13,13 @@ it('captures an independent source snapshot without vectors or provider credenti
   expect(JSON.stringify(answer)).not.toMatch(/vector|score|apiKey|baseUrl/);
 });
 
+it('keeps a reported output limit in the source snapshot and exported answer', () => {
+  const answer = createAnswerArtifact('问题', { content: '部分回答 [1]', model: 'model', finishReason: 'length' }, [
+    { documentId: 'd', name: 'policy.md', start: 0, end: 4, text: '测试资料', vector: [], score: 1 },
+  ]);
+  expect(answer.finishReason).toBe('length'); expect(answerMarkdown(answer)).toContain('已达到模型输出上限，回答可能不完整');
+});
+
 it('keeps hostile Markdown and embedded fences literal inside source snapshots', () => {
   const text = '```\n<script>alert(1)</script>\n````\n![image](https://example.test/pixel)';
   const answer = createAnswerArtifact('question', { content: 'answer', model: 'model' }, [

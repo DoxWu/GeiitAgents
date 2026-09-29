@@ -9,6 +9,7 @@ import { completeToolModel } from '@/services/officeToolModel';
 import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
+import { documentExportContent } from '@/officeTasks/document';
 import { exportDocx } from '@/officeTasks/docxClient';
 import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart';
 
@@ -242,7 +243,7 @@ it('can use local models without cloud consent and keeps answer transient', asyn
   const result = await store.getState().answerKnowledge(profile.id, '问题', [source], false, new AbortController().signal);
   expect(result.content).toBe('测试回答 [1]');
   expect(store.getState().conversations).toHaveLength(0);
-  expect(completeModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.any(Array), expect.any(AbortSignal));
+  expect(completeModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.any(Array), expect.any(AbortSignal), expect.any(Function), expect.any(Function));
 });
 it('blocks account answers without permission even with consent', async () => {
   await expect(store.getState().answerKnowledge(ACCOUNT_MODEL_ID, '问题', [source], true, new AbortController().signal)).rejects.toThrow('没有可用');
@@ -308,7 +309,7 @@ it('persists document TaskRun, ToolRun and Artifact encrypted and restores them 
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/项目周报|登录模块|fixture-key/);
   expect(completeModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.arrayContaining([
     expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' }),
-  ]), expect.any(AbortSignal));
+  ]), expect.any(AbortSignal), expect.any(Function), expect.any(Function));
   await store.getState().lock(); vi.mocked(completeModel).mockClear(); await store.getState().unlock(password);
   expect(store.getState().taskRuns[0].status).toBe('succeeded');
   expect(store.getState().artifacts[0].content).toContain('已完成登录模块');
@@ -452,7 +453,7 @@ it('exports the selected old version and stores only provenance and a hash, neve
   vi.mocked(exportDocx).mockResolvedValue({ bytes, warnings: ['test warning'], converterVersion: 'fixture/1' });
   const result = await store.getState().exportArtifactDocx(original.id);
   expect(result).toMatchObject({ bytes, name: expect.stringMatching(/-v1\.docx$/), warnings: ['test warning'] });
-  expect(exportDocx).toHaveBeenCalledWith(original.content, documentInput.title, expect.any(AbortSignal));
+  expect(exportDocx).toHaveBeenCalledWith(documentExportContent(original), documentInput.title, expect.any(AbortSignal));
   expect(store.getState().toolRuns.at(-1)).toMatchObject({ tool: 'document.export-docx', status: 'succeeded', sourceArtifactId: original.id, outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/), converterVersion: 'fixture/1' });
   expect(JSON.stringify(store.getState())).not.toContain('synthetic docx bytes');
   await store.getState().lock(); await store.getState().unlock(password);

@@ -4,6 +4,8 @@ import { PrivateMarkdown } from './LocalMarkdown';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import type { WorkArtifact } from '@/types/workbench';
 import { ArtifactComparison } from './ArtifactComparison';
+import { documentExportContent } from '@/officeTasks/document';
+import { finishLabel } from '@/services/modelStream';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -53,7 +55,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
     setBusy(true); setError(''); setNotice('');
     try {
       const { markdownToHtml } = await import('@/officeTasks/html');
-      const result = markdownToHtml(artifact.content, artifact.name.replace(/\.md$/i, ''));
+      const result = markdownToHtml(documentExportContent(artifact), artifact.name.replace(/\.md$/i, ''));
       if (mounted.current && useWorkbenchStore.getState().unlocked) {
         download(new Blob([result.html], { type: 'text/html;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.html`);
         setNotice(['已生成所选版本的 HTML。', ...result.warnings].join(' '));
@@ -77,7 +79,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
       </select>
     </div>
     <div className="mt-3 flex flex-wrap gap-2">
-      <button className="work-command" disabled={busy || editing} onClick={() => download(new Blob([artifact.content], { type: 'text/markdown;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.md`)}><Download size={16} />下载 Markdown</button>
+      <button className="work-command" disabled={busy || editing} onClick={() => download(new Blob([documentExportContent(artifact)], { type: 'text/markdown;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.md`)}><Download size={16} />下载 Markdown</button>
       <button className="work-command" disabled={busy || editing} onClick={() => void exportWord()}><Download size={16} />{busy && !editing ? '正在导出…' : '导出 DOCX'}</button>
       <button className="work-command" disabled={busy || editing} onClick={() => void exportHtml()}><FileCode2 size={16} />导出 HTML</button>
       {!editing && <button className="work-command" disabled={busy || artifact.id !== ordered[0].id} onClick={() => { setDraft(artifact.content); setEditing(true); setSelected(artifact.id); setNotice(''); setError(''); setRestorePlan(null); setComparing(false); }}><Pencil size={16} />编辑新版本</button>}
@@ -87,6 +89,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
       }}><RotateCcw size={16} />恢复为新版本</button>}
     </div>
     <p className="mt-3 text-xs leading-5 text-ink-secondary">编辑保存为新版本，旧版本保留。DOCX 和 HTML 在本机转换，图片、链接、HTML 以文字保留，不执行外部内容。下载文件为明文；复杂版式请在目标应用中检查。</p>
+    {artifact.finishReason && <p className="mt-3 text-sm text-ink-secondary" aria-label="文档生成状态">{finishLabel(artifact.finishReason)}{artifact.finishReason !== 'stop' ? '。导出会附带此生成状态说明。' : ''}</p>}
     {artifact.id !== ordered[0].id && artifact.content === ordered[0].content && <p className="mt-2 text-xs text-ink-secondary">此版本与最新版本内容相同，无需恢复。</p>}
     {comparing && !editing && <ArtifactComparison key={artifact.id} versions={ordered} target={artifact} />}
     {restorePlan && <section aria-label="确认版本恢复" className="mt-4 rounded border border-line p-3">

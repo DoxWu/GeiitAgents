@@ -1,5 +1,6 @@
 import type { SearchHit } from './core';
 import { buildKnowledgeMessages } from './answer';
+import { finishLabel, type FinishReason } from '@/services/modelStream';
 
 export interface KnowledgeAnswerArtifact {
   id: string;
@@ -7,12 +8,13 @@ export interface KnowledgeAnswerArtifact {
   question: string;
   content: string;
   model: string;
+  finishReason?: FinishReason;
   sources: { name: string; start: number; end: number; text: string }[];
 }
 
-export function createAnswerArtifact(question: string, result: { content: string; model: string }, sources: SearchHit[]): KnowledgeAnswerArtifact {
+export function createAnswerArtifact(question: string, result: { content: string; model: string; finishReason?: FinishReason }, sources: SearchHit[]): KnowledgeAnswerArtifact {
   buildKnowledgeMessages(question, sources);
-  return { id: crypto.randomUUID(), createdAt: new Date().toISOString(), question, content: result.content, model: result.model,
+  return { id: crypto.randomUUID(), createdAt: new Date().toISOString(), question, content: result.content, model: result.model, ...(result.finishReason ? { finishReason: result.finishReason } : {}),
     sources: sources.map(({ name, start, end, text }) => ({ name, start, end, text })) };
 }
 
@@ -24,7 +26,7 @@ function literal(text: string): string {
 }
 
 export function answerMarkdown(answer: KnowledgeAnswerArtifact): string {
-  return `# 本地知识库回答\n\n生成时间：${answer.createdAt}\n\n## 问题\n\n${literal(answer.question)}\n\n## 生成模型\n\n${literal(answer.model)}\n\n## 回答\n\n${answer.content}\n\n## 来源快照\n\n来源为生成时的所选片段，字符位置从 1 开始，按 UTF-16 计数。请核对模型引用。\n\n` +
+  return `# 本地知识库回答\n\n生成时间：${answer.createdAt}\n\n## 问题\n\n${literal(answer.question)}\n\n## 生成模型\n\n${literal(answer.model)}\n\n${answer.finishReason ? `生成状态：${finishLabel(answer.finishReason)}\n\n` : ''}## 回答\n\n${answer.content}\n\n## 来源快照\n\n来源为生成时的所选片段，字符位置从 1 开始，按 UTF-16 计数。请核对模型引用。\n\n` +
     answer.sources.map((source, i) => `### [${i + 1}]\n\n文件名：\n\n${literal(source.name)}\n\n字符 ${source.start + 1}–${source.end}\n\n${literal(source.text)}`).join('\n\n') + '\n';
 }
 

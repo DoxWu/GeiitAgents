@@ -40,6 +40,7 @@
 - `src/services/vaultBackup.ts`：`exportVaultBackup`、`importVaultBackup`、`prepareVaultReplacement`；`vaultBackupSchema.ts`：校验规则。`privateVault.ts`：共用写锁。
 - `src/store/workbenchStore.ts`：`exportWorkbenchBackup`、`prepareWorkbenchRestore`、`commitWorkbenchRestore`、`cancelVaultTransfer`。公开预览只保留计数和随机 ID，待提交数据为新口令下的密文，密钥不进入 Zustand 公共状态。
 - `src/components/workbench/WorkbenchBackup.tsx` 为按需加载页面；没有新增运行依赖、模型下载或服务端接口。主 store 通过动态导入调用备份实现。
+- dev.15 新增文档成果/工具的可选 `finishReason`，恢复时保留；临时流式预览不备份。旧 dev.14 恢复包含这些字段的新备份会按未知字段拒绝，应使用相应或更新客户端。
 
 ## 本次验证与限制
 

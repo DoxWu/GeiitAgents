@@ -34,10 +34,13 @@ await context.routeWebSocket('**/ws/notifications', () => {});
 await context.route('**/api/v1/**', async route => {
   const endpoint = new URL(route.request().url()).pathname;
   if (endpoint.endsWith('/private-models/account')) return route.fulfill({ json: { available: true, model: 'configured-test-model' } });
-  if (endpoint.endsWith('/private-models/account/complete')) {
+  if (endpoint.endsWith('/private-models/account/complete/stream')) {
     const body = route.request().postDataJSON(); sent.push(body);
-    if (mockOnly) return route.fulfill({ json: { content: '报销需提交发票、付款凭证和主管审批记录，在出差结束后十个工作日内提交。[1]', model: 'fixture-only-model' } });
-    try { return await route.fulfill({ json: await live(body.messages) }); }
+    // The legacy helper is buffered; this does not prove upstream SSE completion.
+    const buffered = result => route.fulfill({ contentType: 'text/event-stream', body: 'data: ' + JSON.stringify({ type: 'chunk', content: result.content }) + '\n\n' +
+      'data: ' + JSON.stringify({ type: 'done', ...result, finish_reason: 'unknown' }) + '\n\n' });
+    if (mockOnly) return buffered({ content: '报销需提交发票、付款凭证和主管审批记录，在出差结束后十个工作日内提交。[1]', model: 'fixture-only-model' });
+    try { return await buffered(await live(body.messages)); }
     catch { return route.fulfill({ status: 502, json: { detail: 'Live provider check failed; sensitive response suppressed' } }); }
   }
   return route.fulfill({ status: 200, json: {} });
@@ -124,6 +127,6 @@ try {
   expect(errors).toEqual([]);
   await writeFile(path.join(output, mockOnly ? 'mock-result.json' : 'result.json'), JSON.stringify({ passed: true, providerRequests: mockOnly ? 0 : sent.length, citedSource: content.includes('[1]'),
     artifactChecks: ['model form', 'Markdown download', 'encrypted archive', 'reload/unlock', 'read-only no extra request'],
-    scope: mockOnly ? 'Real E5/WASM retrieval; mocked generation and account auth; form, consent and artifact UI.' : 'Real E5/WASM retrieval + real backend complete_private/provider; synthetic account auth/availability; fixture document only; no credentials written.' }, null, 2));
+    scope: mockOnly ? 'Real E5/WASM retrieval; mocked buffered generation and account auth; form, consent and artifact UI.' : 'Real E5/WASM retrieval + buffered backend complete_private/provider; synthetic account auth/availability; NOT upstream stream/finish verification; fixture document only; no credentials written.' }, null, 2));
   console.log(`Real E5 retrieval, explicit cloud consent, ${mockOnly ? 'MOCKED' : 'LIVE'} answer, export, encrypted read-only archive and reload passed.`);
 } finally { await context.close(); }

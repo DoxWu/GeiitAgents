@@ -1,3 +1,13 @@
+import { finishLabel, type FinishReason } from '@/services/modelStream';
+
+/** Keep exported documents self-describing when generation may be incomplete.
+ * Stored source bytes and their digest remain unchanged. */
+export function documentExportContent(artifact: { content: string; finishReason?: FinishReason }): string {
+  return artifact.finishReason && artifact.finishReason !== 'stop'
+    ? `> 生成状态：${finishLabel(artifact.finishReason)}。请核对内容是否完整。\n\n${artifact.content}`
+    : artifact.content;
+}
+
 export interface DocumentTaskInput {
   title: string;
   instruction: string;
