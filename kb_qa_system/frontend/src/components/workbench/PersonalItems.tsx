@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Bell, Plus } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { PrivateMarkdown } from './LocalMarkdown';
 import { exportPersonalItems, isOverdue, personalMarkdown, selectedPersonalItems, type PersonalInput, type PersonalItem, type PersonalSelection, type Priority, type TodoStatus } from '@/personal/items';
 import { personalDraft, type PersonalDraft } from '@/personal/itemDraft';
 import { ServerReminders } from './ServerReminders';
+const PersonalImport = lazy(() => import('./PersonalImport').then(module => ({ default: module.PersonalImport })));
 
 const statusLabels = { open: '待完成', done: '已完成', cancelled: '已取消' };
 function download(content: string, name: string, type = 'text/markdown;charset=utf-8') {
@@ -13,11 +14,12 @@ function download(content: string, name: string, type = 'text/markdown;charset=u
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export function PersonalItems() {
-  const [view, setView] = useState<'local' | 'reminders'>('local');
+  const [view, setView] = useState<'local' | 'reminders' | 'import'>('local');
+  if (view === 'import') return <Suspense fallback={<p className="p-6">正在加载本机导入…</p>}><PersonalImport onBack={() => setView('local')} /></Suspense>;
   if (view === 'reminders') return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 gap-2 border-b border-line px-4 py-3"><button className="work-command" onClick={() => setView('local')}>本机记录</button><button className="work-command bg-muted" onClick={() => setView('reminders')}><Bell size={16} />邮件提醒</button></div><ServerReminders /></div>;
-  return <LocalPersonalItems onOpenReminders={() => setView('reminders')} />;
+  return <LocalPersonalItems onOpenReminders={() => setView('reminders')} onOpenImport={() => setView('import')} />;
 }
-function LocalPersonalItems({ onOpenReminders }: { onOpenReminders: () => void }) {
+function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders: () => void; onOpenImport: () => void }) {
   const store = useWorkbenchStore();
   const [draft, setDraft] = useState<PersonalDraft>(() => structuredClone(store.personalDrafts[0] ?? personalDraft()));
   const [kind, setKind] = useState<'note' | 'todo'>(draft.input.kind);
@@ -107,6 +109,7 @@ function LocalPersonalItems({ onOpenReminders }: { onOpenReminders: () => void }
   }
   return <section className="flex min-h-0 flex-1 flex-col" aria-label="笔记与待办">
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3">
+      <button className="work-command" disabled={busy} onClick={() => { if (mayLeave()) onOpenImport(); }}>导入 JSON</button>
       <button className={`work-command ${kind === 'todo' ? 'bg-muted' : ''}`} disabled={busy} onClick={() => tab('todo')}>待办</button>
       <button className={`work-command ${kind === 'note' ? 'bg-muted' : ''}`} disabled={busy} onClick={() => tab('note')}>笔记</button>
       <button className="work-command" disabled={busy} onClick={() => select()}><Plus size={16} />{kind === 'note' ? '新建笔记' : '新建待办'}</button>
