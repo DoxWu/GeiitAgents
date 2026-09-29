@@ -10,7 +10,7 @@ beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("TextEncoder", TextEncoder); vi.stubGlobal("TextDecoder", TextDecoder);
   localStorage.clear();
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { Reflect.deleteProperty(navigator, 'locks'); vi.unstubAllGlobals(); });
 
 describe("encrypted private vault", () => {
   it("accepts four-character passphrases and rejects shorter ones", async () => {
@@ -48,5 +48,17 @@ describe("encrypted private vault", () => {
     envelope.ciphertext = (envelope.ciphertext[0] === "A" ? "B" : "A") + envelope.ciphertext.slice(1);
     localStorage.setItem("vault", JSON.stringify(envelope));
     await expect(new PrivateVault(localStorage, "vault").unlock(password)).rejects.toThrow();
+  });
+  it.each(['lock', 'replace'] as const)('checks %s again inside a delayed shared write lock', async reason => {
+    const vault = new PrivateVault(localStorage, 'vault'); await vault.unlock(password);
+    const before = localStorage.getItem('vault');
+    let enter!: () => void;
+    const request = vi.fn((_name, action) => new Promise((resolve, reject) => { enter = () => { try { resolve(action()); } catch (error) { reject(error); } }; }));
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
+    const pending = vault.save(sample); await vi.waitFor(() => expect(enter).toBeDefined());
+    expect(request.mock.calls[0][0]).toBe('geiit-private-vault:vault');
+    if (reason === 'lock') vault.lock(); else localStorage.setItem('vault', 'newer encrypted vault');
+    enter(); await expect(pending).rejects.toThrow(reason === 'lock' ? '锁定' : '另一窗口');
+    expect(localStorage.getItem('vault')).toBe(reason === 'lock' ? before : 'newer encrypted vault');
   });
 });

@@ -203,3 +203,4 @@ kb_qa_system/frontend/src-tauri/gen/
 secret_key.txt
 *.geiitkb
 *.geiitkb.json
+*.geiitwork

@@ -4,6 +4,14 @@ const ITERATIONS = 600_000;
 const encoder = new TextEncoder();
 const context = encoder.encode("geiit-private-workbench-v1");
 
+// All current-client localStorage writers share this short critical section.
+// Encryption happens outside it. Old clients and other storage APIs do not
+// participate, so still compare the exact expected ciphertext immediately.
+export async function withVaultWriteLock<T>(storageKey: string, operation: () => T): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.locks) return navigator.locks.request('geiit-private-vault:' + storageKey, operation);
+  return operation();
+}
+
 interface Envelope {
   version: 1;
   salt: string;
@@ -98,14 +106,16 @@ export class PrivateVault {
       const ciphertext = await crypto.subtle.encrypt(
         { name: "AES-GCM", iv, additionalData: context }, key, encoder.encode(snapshot),
       );
-      if (epoch !== this.epoch) throw new Error("密钥库已锁定。");
-      if (this.storage.getItem(this.storageKey) !== this.lastWritten) {
-        this.lock();
-        throw new Error("密钥库已在另一窗口更新，请重新解锁。");
-      }
       const serialized = JSON.stringify({ version: 1, salt: encode(salt), iv: encode(iv), ciphertext: encode(new Uint8Array(ciphertext)) });
-      this.storage.setItem(this.storageKey, serialized);
-      this.lastWritten = serialized;
+      await withVaultWriteLock(this.storageKey, () => {
+        if (epoch !== this.epoch) throw new Error("密钥库已锁定。");
+        if (this.storage.getItem(this.storageKey) !== this.lastWritten) {
+          this.lock();
+          throw new Error("密钥库已在另一窗口更新，请重新解锁。");
+        }
+        this.storage.setItem(this.storageKey, serialized);
+        this.lastWritten = serialized;
+      });
     });
     this.pending = operation;
     return operation;

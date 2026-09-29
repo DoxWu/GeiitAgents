@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { PrivateVault } from "@/services/privateVault";
+import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
+import type { VaultBackupSummary } from '@/services/vaultBackup';
 import { completeModel, completeAccountModel, getAccountModel, validateProfile, validateModelEndpoint } from "@/services/workbenchModel";
 import { discoverModels, type ModelCatalog, type ModelEndpoint } from '@/services/modelDiscovery';
 import { useAuthStore } from "@/store/authStore";
@@ -24,6 +25,8 @@ export const ACCOUNT_MODEL_ID = "$account";
 let vault: PrivateVault | null = null;
 let secrets: VaultData["profiles"] = [];
 let generation = 0;
+let transferGeneration = 0;
+let preparedRestore: { id: string; expected: string | null; serialized: string } | null = null;
 const controllers = new Map<string, AbortController>();
 const artifactOperations = new Map<string, AbortController>();
 const accountRequests = new Set<string>();
@@ -46,6 +49,12 @@ function requireReminderOwner(owner: string) {
 function clearReminderTimer() { clearTimeout(reminderSaveTimer); reminderSaveTimer = undefined; }
 
 interface WorkbenchState {
+  vaultTransferBusy: boolean;
+  vaultRestorePreview: { id: string; replacing: boolean; summary: VaultBackupSummary } | null;
+  exportWorkbenchBackup: (password: string, includeKeys: boolean) => Promise<{ file: Blob; summary: VaultBackupSummary }>;
+  prepareWorkbenchRestore: (file: Blob, backupPassword: string, localPassword: string) => Promise<void>;
+  commitWorkbenchRestore: (id: string) => Promise<void>;
+  cancelVaultTransfer: () => void;
   fileEditDraft: FileEditDraft | null;
   fileEditVersions: FileEditVersion[];
   fileEditSaving: boolean;
@@ -165,9 +174,8 @@ async function persist(required = false) {
   }
   const epoch = generation;
   try {
-    const state = useWorkbenchStore.getState();
     const draftVersion = personalDraftVersion, textVersion = fileEditDraftVersion;
-    await vault.save({ profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions });
+    await vault.save(vaultSnapshot());
     if (epoch === generation) {
       useWorkbenchStore.setState({ storageError: null });
       if (draftVersion === personalDraftVersion) { clearPersonalTimer(); useWorkbenchStore.setState({ personalDraftSaving: false }); }
@@ -180,7 +188,13 @@ async function persist(required = false) {
   }
 }
 
+function vaultSnapshot(): VaultData {
+  const state = useWorkbenchStore.getState();
+  return { profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
+}
+
 function eraseMemory() {
+  transferGeneration++; preparedRestore = null;
   clearFileEditTimer();
   clearReminderTimer();
   clearPersonalTimer();
@@ -192,7 +206,7 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -234,6 +248,49 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
+  vaultTransferBusy: false, vaultRestorePreview: null,
+  cancelVaultTransfer: () => { transferGeneration++; preparedRestore = null; set({ vaultTransferBusy: false, vaultRestorePreview: null }); },
+  exportWorkbenchBackup: async (password, includeKeys) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁工作台再导出备份。');
+    if (get().vaultTransferBusy || organizerInFlight || controllers.size || artifactOperations.size) throw new Error('请先等待或停止正在运行的模型、文件和导出操作。');
+    // Capture immediately, including debounced drafts and unsaved changes after
+    // quota errors. Export must remain usable when local persistence is full.
+    const snapshot = JSON.parse(JSON.stringify(vaultSnapshot())) as VaultData;
+    const epoch = generation, token = ++transferGeneration; set({ vaultTransferBusy: true });
+    const guard = () => { if (epoch !== generation || token !== transferGeneration || !get().unlocked) throw new Error('备份已取消或密钥库已锁定。'); };
+    try {
+      const { exportVaultBackup } = await import('@/services/vaultBackup'); guard();
+      const result = await exportVaultBackup(snapshot, password, includeKeys); guard(); return result;
+    } finally { if (token === transferGeneration) set({ vaultTransferBusy: false }); }
+  },
+  prepareWorkbenchRestore: async (file, backupPassword, localPassword) => {
+    if (get().unlocked || vault || organizerInFlight || get().vaultTransferBusy) throw new Error('请先锁定工作台并等待文件操作结束，再预检查恢复。');
+    const epoch = generation, token = ++transferGeneration, expected = localStorage.getItem(VAULT_STORAGE_KEY);
+    preparedRestore = null; set({ vaultTransferBusy: true, vaultRestorePreview: null });
+    const guard = () => { if (epoch !== generation || token !== transferGeneration || get().unlocked || vault || organizerInFlight) throw new Error('恢复预检查已取消或工作台状态已改变。'); };
+    try {
+      const { prepareVaultReplacement } = await import('@/services/vaultBackup'); guard();
+      const result = await prepareVaultReplacement(file, backupPassword, localPassword); guard();
+      if (localStorage.getItem(VAULT_STORAGE_KEY) !== expected) throw new Error('预检查期间本机密钥库已改变，请重新预检查。');
+      const id = crypto.randomUUID(); preparedRestore = { id, expected, serialized: result.serialized };
+      set({ vaultRestorePreview: { id, replacing: expected !== null, summary: result.summary } });
+    } finally { if (token === transferGeneration) set({ vaultTransferBusy: false }); }
+  },
+  commitWorkbenchRestore: async id => {
+    if (get().unlocked || vault || organizerInFlight || get().vaultTransferBusy || !preparedRestore || preparedRestore.id !== id) throw new Error('请先锁定工作台并重新预检查备份。');
+    const prepared = preparedRestore, epoch = generation, token = transferGeneration;
+    set({ vaultTransferBusy: true });
+    try {
+      await withVaultWriteLock(VAULT_STORAGE_KEY, () => {
+        if (epoch !== generation || token !== transferGeneration || get().unlocked || vault || organizerInFlight || preparedRestore !== prepared) throw new Error('恢复已取消或状态已改变，请重新预检查。');
+        if (localStorage.getItem(VAULT_STORAGE_KEY) !== prepared.expected) throw new Error('本机密钥库已在其他窗口改变，请重新预检查，未覆盖新数据。');
+        try { localStorage.setItem(VAULT_STORAGE_KEY, prepared.serialized); }
+        catch { throw new Error('本机空间不足或存储写入失败，原密钥库未更改。可释放空间后重试。'); }
+      });
+      // Replacing ciphertext neither unlocks the vault nor replays any task.
+      eraseMemory(); set({ storageError: null });
+    } finally { if (token === transferGeneration) set({ vaultTransferBusy: false }); }
+  },
   fileEditDraft: null, fileEditVersions: [], fileEditSaving: false,
   openFileEdit: async (directory, name, acknowledged, restoreId) => {
     if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件操作完成。');
@@ -543,6 +600,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
   },
   unlock: async (password) => {
+    if (get().vaultTransferBusy) throw new Error('备份或恢复处理中，请先等待或取消。');
+    get().cancelVaultTransfer();
     const epoch = ++generation;
     const candidate = new PrivateVault(window.localStorage, VAULT_STORAGE_KEY);
     const data = await candidate.unlock(password);
@@ -561,6 +620,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
   },
   lock: async () => {
+    get().cancelVaultTransfer();
     // Queue the current draft snapshot before clearing memory; flush below waits
     // for it even when the 400 ms autosave debounce has not elapsed.
     if (get().unlocked && (get().reminderDraftSaving || get().personalDraftSaving || get().fileEditSaving)) { clearReminderTimer(); clearPersonalTimer(); clearFileEditTimer(); void persist().catch(() => {}); }

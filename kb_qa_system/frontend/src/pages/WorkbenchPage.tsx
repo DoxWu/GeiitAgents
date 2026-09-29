@@ -13,12 +13,13 @@ import "@/styles/workbench.css";
 
 const PersonalItems = lazy(() => import('@/components/workbench/PersonalItems').then(module => ({ default: module.PersonalItems })));
 const FileOrganizer = lazy(() => import('@/components/workbench/FileOrganizer').then(module => ({ default: module.FileOrganizer })));
+const WorkbenchBackup = lazy(() => import('@/components/workbench/WorkbenchBackup').then(module => ({ default: module.WorkbenchBackup })));
 
 export default function WorkbenchPage() {
   const state = useWorkbenchStore();
   const userId = useAuthStore((s) => s.user?.id);
   const authenticated = useAuthStore((s) => s.isAuthenticated);
-  const [tab, setTab] = useState<"chat" | "tasks" | "preview" | "models" | "personal" | "files">("chat");
+  const [tab, setTab] = useState<"chat" | "tasks" | "preview" | "models" | "personal" | "files" | "backup">("chat");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -90,6 +91,7 @@ export default function WorkbenchPage() {
         <button className="work-nav" onClick={() => { setTab('files'); setSidebar(false); }}><FileText size={17} />文件整理</button>
         <button className="work-nav" onClick={() => { setTab("preview"); setSidebar(false); }}><FileText size={17} />本地文档</button>
         <button className="work-nav" onClick={() => { setTab("models"); setSidebar(false); }}><Settings2 size={17} />模型连接</button>
+        <button className="work-nav" onClick={() => { setTab('backup'); setSidebar(false); }}><Download size={17} />工作台备份</button>
         <Link className="work-nav" to="/local-knowledge"><BookOpen size={17} />本地知识库</Link>
         <Link className="work-nav" to="/documents"><BookOpen size={17} />云端知识库</Link>
         {!authenticated && <Link className="work-nav" to="/login">登录账号</Link>}
@@ -105,7 +107,7 @@ export default function WorkbenchPage() {
         <span className="hidden text-xs text-ink-tertiary sm:inline">{state.unlocked ? "本机密钥库已解锁" : "本机密钥库已锁定"}</span>
       </header>
       {state.storageError && <p role="alert" className="border-b border-line p-3 text-sm text-danger">{state.storageError}</p>}
-      {tab === "preview" ? <LocalMarkdown document={document} onChange={(doc) => { setDocument(doc); setAttach(false); }} /> : !state.unlocked ?
+      {tab === 'backup' ? <Suspense fallback={<p className="p-6">正在加载备份与恢复…</p>}><WorkbenchBackup onUnlock={() => setTab('chat')} /></Suspense> : tab === "preview" ? <LocalMarkdown document={document} onChange={(doc) => { setDocument(doc); setAttach(false); }} /> : !state.unlocked ?
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6"><form onSubmit={unlock} className="grid w-full max-w-sm gap-5">
           <LockKeyhole className="text-brand" size={28} /><h1 className="text-xl font-semibold">{hasVault ? "解锁工作台" : "创建本机密钥库"}</h1>
           <label className="work-label">解锁口令<input autoFocus className="work-input" type="password" required minLength={hasVault ? 1 : 4} autoComplete={hasVault ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
