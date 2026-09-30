@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import JSZip from 'jszip';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TaskRun } from '@/types/workbench';
@@ -58,4 +59,18 @@ it('restores legacy input after a multi-series draft without inheriting its sele
   expect(screen.getByRole('checkbox', { name: '数值列：数值' })).toBeChecked();
   await user.click(screen.getByRole('button', { name: '检查并预览' }));
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('imports a bounded XLSX sheet into the chart editor without replacing other form fields', async () => {
+  const zip = new JSZip();
+  zip.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="季度数据" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  zip.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  zip.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>月份</t></is></c><c r="B1" t="inlineStr"><is><t>销售额</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>一月</t></is></c><c r="B2"><v>12</v></c></row></sheetData></worksheet>');
+  const bytes = await zip.generateAsync({ type: 'uint8array' });
+  const file = new File([bytes], 'sales.xlsx');
+  const user = userEvent.setup(); render(<ChartTasks />);
+  await user.upload(screen.getByLabelText('选择图表 CSV 或 XLSX 文件'), file);
+  expect(await screen.findByRole('status')).toHaveTextContent('工作表：季度数据');
+  expect(screen.getByLabelText('CSV 数据')).toHaveValue('月份,销售额\n一月,12');
+  expect(screen.getByLabelText('图表标题')).toHaveValue('季度销售额');
 });

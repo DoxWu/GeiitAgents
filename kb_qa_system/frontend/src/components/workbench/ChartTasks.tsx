@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Download, FileUp, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { checkChart, parseChartCsv, renderChartSvg, MAX_CHART_SERIES, type ChartInput } from '@/officeTasks/chart';
+import { parseFirstXlsxSheet } from '@/officeTasks/xlsx';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import type { TaskStatus } from '@/types/workbench';
 
@@ -21,6 +22,7 @@ export function ChartTasks() {
   const [input, setInput] = useState<ChartInput>({ ...sample });
   const [checked, setChecked] = useState<ReturnType<typeof checkChart> | null>(null);
   const [selected, setSelected] = useState('');
+  const [importedSheet, setImportedSheet] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const requestId = useRef(crypto.randomUUID()), mounted = useRef(false), fileGeneration = useRef(0), fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -31,18 +33,26 @@ export function ChartTasks() {
   const selectedValueColumns = input.valueColumns ?? [input.valueColumn];
   const savedData = useMemo(() => { try { return task?.chartInput ? checkChart(task.chartInput) : null; } catch { return null; } }, [task?.chartInput]);
   function change(patch: Partial<ChartInput>) {
-    fileGeneration.current++; setInput(current => ({ ...current, ...patch })); setChecked(null); setError(''); setNotice(''); requestId.current = crypto.randomUUID();
+    fileGeneration.current++; setInput(current => ({ ...current, ...patch })); setImportedSheet(''); setChecked(null); setError(''); setNotice(''); requestId.current = crypto.randomUUID();
   }
   function inspect() { setError(''); setNotice(''); try { setChecked(checkChart(input)); } catch (e) { setChecked(null); setError(e instanceof Error ? e.message : '图表数据检查失败。'); } }
   async function open(file?: File) {
     if (!file) return;
     const epoch = ++fileGeneration.current;
     try {
-      if (!/\.csv$/i.test(file.name) || !file.size || file.size > 400000) throw new Error('请选择不超过 400 KB 的非空 UTF-8 CSV 文件。');
-      const csv = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+      if (!file.size) throw new Error('请选择非空 CSV 或 XLSX 文件。');
+      let csv: string, sheetName = '';
+      if (/\.csv$/i.test(file.name)) {
+        if (file.size > 400000) throw new Error('CSV 文件不能超过 400 KB。');
+        csv = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+      } else if (/\.xlsx$/i.test(file.name)) {
+        if (file.size > 2_000_000) throw new Error('XLSX 文件不能超过 2 MB。');
+        const parsed = await parseFirstXlsxSheet(await file.arrayBuffer());
+        csv = parsed.csv; sheetName = parsed.sheetName;
+      } else throw new Error('仅支持 UTF-8 CSV 或 XLSX 文件。');
       if (!mounted.current || epoch !== fileGeneration.current) return;
-      parseChartCsv(csv); change({ csv, categoryColumn: 0, valueColumn: 1, valueColumns: undefined });
-    } catch (e) { if (mounted.current && epoch === fileGeneration.current) setError(e instanceof Error ? e.message : '无法读取 UTF-8 CSV。'); }
+      parseChartCsv(csv); change({ csv, categoryColumn: 0, valueColumn: 1, valueColumns: undefined }); setImportedSheet(sheetName);
+    } catch (e) { if (mounted.current && epoch === fileGeneration.current) setError(e instanceof Error ? e.message : '无法读取 CSV 或 XLSX 文件。'); }
   }
   async function create() {
     if (!checked) return;
@@ -73,8 +83,8 @@ export function ChartTasks() {
         <label className="work-label">图表标题<input className="work-input" maxLength={80} value={input.title} onChange={e => change({ title: e.target.value })} /></label>
         <label className="work-label">单位（可选）<input className="work-input" maxLength={20} value={input.unit} onChange={e => change({ unit: e.target.value })} /></label>
         <label className="work-label sm:col-span-2">CSV 数据<textarea aria-label="CSV 数据" className="work-input min-h-40 resize-y font-mono" maxLength={100000} value={input.csv} onChange={e => change({ csv: e.target.value })} /></label>
-        <div className="flex flex-wrap gap-2 sm:col-span-2"><button className="work-command" onClick={() => fileInput.current?.click()}><FileUp size={16} />导入 CSV</button><button className="work-command" onClick={() => change({ ...sample, valueColumns: undefined })}>使用示例数据</button>
-          <input ref={fileInput} hidden type="file" accept=".csv" aria-label="选择图表 CSV 文件" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} /></div>
+        <div className="flex flex-wrap items-center gap-2 sm:col-span-2"><button className="work-command" onClick={() => fileInput.current?.click()}><FileUp size={16} />导入 CSV / XLSX</button><button className="work-command" onClick={() => change({ ...sample, valueColumns: undefined })}>使用示例数据</button>
+          <input ref={fileInput} hidden type="file" accept=".csv,.xlsx" aria-label="选择图表 CSV 或 XLSX 文件" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} />{importedSheet && <span role="status" className="text-sm text-ink-secondary">工作表：{importedSheet}</span>}</div>
         <label className="work-label">分类列<select aria-label="分类列" className="work-input" value={input.categoryColumn} onChange={e => { const categoryColumn = Number(e.target.value); const valueColumns = selectedValueColumns.filter(column => column !== categoryColumn); change({ categoryColumn, valueColumn: valueColumns[0] ?? -1, valueColumns }); }}>{columns.map((header, index) => <option key={index} value={index}>{index + 1}. {header}</option>)}</select></label>
         <fieldset className="min-w-0 rounded border border-line p-3">
           <legend className="px-1 text-sm font-medium">数值列（可多选）</legend>
