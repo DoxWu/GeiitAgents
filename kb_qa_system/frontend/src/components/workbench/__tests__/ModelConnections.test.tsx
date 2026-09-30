@@ -43,8 +43,11 @@ it('requires an explicit list request and retains manual model choice and option
   await screen.findByText('连接已加密保存到本机。');
   expect(store.getState().saveProfile).toHaveBeenCalledWith(expect.objectContaining({ model: 'available-chat' }), '', false);
   expect(vi.mocked(store.getState().saveProfile).mock.calls[0][0].maxTokens).toBeUndefined();
+  vi.mocked(store.getState().testProfile).mockImplementation(async id => {
+    store.setState(state => ({ profiles: state.profiles.map(profile => profile.id === id ? { ...profile, textTestedAt: '2026-09-30T08:00:00.000Z' } : profile) }));
+  });
   fireEvent.click(screen.getByText('测试连接'));
-  await screen.findByText('文本调用：本次测试已验证');
+  await screen.findByText(/^文本调用：最近测试通过/);
   fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: 'other-chat' } });
   expect(screen.getByText('文本调用：未验证')).toBeInTheDocument();
 });
@@ -83,6 +86,14 @@ it('does not mark a cancelled text probe successful and keeps the saved model', 
   fireEvent.click(screen.getByText('取消请求')); await act(async () => finish());
   expect(screen.getByText('文本调用：未验证')).toBeInTheDocument();
   expect(screen.getByLabelText('模型名称')).toHaveValue('chat');
+});
+
+it('shows the saved successful-test time only while the edited settings match', () => {
+  store.setState({ profiles: [{ id: 'saved', name: 'Saved', baseUrl: 'http://127.0.0.1:1234/v1', model: 'chat', hasKey: true, mode: 'local', textTestedAt: '2026-09-30T08:00:00.000Z' }] });
+  render(<ModelConnections />); fireEvent.click(screen.getByLabelText('编辑 Saved'));
+  expect(screen.getByText(/^文本调用：最近测试通过/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: 'changed-chat' } });
+  expect(screen.getByText('文本调用：未验证')).toBeInTheDocument();
 });
 
 it('shows only the authorized account model with explicit permission refresh', () => {

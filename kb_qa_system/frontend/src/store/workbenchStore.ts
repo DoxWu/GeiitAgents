@@ -778,7 +778,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const previous = secrets.find((profile) => profile.id === input.id);
     if (secrets.length >= 30 && !previous) throw new Error("最多保存 30 个模型连接。");
     const secret = keyForEndpoint(input, apiKey, clearKey, baseUrl);
-    const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret };
+    const configChanged = !previous || previous.mode !== input.mode || previous.baseUrl !== baseUrl || previous.model !== input.model.trim() || previous.maxTokens !== input.maxTokens || previous.apiKey !== secret;
+    const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret, textTestedAt: configChanged ? undefined : previous.textTestedAt };
     const next = [...secrets.filter((item) => item.id !== input.id), profile];
     secrets = next;
     set({ profiles: publicProfiles() });
@@ -805,7 +806,26 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const profile = get().profiles.find((item) => item.id === id);
     const secret = secrets.find((item) => item.id === id);
     if (!profile || !secret) throw new Error("请先保存模型连接。");
+    const epoch = generation, testedSecret = secret.apiKey;
     await modelCheck(profile.mode, signal, requestSignal => completeModel(profile, secret.apiKey, [{ role: "user", content: "Reply OK." }], requestSignal));
+    const current = secrets.find(item => item.id === id);
+    const currentPublic = get().profiles.find(item => item.id === id);
+    if (epoch !== generation || !get().unlocked || !vault || current?.apiKey !== testedSecret || !currentPublic || currentPublic.mode !== profile.mode || currentPublic.baseUrl !== profile.baseUrl || currentPublic.model !== profile.model || currentPublic.maxTokens !== profile.maxTokens) {
+      throw new DOMException('连接配置已改变，测试结果未保存。', 'AbortError');
+    }
+    const testedAt = new Date().toISOString();
+    const updated = { ...current, textTestedAt: testedAt };
+    secrets = secrets.map(item => item.id === id ? updated : item);
+    set({ profiles: publicProfiles() });
+    try {
+      await persist(true);
+    } catch (error) {
+      if (epoch === generation && secrets.find(item => item.id === id) === updated) {
+        secrets = secrets.map(item => item.id === id ? current : item);
+        set({ profiles: publicProfiles() });
+      }
+      throw error;
+    }
   },
   newConversation: (profileId) => {
     if (!get().unlocked) return "";

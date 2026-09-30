@@ -179,6 +179,41 @@ it('never reports a successful connection test after vault locking', async () =>
   await store.getState().lock(); finish('late'); await rejected;
 });
 
+it('encrypts the successful text-test time and clears it when connection settings change', async () => {
+  vi.mocked(completeModel).mockResolvedValue('fixture reply');
+  await store.getState().testProfile(profile.id);
+  const testedAt = store.getState().profiles[0].textTestedAt;
+  expect(testedAt).toBeTruthy();
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(testedAt!);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().profiles[0].textTestedAt).toBe(testedAt);
+  await store.getState().saveProfile({ ...profile, name: 'renamed' }, '');
+  expect(store.getState().profiles[0].textTestedAt).toBe(testedAt);
+  await store.getState().saveProfile({ ...profile, model: 'changed-model' }, '');
+  expect(store.getState().profiles[0].textTestedAt).toBeUndefined();
+});
+
+it('does not attach a late text-test result to a changed profile', async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().testProfile(profile.id);
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await store.getState().saveProfile({ ...profile, model: 'replacement-model' }, '');
+  finish('late response');
+  await rejected;
+  expect(store.getState().profiles[0].textTestedAt).toBeUndefined();
+});
+
+it('rolls back the in-memory success marker when encrypted persistence fails', async () => {
+  vi.mocked(completeModel).mockResolvedValue('fixture reply');
+  vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota exceeded'); });
+  await expect(store.getState().testProfile(profile.id)).rejects.toThrow('本机保存失败');
+  expect(store.getState().profiles[0].textTestedAt).toBeUndefined();
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().profiles[0].textTestedAt).toBeUndefined();
+});
+
 it("locks on inactivity even with no workbench component mounted", async () => {
   vi.useFakeTimers(); window.dispatchEvent(new Event("keydown"));
   await vi.advanceTimersByTimeAsync(15 * 60_000);

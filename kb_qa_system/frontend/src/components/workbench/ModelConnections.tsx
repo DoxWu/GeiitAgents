@@ -5,7 +5,7 @@ import { useAuthStore } from '@/store/authStore';
 import type { ModelProfile } from '@/types/workbench';
 import type { ModelCatalog } from '@/services/modelDiscovery';
 
-type Draft = Omit<ModelProfile, 'hasKey'>;
+type Draft = Omit<ModelProfile, 'hasKey' | 'textTestedAt'>;
 const empty = (): Draft => ({ id: crypto.randomUUID(), name: '', mode: 'relay', baseUrl: '', model: '' });
 
 export function ModelConnections() {
@@ -20,7 +20,6 @@ export function ModelConnections() {
   const [operation, setOperation] = useState<'save' | 'test' | 'list' | null>(null);
   const [message, setMessage] = useState('');
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
-  const [tested, setTested] = useState(false);
   const active = useRef<AbortController | null>(null);
   const busy = operation === 'save' || operation === 'test';
   const existing = profiles.find(p => p.id === draft.id);
@@ -28,7 +27,7 @@ export function ModelConnections() {
 
   const invalidate = useCallback(() => {
     active.current?.abort(); active.current = null;
-    setOperation(null); setCatalog(null); setTested(false); setMessage('');
+    setOperation(null); setCatalog(null); setMessage('');
   }, []);
   useEffect(() => {
     invalidate(); setApiKey(''); setClearKey(false);
@@ -42,7 +41,6 @@ export function ModelConnections() {
     const controller = new AbortController(); active.current = controller;
     setOperation(kind); setMessage('');
     if (kind === 'list') setCatalog(null);
-    if (kind === 'test') setTested(false);
     try {
       const apply = await callback(controller.signal);
       if (active.current === controller && !controller.signal.aborted) apply();
@@ -64,7 +62,7 @@ export function ModelConnections() {
     <div className="mb-6 divide-y divide-line border-y border-line">
       {profiles.map(profile => <div key={profile.id} className="flex items-center gap-3 py-3">
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{profile.name}</p><p className="truncate text-xs text-ink-secondary">{profile.model} · {profile.mode === 'local' ? '本机直连' : '云端临时转发'}</p></div>
-        <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
+        <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, textTestedAt: __, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
         <button className="work-icon" title="删除连接" aria-label={'删除 ' + profile.name} disabled={busy} onClick={() => { if (window.confirm('删除模型连接“' + profile.name + '”？')) void action('save', async () => { await useWorkbenchStore.getState().removeProfile(profile.id); return () => { reset(); setMessage('连接已删除。'); }; }); }}><Trash2 size={16} /></button>
       </div>)}
       {!profiles.length && <p className="py-4 text-sm text-ink-tertiary">暂无模型连接</p>}
@@ -73,7 +71,7 @@ export function ModelConnections() {
       await useWorkbenchStore.getState().saveProfile(draft, apiKey, clearKey);
       return () => {
         const saved = useWorkbenchStore.getState().profiles.find(p => p.id === draft.id);
-        if (saved) { const { hasKey: _, ...config } = saved; setDraft(config); }
+        if (saved) { const { hasKey: _, textTestedAt: __, ...config } = saved; setDraft(config); }
         setApiKey(''); setClearKey(false); setMessage('连接已加密保存到本机。');
       };
     }); }}>
@@ -92,23 +90,23 @@ export function ModelConnections() {
           })}>{operation === 'list' ? '正在获取模型…' : '获取模型列表'}</button>
           <p className="text-xs text-ink-secondary">主动读取当前接口的模型列表，不会自动下载或切换模型。列表不可用时仍可手填。</p>
           {catalog && <>
-            {catalog.models.length > 0 && <label className="work-label">从列表选择模型<select className="work-input min-w-0 max-w-full" value="" onChange={e => { if (e.target.value) { setDraft({ ...draft, model: e.target.value }); setTested(false); } }}>
+            {catalog.models.length > 0 && <label className="work-label">从列表选择模型<select className="work-input min-w-0 max-w-full" value="" onChange={e => { if (e.target.value) setDraft({ ...draft, model: e.target.value }); }}>
               <option value="">选择后填入模型名称</option>{catalog.models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
             </select></label>}
             {catalog.truncated && <p className="text-xs text-ink-secondary">仅展示部分有效模型（最多 500 个）；未列出的模型也可手填。</p>}
           </>}
         </div>
-        <label className="work-label">模型名称<input className="work-input" required maxLength={200} placeholder="模型服务中的完整模型名称，也可手填" value={draft.model} onChange={e => { setDraft({ ...draft, model: e.target.value }); setTested(false); }} /></label>
-        <label className="work-label">最大输出 Token（可选）<input className="work-input" type="number" min={1} max={2147483647} placeholder="模型默认" value={draft.maxTokens ?? ''} onChange={e => { setDraft({ ...draft, maxTokens: e.target.value === '' ? undefined : Number(e.target.value) }); setTested(false); }} /></label>
+        <label className="work-label">模型名称<input className="work-input" required maxLength={200} placeholder="模型服务中的完整模型名称，也可手填" value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })} /></label>
+        <label className="work-label">最大输出 Token（可选）<input className="work-input" type="number" min={1} max={2147483647} placeholder="模型默认" value={draft.maxTokens ?? ''} onChange={e => setDraft({ ...draft, maxTokens: e.target.value === '' ? undefined : Number(e.target.value) })} /></label>
       </fieldset>
       <div className="rounded-lg border border-line p-3 text-xs text-ink-secondary">
-        <p>文本调用：{tested && !dirty ? '本次测试已验证' : '未验证'}</p>
+        <p>文本调用：{!dirty && existing?.textTestedAt ? '最近测试通过（' + new Date(existing.textTestedAt).toLocaleString() + '）' : '未验证'}</p>
         <p>工具调用、图片输入、上下文与输出上限：未知。模型出现在列表中不代表支持这些能力，也可能是向量模型。</p>
         <p>保存后可测试文本调用，会发送一条短消息，服务商可能计费。</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="work-command bg-brand text-white" type="submit" disabled={Boolean(operation)}><Save size={16} />{operation === 'save' ? '处理中...' : '保存连接'}</button>
-        <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('test', async signal => { await useWorkbenchStore.getState().testProfile(draft.id, signal); return () => { setTested(true); setMessage('模型文本调用成功。'); }; })}><PlugZap size={16} />测试连接</button>
+        <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('test', async signal => { await useWorkbenchStore.getState().testProfile(draft.id, signal); return () => { setMessage('模型文本调用成功，验证时间已加密保存。'); }; })}><PlugZap size={16} />测试连接</button>
         {(operation === 'list' || operation === 'test') && <button className="work-command" type="button" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消请求</button>}
         <button className="work-icon" type="button" aria-label="清空表单" title="清空表单" disabled={busy} onClick={() => reset()}><X size={16} /></button>
       </div>

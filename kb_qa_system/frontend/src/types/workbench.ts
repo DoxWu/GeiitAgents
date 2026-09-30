@@ -5,6 +5,7 @@ export interface ModelProfile {
   baseUrl: string;
   model: string;
   maxTokens?: number;
+  textTestedAt?: string;
   hasKey: boolean;
 }
 

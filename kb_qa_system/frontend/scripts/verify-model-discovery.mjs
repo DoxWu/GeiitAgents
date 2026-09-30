@@ -53,16 +53,22 @@ try {
   await page.getByRole('button', { name: '保存连接', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('连接已加密保存到本机。');
   await page.getByRole('button', { name: '测试连接' }).click();
-  await expect(page.getByText('文本调用：本次测试已验证', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^文本调用：最近测试通过/)).toBeVisible();
   expect(calls[1].body).not.toHaveProperty('max_tokens');
   expect(calls[1].body.model).toBe('local-chat');
+  await page.reload();
+  await page.getByLabel('解锁口令', { exact: true }).fill('model-qa-passphrase');
+  await page.getByRole('button', { name: '解锁', exact: true }).click();
+  await page.getByRole('tab', { name: '模型', exact: true }).click();
+  await page.getByLabel('编辑 本机 QA').click();
+  await expect(page.getByText(/^文本调用：最近测试通过/)).toBeVisible();
   const panel = page.getByRole('heading', { name: '模型连接', exact: true }).locator('../..');
   await panel.evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: path.join(output, 'local-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await panel.evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: path.join(output, 'local-mobile.png'), fullPage: true });
-  await page.getByText('文本调用：本次测试已验证', { exact: true }).scrollIntoViewIfNeeded();
+  await page.getByText(/^文本调用：最近测试通过/).scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'local-mobile-capabilities.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 

@@ -27,7 +27,7 @@ const id = str(200, 1), date: Check = value => { str(40, 1)(value); if (!Number.
 const hash: Check = value => { if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) fail(); };
 const filename: Check = value => { str(240, 1)(value); if (!validFileName(value as string)) fail(); };
 const status = one('running', 'succeeded', 'failed', 'cancelled', 'interrupted');
-const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local'), baseUrl: str(2048, 1), model: str(400, 1), maxTokens: optional(num(2147483647, 1)), apiKey: str(4096) });
+const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local'), baseUrl: str(2048, 1), model: str(400, 1), maxTokens: optional(num(2147483647, 1)), textTestedAt: optional(date), apiKey: str(4096) });
 const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: str(1000), profileId: str(200), updatedAt: date,
   messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
 const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)) };

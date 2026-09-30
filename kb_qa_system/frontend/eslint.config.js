@@ -5,8 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  // dist/ 构建产物 + coverage/ 测试覆盖率报告 不纳入 lint
-  { ignores: ['dist', 'coverage'] },
+  // Build outputs and coverage reports are not source files.
+  { ignores: ['dist', 'dist-desktop-dev', 'coverage', 'src-tauri/target', 'src-tauri/target-dev'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
