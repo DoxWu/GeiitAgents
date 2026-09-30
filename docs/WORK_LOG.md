@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 最近两批将受限 XLSX 导入扩展到图表和工作流运行输入。标准 `npm test` 全量 **111 文件、1061 项通过**，TypeScript、ESLint、生产 Web 构建通过；扩展后的生产 Chromium 工作流验收通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、加密备份恢复。Cargo 自动发现仓库工具链；dev.26 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。dev.26 原生 WebView2 QA 再次未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收；提醒夹具 Python 依赖 ACL 尚未解决。未调用真实模型/邮件，未推送或部署。DOCX 分页仍缺所需运行时，工作流条件/触发器/断线续跑、容量/强杀验收继续未完成；完整目标保持进行中。
+**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 最近两批将受限 XLSX 导入扩展到图表和工作流运行输入。标准 `npm test` 全量 **111 文件、1061 项通过**，TypeScript、ESLint、生产 Web 构建通过；扩展后的生产 Chromium 工作流验收通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、加密备份恢复。Cargo 自动发现仓库工具链；dev.26 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。dev.26 原生 WebView2 QA 再次未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收。提醒生产 Web → FastAPI → SQLite 内存 fixture 本次完整验收通过；受限 shell 直接运行仍需要绕过 `.tools` 依赖 ACL 后再测。未调用真实模型/邮件，未推送或部署。DOCX 分页仍缺可用且符合工具要求的渲染运行时，工作流条件/触发器/断线续跑、容量/强杀验收继续未完成；完整目标保持进行中。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -665,6 +665,12 @@
 - 验证：工作流/XLSX 定向前端 **22 项通过**；全量 **111 文件 / 1061 项通过**；TypeScript、ESLint、生产 Web 构建、验收脚本语法与 `git diff --check` 通过。更新 `verify-workflows.mjs` 后，生产 Chromium Web 验收覆盖 XLSX 转换数据实际执行本地检查/图表/Markdown DAG、DOCX 下载、加密运行快照和备份恢复；流式模型环节由本地合成 HTTP fixture 提供，5 个请求，无真实模型/账号/邮件访问。验收脚本采用 Vite runner loader，处理默认配置加载器被父目录 ACL 拒绝的问题。
 - 产物：开发配置升为 `0.1.0-dev.26`；`npm run desktop:build` 用 Cargo 自动发现重建独立 `target-dev` 未签名 NSIS 包，`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.26_x64-setup.exe` 为 8,331,620 字节，SHA-256 `30484C714C738CD97BDBBD464AF4FA773970359CC4F6853D768EB9378E256F9A`。Rustup 默认用户目录 canonicalize 警告不阻塞构建。没有安装、升级、推送或部署。
 - 未完成/风险：尚无 Windows 原生 WebView2 对该输入交互的验收；本次 dev.26 重试原生 CDP 脚本仍提示 `Native debugger unavailable`。DOCX 原生分页、条件/分支、触发器、断线续跑、单节点重试、低配与强杀验收、提醒 fixture Python ACL 仍未解决。完整改造继续 active，仅本地开发提交。
+
+### 2026-09-30：重跑提醒生产页面与真实路由验收
+
+- 验证：启动本机生产 Vite preview 后运行 `scripts/verify-reminder-edit.mjs`；第一次因脚本约定端口 `1425` 无 preview 返回连接拒绝，启动预览后重跑成功。该 QA 在受控执行权限下读取仓库 `.tools/python-ops`（普通 shell 曾被 Windows ACL 拒绝），fixture 使用 loopback、真实 FastAPI personal 路由、SQLite 内存库和合成用户，不启调度、不发邮件。结果 `passed: true`，包含服务端接受后丢弃客户端响应、刷新核查/重试、改期/重复规则/修订冲突草稿、未知投递人工结束、63 条提醒四页、55 条投递三页及 390px；记录的 HTTP `409 revision_conflict` 是预期冲突场景，`emailsSent: 0`，`pageErrors: []`。
+- 结论边界：本次仅重跑提醒前端与真实应用路由的本地集成，不表示真实邮件供应商、Celery 调度、生产数据库或部署已验收。没有应用代码修改、没有重建安装包；开发分支已有提交保持不变。
+- 未完成/下一步：记录的 Python 依赖目录仍受普通 shell ACL 约束；受控验收能完成，但尚未修复通用本机开发环境的读权限。DOCX 分页尚未渲染：documents 技能要求 workspace dependency loader，而本会话未提供该工具，不能使用系统 Python/LibreOffice替代，需后续确认可用的受支持渲染环境。继续推进工作流条件/触发/续跑、个人记录与文件整理的容量/强杀测试及模型协议/多模态能力；完整目标保持 active。
 
 ## 文档索引
 
