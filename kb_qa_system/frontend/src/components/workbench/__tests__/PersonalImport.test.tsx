@@ -42,6 +42,16 @@ it('compares conflicts and retries failed persistence without repeating the repl
   failure.mockRestore(); click('重试保存导入结果'); await screen.findByText('导入已加密保存');
   expect(store.getState().personalItems).toEqual([{ ...local, revision: 2, content: '文件中的新正文', updatedAt: expect.any(String) }]);
 });
+it('previews and applies an explicitly selected field merge without replacing unselected local values', async () => {
+  const local = note(); store.setState({ personalItems: [local] }); render(<PersonalImport onBack={vi.fn()} />);
+  await upload(exportPersonalItems([{ ...local, title: '文件标题', content: '文件正文', tags: ['导入'] }], 'json'));
+  fireEvent.change(screen.getByLabelText('导入处理方式 1'), { target: { value: 'merge' } });
+  const confirm = button('确认导入所选条目'); expect(confirm).toBeDisabled();
+  fireEvent.click(screen.getByLabelText('采用文件中的标题'));
+  acknowledge(); expect(confirm).toBeEnabled(); click('确认导入所选条目');
+  await screen.findByText('导入已加密保存');
+  expect(store.getState().personalItems[0]).toMatchObject({ id: local.id, revision: 2, title: '文件标题', content: local.content, tags: local.tags, createdAt: local.createdAt });
+});
 it('shows raw draft time zone and incomplete values, and cancels on unmount', async () => {
   const d = personalDraft(); d.input.title = ''; d.dueText = 'incomplete'; d.timezone = 'Asia/Shanghai';
   const view = render(<PersonalImport onBack={vi.fn()} />); await upload(JSON.stringify(d));

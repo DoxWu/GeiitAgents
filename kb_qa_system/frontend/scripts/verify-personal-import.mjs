@@ -30,7 +30,7 @@ try {
     if (!browser) throw new Error('Native debugger unavailable');
     context = browser.contexts()[0]; page = context.pages()[0] || await context.waitForEvent('page');
   } else {
-    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
+    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort', '--configLoader', 'runner'], { windowsHide: true, stdio: 'ignore' });
     let launchError; app.on('error', error => { launchError = error; });
     const url = `http://127.0.0.1:${port}/workbench`;
     await expect.poll(async () => { if (launchError) throw launchError; try { return (await fetch(url)).ok; } catch { return false; } }, { timeout: 15000 }).toBe(true);
@@ -89,6 +89,10 @@ try {
   expect((await savedData()).personalItems.find(i => i.id === exported.items[0].id).content).toBe(exported.items[0].content);
   await page.evaluate(() => window.restoreImportStorage()); await button('重试保存导入结果').click(); await expect(page.getByText('导入已加密保存', { exact: true })).toBeVisible();
   saved = await savedData(); expect(saved.personalItems).toHaveLength(2); expect(saved.personalItems.find(i => i.id === exported.items[0].id)).toMatchObject({ revision: 2, content: '文件替换正文' });
+  const merged = structuredClone(exported); merged.items[0].title = '字段合并标题'; merged.items[0].content = '字段合并正文'; merged.items[0].tags = ['文件标签'];
+  await upload(merged); await page.getByLabel('导入处理方式 1', { exact: true }).selectOption('merge');
+  await expect(button('确认导入所选条目')).toBeDisabled(); await page.getByLabel('采用文件中的标题', { exact: true }).check(); await commit();
+  saved = await savedData(); expect(saved.personalItems.find(i => i.id === exported.items[0].id)).toMatchObject({ revision: 3, title: '字段合并标题', content: '文件替换正文', tags: exported.items[0].tags });
   await page.reload(); await unlock(); await button('笔记').click(); await button('导入 JSON').click();
   const draft = { id: randomUUID(), editId: randomUUID(), baseRevision: 0, input: { kind: 'todo', title: '导入未完成草稿', content: '原始内容', tags: [], status: 'open', priority: 'high', dueAt: null }, tagsText: '原始，原始，', dueText: 'unfinished', timezone: 'Asia/Shanghai', updatedAt: now };
   await upload(draft, 'draft.json'); await page.getByText('比较文件内容与本机内容', { exact: true }).click();
@@ -104,7 +108,7 @@ try {
   await commit(); saved = await savedData(); expect(saved.personalItems).toHaveLength(21); expect(saved).not.toHaveProperty('personalImportPreview'); expect(saved).not.toHaveProperty('personalImportResult');
   await page.reload(); await unlock(); expect((await savedData()).personalItems).toHaveLength(21);
   expect(requests.filter(url => url.includes('/api/')).length).toBe(apiBefore); expect(requests.some(url => url.includes('example.test'))).toBe(false); expect(errors).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, native, checks: ['actual export/delete/import', 'confirmation gate and inert source text', 'duplicate skip/copy', 'replacement quota failure and persist-only retry', 'independent persisted decryption', 'raw draft import/refresh/export roundtrip', 'pagination selection retention', 'ephemeral previews excluded from vault', ...(native ? [] : ['390px layout']), 'zero additional API/model requests'], emailsSent: 0 }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, native, checks: ['actual export/delete/import', 'confirmation gate and inert source text', 'duplicate skip/copy', 'replacement quota failure and persist-only retry', 'selected-field merge retains local fields', 'independent persisted decryption', 'raw draft import/refresh/export roundtrip', 'pagination selection retention', 'ephemeral previews excluded from vault', ...(native ? [] : ['390px layout']), 'zero additional API/model requests'], emailsSent: 0 }, null, 2));
   console.log(`Personal import ${native ? 'native' : 'browser'} verification passed. Output: ${output}`);
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});

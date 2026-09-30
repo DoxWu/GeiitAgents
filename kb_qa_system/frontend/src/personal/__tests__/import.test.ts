@@ -70,6 +70,28 @@ it('protects draft and kind conflicts; otherwise replacement keeps local identit
   const result = applyPersonalImport(plan, [{ id: source.id, action: 'replace' }], [existing], [], '2025-01-01T10:00:00.000Z');
   expect(result.items).toEqual([{ ...source, revision: 10, createdAt: existing.createdAt, updatedAt: now }]); expect(existing.content).toBe('原始正文');
 });
+it('merges only explicitly selected same-kind fields while preserving local identity and revision history', () => {
+  const existing = note({ revision: 8, title: '本机标题', content: '本机正文', tags: ['本机'], createdAt: '2020-01-01T10:00:00.000Z', updatedAt: '2026-09-20T10:00:00.000Z', archivedAt: null });
+  const source = { ...existing, title: '文件标题', content: '文件正文', tags: ['文件'], revision: 2, createdAt: now, updatedAt: '2026-09-25T10:00:00.000Z', archivedAt: now };
+  const plan = planPersonalImport(data([source]), [existing], []);
+  expect(plan.rows[0].actions).toContain('merge');
+  const result = applyPersonalImport(plan, [{ id: source.id, action: 'merge', mergeFields: ['title', 'tags'] }], [existing], [], now);
+  expect(result.items[0]).toEqual({ ...existing, title: '文件标题', tags: ['文件'], revision: 9, updatedAt: now });
+  expect(result.result).toMatchObject({ merged: 1, replaced: 0 });
+  expect(existing).toMatchObject({ title: '本机标题', content: '本机正文' });
+});
+it('merges todo state as a coupled group and rejects empty, duplicate, or incompatible field selections', () => {
+  const existing = note({ kind: 'todo', status: 'open', priority: 'normal', dueAt: null, completedAt: null });
+  const source = { ...existing, status: 'done' as const, priority: 'high' as const, dueAt: now, completedAt: now, content: '导入版本' };
+  const plan = planPersonalImport(data([source]), [existing], []);
+  const merged = applyPersonalImport(plan, [{ id: source.id, action: 'merge', mergeFields: ['content', 'todo'] }], [existing], [], now).items[0];
+  expect(merged).toMatchObject({ content: '导入版本', status: 'done', priority: 'high', dueAt: now, completedAt: now, revision: 2 });
+  for (const mergeFields of [[], ['title', 'title'], ['not-a-field']]) {
+    expect(() => applyPersonalImport(plan, [{ id: source.id, action: 'merge', mergeFields: mergeFields as never }], [existing], [], now)).toThrow();
+  }
+  const noteCurrent = note(), notePlan = planPersonalImport(data([note({ ...noteCurrent, content: 'other' })]), [noteCurrent], []);
+  expect(() => applyPersonalImport(notePlan, [{ id: noteCurrent.id, action: 'merge', mergeFields: ['todo'] as never }], [noteCurrent], [], now)).toThrow();
+});
 it('copies without replacing and refuses exhausted local revisions', () => {
   const existing = note({ revision: 1000000 }), source = { ...existing, content: 'foreign' }, plan = planPersonalImport(data([source]), [existing], []);
   expect(plan.rows[0].actions).toEqual(['skip', 'copy']);

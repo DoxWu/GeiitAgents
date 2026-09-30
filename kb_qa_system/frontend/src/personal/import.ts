@@ -2,7 +2,8 @@ import { validatePersonalInput, type PersonalItem, type PersonalInput } from './
 import { validatePersonalDraft, type PersonalDraft } from './itemDraft';
 
 export const MAX_PERSONAL_IMPORT_BYTES = 16 * 1024 * 1024;
-export type PersonalImportAction = 'skip' | 'add' | 'copy' | 'replace';
+export type PersonalImportAction = 'skip' | 'add' | 'copy' | 'replace' | 'merge';
+export type PersonalImportMergeField = 'title' | 'content' | 'tags' | 'todo' | 'archivedAt';
 export type PersonalImportData = { kind: 'records'; exportedAt: string; items: PersonalItem[] } | { kind: 'draft'; draft: PersonalDraft };
 export interface PersonalImportRow {
   id: string; title: string; kind: 'note' | 'todo'; status: 'new' | 'duplicate' | 'similar' | 'conflict' | 'draft-conflict' | 'kind-conflict';
@@ -10,8 +11,8 @@ export interface PersonalImportRow {
   actions: PersonalImportAction[]; defaultAction: PersonalImportAction;
 }
 export interface PersonalImportPreview { id: string; name: string; kind: 'records' | 'draft'; exportedAt?: string; rows: PersonalImportRow[] }
-export interface PersonalImportChoice { id: string; action: PersonalImportAction }
-export interface PersonalImportResult { added: number; replaced: number; drafts: number; skipped: number }
+export interface PersonalImportChoice { id: string; action: PersonalImportAction; mergeFields?: PersonalImportMergeField[] }
+export interface PersonalImportResult { added: number; replaced: number; merged: number; drafts: number; skipped: number }
 export interface PersonalImportPlan { data: PersonalImportData; rows: PersonalImportRow[]; baseline: string }
 
 function fail(message = '文件格式无效、包含未知字段或超出限制。'): never { throw new Error(message); }
@@ -110,7 +111,7 @@ export function planPersonalImport(data: PersonalImportData, items: PersonalItem
       ? current.kind !== source.kind ? 'kind-conflict' : contentKey(current) === contentKey(source) ? 'duplicate' : 'conflict'
       : similar ? 'similar' : 'new';
     const actions: PersonalImportAction[] = status === 'new' || status === 'similar' ? ['skip', 'add']
-      : status === 'conflict' && current!.revision < 1000000 ? ['skip', 'copy', 'replace'] : ['skip', 'copy'];
+      : status === 'conflict' && current!.revision < 1000000 ? ['skip', 'copy', 'replace', 'merge'] : ['skip', 'copy'];
     if (status === 'new') byContent.set(contentKey(source), source);
     return { id: source.id, title: source.title, kind: source.kind, source, current, status, matchedTitle: similar?.title, actions,
       defaultAction: status === 'new' ? 'add' as const : 'skip' as const };
@@ -120,9 +121,18 @@ export function planPersonalImport(data: PersonalImportData, items: PersonalItem
 export function applyPersonalImport(plan: PersonalImportPlan, choices: PersonalImportChoice[], items: PersonalItem[], drafts: PersonalDraft[], now: string) {
   if (personalImportBaseline(items, drafts) !== plan.baseline) fail('本机记录或草稿已变化，请重新预检查后确认。');
   if (choices.length !== plan.rows.length || new Set(choices.map(c => c.id)).size !== choices.length) fail('导入选择与预检查不匹配。');
+  const selected = new Map(choices.map(c => [c.id, c]));
   const actions = new Map(choices.map(c => [c.id, c.action]));
-  for (const row of plan.rows) if (!row.actions.includes(actions.get(row.id)!)) fail('导入动作无效或会覆盖受保护记录。');
-  const result: PersonalImportResult = { added: 0, replaced: 0, drafts: 0, skipped: 0 };
+  for (const row of plan.rows) {
+    const choice = selected.get(row.id)!;
+    if (!row.actions.includes(choice.action)) fail('导入动作无效或会覆盖受保护记录。');
+    if (choice.action !== 'merge' && choice.mergeFields !== undefined) fail('字段合并选项只能用于合并动作。');
+    if (choice.action === 'merge') {
+      const validFields: PersonalImportMergeField[] = row.kind === 'todo' ? ['title', 'content', 'tags', 'todo', 'archivedAt'] : ['title', 'content', 'tags', 'archivedAt'];
+      if (!choice.mergeFields?.length || new Set(choice.mergeFields).size !== choice.mergeFields.length || choice.mergeFields.some(field => !validFields.includes(field))) fail('请选择至少一个有效的文件字段再合并。');
+    }
+  }
+  const result: PersonalImportResult = { added: 0, replaced: 0, merged: 0, drafts: 0, skipped: 0 };
   let nextItems = [...items], nextDrafts = [...drafts];
   for (const row of plan.rows) {
     const action = actions.get(row.id)!;
@@ -141,6 +151,16 @@ export function applyPersonalImport(plan: PersonalImportPlan, choices: PersonalI
       const updated: PersonalItem = { ...structuredClone(source), id: current.id, revision: current.revision + 1, createdAt: current.createdAt,
         updatedAt: [now, current.updatedAt, source.updatedAt].sort().at(-1)! };
       nextItems = nextItems.map(i => i.id === current.id ? updated : i); result.replaced++;
+    } else if (action === 'merge') {
+      const current = row.current!, mergeFields = selected.get(row.id)!.mergeFields!;
+      const merged: PersonalItem = { ...structuredClone(current), revision: current.revision + 1,
+        updatedAt: [now, current.updatedAt, source.updatedAt].sort().at(-1)!,
+        ...(mergeFields.includes('title') ? { title: source.title } : {}),
+        ...(mergeFields.includes('content') ? { content: source.content } : {}),
+        ...(mergeFields.includes('tags') ? { tags: [...source.tags] } : {}),
+        ...(mergeFields.includes('todo') && source.kind === 'todo' && current.kind === 'todo' ? { status: source.status, priority: source.priority, dueAt: source.dueAt, completedAt: source.completedAt } : {}),
+        ...(mergeFields.includes('archivedAt') ? { archivedAt: source.archivedAt } : {}) } as PersonalItem;
+      nextItems = nextItems.map(i => i.id === current.id ? merged : i); result.merged++;
     } else {
       nextItems = [{ ...structuredClone(source), ...(action === 'copy' ? { id: crypto.randomUUID(), revision: 1 } : {}) }, ...nextItems]; result.added++;
     }
