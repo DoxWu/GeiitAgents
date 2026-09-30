@@ -618,6 +618,13 @@
 - 根因边界：历史上“初始/恢复表单禁用”超时未记录当时网络响应，不能证明两次都来自本次发现的路径；本次确认并修复了一条可以稳定造成同类初始禁用的代码缺陷，恢复阶段的其他可能因素仍待有诊断证据时核实。
 - 文档/其余状态：更新提醒草稿说明及本工作记录，并校正笔记字段合并、工作流节点选模和前端历史基线状态等过期清单。未改服务端业务契约或迁移，未重建桌面包；dev.21 源码仍未能构建，dev.19 为最后已构建包。下一步继续办公格式/图表扩展、待办与文件容量及中断验收、模型能力状态扩展；整体改造仍未完成，当前只本地提交、不推送或部署。
 
+### 2026-09-30：恢复 Cargo 环境、自动化桌面构建与 dev.21
+
+- Cargo 根因与修复：Rust 工具链并未缺失，仓库内已有 `.tools/cargo/bin`、`.tools/rustup/toolchains/stable-x86_64-pc-windows-msvc`，版本为 Cargo/Rust 1.98.1，host/target 均为 `x86_64-pc-windows-msvc`。桌面构建子进程的 PATH 未包含项目工具链。更新 `scripts/build-desktop.mjs`：当调用方未显式配置 Cargo/Rustup 环境时，自动发现并注入仓库内 Cargo、Rustup home 和 Cargo bin；显式环境仍优先。清空 `CARGO_HOME` 与 `RUSTUP_HOME` 后运行普通 `npm run desktop:build`，确认自动发现有效。
+- 构建产物：重建未签名 `0.1.0-dev.21` NSIS，路径 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.21_x64-setup.exe`，最终产物 8,233,474 字节，SHA-256 `0B663AB7395A9637212F190DE06C77181088BD4A8A04F19AADA6ECE733328C4B`。前端 desktop build、Rust release 和 NSIS 均成功；Rustup 仍输出默认目录 `C:\Users\DOXIA` 无法 canonicalize 警告，但不阻塞项目内工具链或打包。没有安装/升级该包，没有推送或部署。
+- 本次验证：TypeScript `npm run check`、ESLint `npm run lint` 通过；全量 Vitest 因默认 config bundler 扫描仓库上层目录被权限拒绝，按仓库现有约定改用 `npx vitest run --configLoader runner --reporter=dot`，109 文件 / 1040 项通过。构建后 Chromium 个人 JSON 导入/字段合并验收通过，覆盖导入、刷新解锁与窄屏；WebView2 原生同场景未通过，脚本等待 CDP 调试连接超时，尚未证明是应用启动还是调试参数问题。提醒生产 Web→FastAPI→SQLite 夹具也未能启动：Windows 拒绝 Python 读取 `.tools/python-ops/typing_extensions.py`；该端到端验收不计作通过。本次没有调用真实模型、发真实邮件或读取凭据。
+- 下一步：诊断隔离 profile 下的原生 WebView2/CDP 启动路径，解除 Python QA 夹具的依赖目录 ACL 障碍后补跑提醒端到端验收；然后继续办公复杂格式与 DOCX 原生分页检查、待办/文件容量及中断验收和模型能力状态。DOCX 分页本批仍未验证，相关渲染运行时缺失；完整客户端改造保持进行中，仅在 `develop/geiit-agents` 本地提交，不推送、不部署。
+
 ## 文档索引
 
 - [文件历史分页与检索](FILE_HISTORY_NAVIGATION.md)
