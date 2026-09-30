@@ -41,6 +41,22 @@ it('requires consent for each cloud run and clears it when runtime input changes
   await user.click(consent); await user.click(run); expect(consent).not.toBeChecked();
   expect(store.getState().startWorkflow).toHaveBeenCalledWith(d.id, 1, { csv: '', reference: 'changed' }, 'relay', true);
 });
+it('allows a generating node to override the default connection and invalidates cloud consent', async () => {
+  const node = newWorkflowNode('generate_document', 0), d = { ...newWorkflow(), revision: 1, nodes: [node] };
+  store.setState({ workflows: [d], profiles: [
+    { id: 'local', name: 'local', mode: 'local', baseUrl: 'http://127.0.0.1:11434/v1', model: 'local-model', hasKey: true },
+    { id: 'relay', name: 'relay', mode: 'relay', baseUrl: 'https://example.test/v1', model: 'cloud-model', hasKey: true },
+  ] });
+  const user = userEvent.setup(); render(<Workflows />); await user.selectOptions(screen.getByLabelText('已保存工作流'), d.id);
+  await user.selectOptions(screen.getByLabelText('此步骤模型连接'), 'relay');
+  await user.click(screen.getByRole('button', { name: '保存工作流' }));
+  await waitFor(() => expect(store.getState().saveWorkflow).toHaveBeenCalled());
+  const run = screen.getByRole('button', { name: '手动运行工作流' });
+  expect(run).toBeDisabled();
+  await user.click(screen.getByLabelText(/允许本次按已保存工作流/)); expect(run).toBeEnabled();
+  await user.selectOptions(screen.getByLabelText('此步骤模型连接'), '');
+  expect(run).toBeDisabled();
+});
 it('does not mark unsaved edits saved when retrying unrelated storage failures', async () => {
   store.setState({ storageError: 'quota' });
   const user = userEvent.setup(); render(<Workflows />);

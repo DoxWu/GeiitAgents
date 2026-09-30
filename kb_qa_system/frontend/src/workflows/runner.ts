@@ -15,7 +15,7 @@ export function prepareWorkflow(definition: WorkflowDefinition, input: WorkflowI
   return { definition: graph, input: values };
 }
 export async function runWorkflow(taskId: string, definition: WorkflowDefinition, input: WorkflowInput, signal: AbortSignal,
-  model: (input: DocumentTaskInput) => Promise<{ content: string; model: string; finishReason: FinishReason }>,
+  model: (input: DocumentTaskInput, node: WorkflowDefinition['nodes'][number]) => Promise<{ content: string; model: string; finishReason: FinishReason }>,
   checkpoint: (event: ToolCheckpoint) => Promise<void>): Promise<string> {
   const prepared = prepareWorkflow(definition, input), graph = prepared.definition, values = prepared.input;
   const results = new Map<string, string>();
@@ -31,7 +31,7 @@ export async function runWorkflow(taskId: string, definition: WorkflowDefinition
     let artifact: WorkArtifact | undefined, result: string, modelName: string | undefined, finishReason: FinishReason | undefined;
     try {
       if (node.kind === 'generate_document') {
-        const reply = await model({ title: node.title, instruction: node.text, sourceName: '工作流所选输入与前置步骤.json', sourceContent: context }); guard();
+        const reply = await model({ title: node.title, instruction: node.text, sourceName: '工作流所选输入与前置步骤.json', sourceContent: context }, node); guard();
         const content = normalizeDocumentMarkdown(reply.content);
         finishReason = reply.finishReason; modelName = reply.model;
         artifact = { id: crypto.randomUUID(), taskId, kind: 'markdown', version: 1, name: node.title.replace(/[<>:"/\\|?*]/g, '_') + '.md',

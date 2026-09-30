@@ -49,6 +49,14 @@ it('passes only direct predecessor outputs and opted-in inputs into model source
   const source = model.mock.calls[0][0].sourceContent;
   expect(source).toContain('SELECTED'); expect(source).not.toContain('NOT_SELECTED'); expect(source).not.toContain('参考材料'); expect(source).not.toContain('一月');
 });
+it('passes each generating node to the model resolver so routes can differ by step', async () => {
+  const first = newWorkflowNode('generate_document', 0), second = newWorkflowNode('generate_document', 1);
+  first.profileId = 'local-a'; second.profileId = 'local-b';
+  const d = { ...newWorkflow(), nodes: [first, second], edges: [] };
+  const model = vi.fn().mockResolvedValue({ content: '完成', model: 'fixture', finishReason: 'stop' });
+  await runWorkflow('task', d, input, new AbortController().signal, model, async () => {});
+  expect(model.mock.calls.map(call => call[1].profileId)).toEqual(['local-a', 'local-b']);
+});
 it('retains partial model artifact but stops downstream on non-normal completion', async () => {
   const generated = newWorkflowNode('generate_document', 0), after = newWorkflowNode('create_document', 1), events: ToolCheckpoint[] = [];
   const d = { ...newWorkflow(), nodes: [generated, after], edges: [{ from: generated.id, to: after.id }] };

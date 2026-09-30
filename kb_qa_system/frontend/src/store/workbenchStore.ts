@@ -789,7 +789,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (Object.keys(get().running).some((cid) => get().running[cid] && get().conversations.find((c) => c.id === cid)?.profileId === id)) {
       throw new Error("此连接仍有运行中的对话。");
     }
-    if (get().taskRuns.some(task => task.profileId === id && task.status === 'running')) throw new Error('此连接仍有运行中的文档任务。');
+    if (get().workflows.some(workflow => workflow.nodes.some(node => node.profileId === id))
+      || get().taskRuns.some(task => task.status === 'running' && (task.profileId === id || task.workflow?.definition.nodes.some(node => node.profileId === id)))) {
+      throw new Error('此连接仍被已保存或运行中的工作流引用。');
+    }
     if (!vault) return;
     const next = secrets.filter((profile) => profile.id !== id);
     secrets = next;
@@ -1083,27 +1086,35 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const definition = get().workflows.find(item => item.id === definitionId);
     if (!definition || definition.revision !== revision) throw new Error('工作流未保存或修订已变化，请保存/重新载入后运行。');
     const frozen = prepareWorkflow(definition, frozenInput);
-    const usesModel = frozen.definition.nodes.some(node => node.kind === 'generate_document');
-    const profile = get().profiles.find(item => item.id === profileId), secret = secrets.find(item => item.id === profileId);
-    const account = profileId === ACCOUNT_MODEL_ID, cloud = usesModel && (account || profile?.mode === 'relay');
+    const modelNodes = frozen.definition.nodes.filter(node => node.kind === 'generate_document');
+    const usesModel = modelNodes.length > 0;
+    const routes = new Map(modelNodes.map(node => {
+      const routeId = node.profileId || profileId;
+      return [node.id, { id: routeId, profile: get().profiles.find(item => item.id === routeId), secret: secrets.find(item => item.id === routeId), account: routeId === ACCOUNT_MODEL_ID }];
+    }));
+    const cloud = [...routes.values()].some(route => route.account || route.profile?.mode === 'relay');
     if (usesModel) {
-      if (account) {
-        if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error('当前账号模型不可用，请先检查权限。');
-      } else if (!profile || !secret) throw new Error('请选择已保存的模型连接。');
+      for (const route of routes.values()) {
+        if (route.account) {
+          if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error('当前账号模型不可用，请先检查权限。');
+        } else if (!route.profile || !route.secret) throw new Error('工作流模型步骤引用了不可用的连接，请修改步骤选型或保存默认连接。');
+      }
       if (cloud && !allowCloud) throw new Error('发送本次工作流材料和前置结果到云端前需要明确授权。');
     }
     if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型或工作流请求。');
     if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个办公任务。');
     const id = crypto.randomUUID(), token = `task:${id}`, now = new Date().toISOString(), controller = new AbortController();
-    controllers.set(token, controller); if (cloud) accountRequests.add(token);
+    controllers.set(token, controller); if ([...routes.values()].some(route => route.account)) accountRequests.add(token);
     const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('工作流已停止或密钥库已锁定', 'AbortError'); };
     set(state => ({ taskRuns: [{ id, type: 'workflow.run', workflow: frozen, title: definition.name, profileId: usesModel ? profileId : '',
       instruction: '手动运行已保存工作流', status: 'running', createdAt: now, updatedAt: now, toolRunIds: [], artifactIds: [] }, ...state.taskRuns] }));
     const timeout = setTimeout(() => controller.abort(), 12 * 60000);
     try {
       await persist(true); guard();
-      const summary = await runWorkflow(id, frozen.definition, frozen.input, controller.signal, async document => {
+      const summary = await runWorkflow(id, frozen.definition, frozen.input, controller.signal, async (document, node) => {
         guard();
+        const route = routes.get(node.id);
+        if (!route) throw new Error('工作流模型步骤没有可用的模型路由。');
         const round = new AbortController(), abort = () => round.abort();
         controller.signal.addEventListener('abort', abort, { once: true });
         const roundTimeout = setTimeout(abort, 120000);
@@ -1114,8 +1125,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         });
         try {
           const messages = buildDocumentMessages(document), finish = (reason: FinishReason) => { finishReason = reason; };
-          const result = account ? await completeAccountModel(messages, round.signal, preview.push, finish)
-            : { content: await completeModel(profile!, secret!.apiKey, messages, round.signal, preview.push, finish), model: profile!.model };
+          const result = route.account ? await completeAccountModel(messages, round.signal, preview.push, finish)
+            : { content: await completeModel(route.profile!, route.secret!.apiKey, messages, round.signal, preview.push, finish), model: route.profile!.model };
           guard(); if (round.signal.aborted) throw new Error('此模型步骤已超时。');
           return { ...result, finishReason };
         } finally { preview.dispose(); clearTimeout(roundTimeout); controller.signal.removeEventListener('abort', abort); }

@@ -51,6 +51,26 @@ it('enforces explicit cloud consent and account permissions before recording a r
   await expect(store.getState().startWorkflow(d.id, d.revision, input, ACCOUNT_MODEL_ID, true)).rejects.toThrow('权限');
   expect(store.getState().taskRuns).toHaveLength(0); expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
 });
+it('routes model steps independently and requires consent when any selected route is cloud', async () => {
+  const d = await definition(true), second = newWorkflowNode('generate_document', 1);
+  second.profileId = 'workflow-relay';
+  const saved = await store.getState().saveWorkflow({ ...d, nodes: [...d.nodes, second] });
+  await store.getState().saveProfile(profile, 'local-key');
+  await store.getState().saveProfile({ ...profile, id: 'workflow-relay', name: 'relay', mode: 'relay', baseUrl: 'https://fixture.example/v1', model: 'relay-model' }, 'relay-key');
+  await expect(store.getState().removeProfile('workflow-relay')).rejects.toThrow('已保存或运行中的工作流');
+  await expect(store.getState().startWorkflow(saved.id, saved.revision, input, profile.id, false)).rejects.toThrow('明确授权');
+  expect(store.getState().taskRuns).toHaveLength(0); expect(completeModel).not.toHaveBeenCalled();
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, _chunk, finish) => { finish?.('stop'); return 'done'; });
+  const id = await store.getState().startWorkflow(saved.id, saved.revision, input, profile.id, true);
+  expect(completeModel).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(completeModel).mock.calls.map(call => [call[0].model, call[1]])).toEqual([['fixture-model', 'local-key'], ['relay-model', 'relay-key']]);
+  const run = store.getState().taskRuns.find(task => task.id === id)!;
+  const routedNode = run.workflow?.definition.nodes.find(node => node.id === second.id);
+  expect(routedNode?.profileId).toBe('workflow-relay');
+  const backup = await store.getState().exportWorkbenchBackup('5678', true);
+  const restored = await importVaultBackup(backup.file, '5678');
+  expect(restored.data.taskRuns?.find(task => task.id === id)?.workflow?.definition.nodes.find(node => node.id === second.id)?.profileId).toBe('workflow-relay');
+});
 it('uses strict incremental model route and saves final reasons without persisting previews', async () => {
   const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
   vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, chunk, finish) => { chunk!('stream'); finish!('stop'); return '# result'; });

@@ -25,9 +25,12 @@ export function Workflows() {
     return () => { mounted.current = false; window.removeEventListener('beforeunload', warn); };
   }, []);
   const chosen = profileId || store.profiles[0]?.id || (store.accountModel ? ACCOUNT_MODEL_ID : '');
-  const profile = store.profiles.find(p => p.id === chosen), usesModel = draft.nodes.some(n => n.kind === 'generate_document');
-  const cloud = usesModel && (chosen === ACCOUNT_MODEL_ID || profile?.mode === 'relay');
-  const signature = JSON.stringify([profile, store.accountModel, chosen]);
+  const usesModel = draft.nodes.some(n => n.kind === 'generate_document');
+  const needsDefault = draft.nodes.some(n => n.kind === 'generate_document' && !n.profileId);
+  const routeId = (node: WorkflowNode) => node.profileId || chosen;
+  const routes = draft.nodes.filter(n => n.kind === 'generate_document').map(n => [n.id, routeId(n), store.profiles.find(p => p.id === routeId(n)), store.accountModel]);
+  const cloud = routes.some(([, id, profile]) => id === ACCOUNT_MODEL_ID || (profile as typeof store.profiles[number] | undefined)?.mode === 'relay');
+  const signature = JSON.stringify([routes, store.accountModel]);
   useEffect(() => { setConsent(false); }, [signature]);
   const node = draft.nodes.find(n => n.id === selected);
   const runs = store.taskRuns.filter(t => t.type === 'workflow.run'), run = runs.find(t => t.id === selectedRun) ?? runs[0];
@@ -78,6 +81,7 @@ export function Workflows() {
         <label className="work-label">步骤标题<input className="work-input" value={node.title} maxLength={80} onChange={e => patchNode(node.id, { title: e.target.value })} /></label>
         <button className="work-command justify-self-start self-end" onClick={() => { change({ ...draft, nodes: draft.nodes.filter(n => n.id !== node.id), edges: draft.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelected(''); }}>删除步骤及连线</button>
         {node.kind === 'create_document' || node.kind === 'generate_document' ? <>
+          {node.kind === 'generate_document' && <label className="work-label sm:col-span-2">此步骤模型连接<select aria-label="此步骤模型连接" className="work-input" value={node.profileId || ''} onChange={e => patchNode(node.id, { profileId: e.target.value || undefined })}><option value="">使用工作流默认模型 · {store.profiles.find(p => p.id === chosen)?.name || (chosen === ACCOUNT_MODEL_ID ? '账号云端模型' : '未选择')}</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
           <label className="work-label sm:col-span-2">{node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={node.kind === 'generate_document' ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{node.kind === 'generate_document' ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
         </> : node.kind === 'render_chart' ? <>
@@ -99,9 +103,9 @@ export function Workflows() {
       <label className="work-label">工作流参考材料<textarea aria-label="工作流参考材料" className="work-input min-h-24" maxLength={50000} value={input.reference} onChange={e => { setInput({ ...input, reference: e.target.value }); setConsent(false); }} /></label>
       <label className="work-label">工作流 CSV<textarea aria-label="工作流 CSV" className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv} onChange={e => { setInput({ ...input, csv: e.target.value }); setConsent(false); }} placeholder={'月份,销量\n一月,12\n二月,18'} /></label>
       <p className="text-xs text-ink-secondary">CSV 最多 50 行、12 列；输入随运行快照加密保存。节点不会读取其他文件。执行中可离开页签；锁库/关闭会中断，不自动重放。</p>
-      {usesModel && <label className="work-label">工作流模型<select aria-label="工作流模型" className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setConsent(false); }}><option value="">选择模型</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
+      {usesModel && <label className="work-label">工作流默认模型<select aria-label="工作流默认模型" className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setConsent(false); }}><option value="">选择模型</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
       {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果（最多 {draft.nodes.filter(n => n.kind === 'generate_document').length} 次模型请求，可能计费）</label>}
-      <button className="work-command bg-brand text-white" disabled={busy || dirty || !draft.revision || Boolean(store.storageError) || usesModel && !chosen || Boolean(cloud && !consent) || runs.some(r => r.status === 'running' && r.workflow?.definition.id === draft.id)} onClick={() => void start()}>手动运行工作流</button>
+      <button className="work-command bg-brand text-white" disabled={busy || dirty || !draft.revision || Boolean(store.storageError) || needsDefault && !chosen || Boolean(cloud && !consent) || runs.some(r => r.status === 'running' && r.workflow?.definition.id === draft.id)} onClick={() => void start()}>手动运行工作流</button>
     </section>
     {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
     {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}

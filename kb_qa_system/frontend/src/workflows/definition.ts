@@ -1,7 +1,7 @@
 export type WorkflowNodeKind = 'inspect_csv' | 'render_chart' | 'create_document' | 'generate_document';
 export interface WorkflowNode {
   id: string; kind: WorkflowNodeKind; title: string; x: number; y: number;
-  text: string; includeInputs: boolean;
+  text: string; includeInputs: boolean; profileId?: string;
   categoryColumn: number; valueColumns: number[]; chartType: 'bar' | 'line'; unit: string;
 }
 export interface WorkflowDefinition {
@@ -38,7 +38,7 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
   if (!Array.isArray(d.nodes) || !d.nodes.length || d.nodes.length > 12) fail('工作流需要 1–12 个步骤。');
   if (!Array.isArray(d.edges) || d.edges.length > 66) fail();
   for (const value of d.nodes) {
-    const n = record(value, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'categoryColumn', 'valueColumns', 'chartType', 'unit']);
+    const n = record(value, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit']);
     text(n.id, 200, 1); text(n.title, 80, 1); text(n.text, n.kind === 'generate_document' ? 10000 : 50000);
     text(n.unit, 20); integer(n.x, 0, 2000); integer(n.y, 0, 2000); integer(n.categoryColumn, 0, 11);
     if (typeof n.kind !== 'string' || !Object.prototype.hasOwnProperty.call(NODE_LABELS, n.kind) || typeof n.includeInputs !== 'boolean'
@@ -46,6 +46,10 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
     n.valueColumns.forEach(v => integer(v, 0, 11));
     if (new Set(n.valueColumns).size !== n.valueColumns.length || n.valueColumns.includes(n.categoryColumn)) fail('数值列不能重复或与分类列相同。');
     if (n.kind === 'generate_document' && !n.text.trim()) fail('模型步骤需要生成要求。');
+    if (n.profileId !== undefined) {
+      if (n.kind !== 'generate_document') fail('只有模型步骤可以指定模型连接。');
+      text(n.profileId, 200, 1);
+    }
     if ([...n.title + n.unit].some(c => c.charCodeAt(0) < 32)) fail('步骤标题与单位不能包含控制字符。');
   }
   const definition = value as WorkflowDefinition;
