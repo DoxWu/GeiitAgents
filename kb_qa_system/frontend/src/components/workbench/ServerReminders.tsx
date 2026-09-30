@@ -104,9 +104,15 @@ function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
       if (!auth.isAuthenticated || !auth.user || reminderOwner(auth.user.id, auth.user.email) !== owner) requestController.current?.abort();
     });
     busyRef.current = true; setBusy(true);
-    void Promise.all([getPersonalCapabilities(), listServerReminders()]).then(([caps, rows]) => {
-      if (mounted.current && epoch === token.current) { setCapabilities(caps); setReminders(rows.items); setReminderPage(rows); }
-    }).catch(cause => { if (mounted.current && epoch === token.current) setError(messageFor(cause)); })
+    void Promise.allSettled([getPersonalCapabilities(), listServerReminders()]).then(([capsResult, rowsResult]) => {
+      if (!mounted.current || epoch !== token.current) return;
+      const failures: string[] = [];
+      if (capsResult.status === 'fulfilled') setCapabilities(capsResult.value);
+      else failures.push(`提醒能力查询失败：${messageFor(capsResult.reason)}`);
+      if (rowsResult.status === 'fulfilled') { setReminders(rowsResult.value.items); setReminderPage(rowsResult.value); }
+      else failures.push(`提醒列表查询失败：${messageFor(rowsResult.reason)}`);
+      setError(failures.join('；'));
+    })
       .finally(() => { if (mounted.current && epoch === token.current) { busyRef.current = false; setBusy(false); } });
     return () => { mounted.current = false; token.current++; busyRef.current = false; requestController.current?.abort(); unsubscribe(); };
   }, [owner]);
@@ -142,8 +148,14 @@ function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
   }
   async function refresh() {
     await perform(async live => {
-      const [caps, rows] = await Promise.all([getPersonalCapabilities(), listServerReminders(undefined, undefined, filters)]);
-      if (live()) { setCapabilities(caps); firstPage(rows); }
+      const [capsResult, rowsResult] = await Promise.allSettled([getPersonalCapabilities(), listServerReminders(undefined, undefined, filters)]);
+      if (!live()) return;
+      const failures: string[] = [];
+      if (capsResult.status === 'fulfilled') setCapabilities(capsResult.value);
+      else failures.push(`提醒能力查询失败：${messageFor(capsResult.reason)}`);
+      if (rowsResult.status === 'fulfilled') firstPage(rowsResult.value);
+      else failures.push(`提醒列表查询失败：${messageFor(rowsResult.reason)}`);
+      if (failures.length) throw new Error(failures.join('；'));
     });
   }
   async function turnReminders(direction: -1 | 1) {

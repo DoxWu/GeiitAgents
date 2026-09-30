@@ -18,6 +18,7 @@ const service = spawn('python', ['-c', "import runpy; runpy.run_path('tests/remi
 });
 let serviceOutput = ''; service.stdout.on('data', data => { serviceOutput += data; }); service.stderr.on('data', data => { serviceOutput += data; });
 let browser, page;
+const reminderResponses = [], reminderRequestFailures = [];
 try {
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -30,13 +31,21 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, timezoneId: 'America/Los_Angeles' });
   page = await context.newPage(); const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  page.on('response', response => {
+    const url = new URL(response.url());
+    if (/^\/api\/v1\/personal\/(capabilities|reminders(?:\/page)?)$/.test(url.pathname)) reminderResponses.push({ method: response.request().method(), path: url.pathname, status: response.status() });
+  });
+  page.on('requestfailed', request => {
+    const url = new URL(request.url());
+    if (/^\/api\/v1\/personal\/(capabilities|reminders(?:\/page)?)$/.test(url.pathname)) reminderRequestFailures.push({ method: request.method(), path: url.pathname, error: request.failure()?.errorText || 'request failed' });
+  });
   const user = { id: 1, username: 'qa-user', email: 'qa@example.test', is_active: true, is_superuser: false, user_type: 'regular', created_at: '2026-01-01T00:00:00Z' };
   await context.addInitScript(user => {
     localStorage.setItem('kb_auth_tokens', JSON.stringify({ access_token: 'synthetic-fixture', refresh_token: 'synthetic-fixture', token_type: 'bearer' }));
     localStorage.setItem('kb_auth_user', JSON.stringify(user));
   }, user);
-  let dropCreate = false, dropPatch = false;
-  const creates = [], patches = [];
+  let dropCreate = false, dropPatch = false, dropInitialList = true;
+  const creates = [], patches = [], injectedFaults = [];
   await context.route('**/api/v1/**', async route => {
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/api/v1/personal/')) {
@@ -44,7 +53,15 @@ try {
       if (creating) creates.push(route.request().postDataJSON());
       if (patching) patches.push(route.request().postDataJSON());
       const response = await route.fetch({ url: backend + url.pathname + url.search });
-      if (!response.ok()) console.log(JSON.stringify({ failedFixturePath: url.pathname, status: response.status(), detail: (await response.json()).detail }));
+      if (!response.ok()) {
+        let detail = 'non-JSON fixture response';
+        try { detail = (await response.json()).detail ?? detail; } catch { /* Keep a safe default for HTML or proxy errors. */ }
+        console.log(JSON.stringify({ failedFixturePath: url.pathname, status: response.status(), detail, fixtureLog: serviceOutput.slice(-2000) }));
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/personal/reminders/page' && dropInitialList) {
+        dropInitialList = false; injectedFaults.push('initial reminder list response dropped after successful fixture response');
+        expect(response.status()).toBe(200); return route.abort('failed');
+      }
       // Commit to the real isolated DB, then lose only the client response.
       if (creating && dropCreate) { dropCreate = false; expect(response.status()).toBe(201); return route.abort('failed'); }
       if (patching && dropPatch) { dropPatch = false; expect(response.status()).toBe(200); return route.abort('failed'); }
@@ -60,6 +77,9 @@ try {
   await page.getByRole('button', { name: '创建', exact: true }).click();
   await page.getByRole('button', { name: '笔记与待办', exact: true }).click();
   await page.getByRole('button', { name: '邮件提醒', exact: true }).click();
+  await expect(page.getByLabel('提醒主题')).toBeEnabled();
+  await expect(page.getByRole('alert')).toContainText('提醒列表查询失败');
+  expect(injectedFaults).toHaveLength(1);
   await page.getByLabel('提醒主题').fill('季度报告提醒');
   await page.getByLabel('提醒内容').fill('复核预算并提交报告。');
   await page.getByLabel('提醒时区').fill('Asia/Shanghai');
@@ -209,10 +229,10 @@ try {
   await page.getByLabel('搜索提醒').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'drafts-search-mobile.png') });
   expect(errors).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, backend: 'real FastAPI routes + isolated SQLite memory', deviceZone: 'America/Los_Angeles', reminderZone: 'Asia/Shanghai', checks: ['create', 'schedule and weekly rule edit', 'revision conflict retains draft', 'explicit latest reload', 'uncertain paused delivery dismissal', 'overdue reschedule and resume', '63 reminders across four pages, insertion boundary and return navigation', '55 deliveries across three pages', '390px layout'], emailsSent: 0, pageErrors: errors }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, backend: 'real FastAPI routes + isolated SQLite memory', deviceZone: 'America/Los_Angeles', reminderZone: 'Asia/Shanghai', checks: ['initial reminder-list response loss keeps create enabled when capabilities succeed', 'create', 'schedule and weekly rule edit', 'revision conflict retains draft', 'explicit latest reload', 'uncertain paused delivery dismissal', 'overdue reschedule and resume', '63 reminders across four pages, insertion boundary and return navigation', '55 deliveries across three pages', '390px layout'], injectedFaults, reminderResponses, reminderRequestFailures, emailsSent: 0, pageErrors: errors }, null, 2));
   await writeFile(path.join(output, 'drafts-result.json'), JSON.stringify({ passed: true, scope: 'Production browser / real isolated FastAPI and SQLite / no email sender', checks: ['encrypted draft and template reload', 'no auto submission', 'POST accepted then response lost recovered by request ID', 'PATCH accepted then response lost checked without replay', 'server search and filtered pagination', '390px'], emailsSent: 0 }));
   console.log('Reminder real HTTP editing/pagination plus encrypted drafts/templates, lost-response recovery, search and 390px QA passed.');
 } catch (error) {
-  console.log(JSON.stringify({ alerts: await page?.getByRole('alert').allTextContents().catch(() => []), statuses: await page?.getByRole('status').allTextContents().catch(() => []) }));
+  console.log(JSON.stringify({ alerts: await page?.getByRole('alert').allTextContents().catch(() => []), statuses: await page?.getByRole('status').allTextContents().catch(() => []), disabledFields: await page?.locator('input, textarea, select, button').evaluateAll(nodes => nodes.filter(node => node.disabled).map(node => ({ tag: node.tagName, label: node.getAttribute('aria-label'), text: node.textContent?.trim().slice(0, 80) }))).catch(() => []), reminderResponses, reminderRequestFailures }));
   await page?.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); throw error;
 } finally { await browser?.close(); service.kill(); }

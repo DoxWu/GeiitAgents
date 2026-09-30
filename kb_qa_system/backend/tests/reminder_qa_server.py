@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_regular_user
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.models import EmailLog, Reminder, ReminderDelivery, User
@@ -26,9 +26,12 @@ with factory() as db:
     db.commit()
 
 
+with factory() as db:
+    fixture_user = db.get(User, 1)
+
+
 def auth():
-    with factory() as db:
-        return db.get(User, 1)
+    return fixture_user
 
 
 def database():
@@ -43,7 +46,7 @@ spec = importlib.util.spec_from_file_location("qa_personal_routes", Path(__file_
 routes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(routes)
 app.include_router(routes.router, prefix="/api/v1")
-app.dependency_overrides[get_current_user] = auth
+app.dependency_overrides[get_current_regular_user] = auth
 app.dependency_overrides[get_db] = database
 
 

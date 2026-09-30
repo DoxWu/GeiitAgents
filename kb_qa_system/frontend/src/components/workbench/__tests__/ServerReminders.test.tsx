@@ -94,6 +94,29 @@ describe("ServerReminders", () => {
     expect(screen.getByRole("button", { name: "保存提醒" })).toBeDisabled();
   });
 
+  it('keeps reminder creation available when only the initial list request fails', async () => {
+    auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
+    api.listServerReminders.mockRejectedValueOnce(new Error('temporary list failure'));
+    render(<ServerReminders />);
+    await screen.findByRole('alert');
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: '可创建提醒' } });
+    fireEvent.change(screen.getByLabelText('提醒内容'), { target: { value: '列表加载失败不影响能力已确认后的创建。' } });
+    expect(screen.getByRole('button', { name: '保存提醒' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '刷新邮件提醒' })).toBeEnabled();
+  });
+
+  it('retains each successful refresh result when the other endpoint fails', async () => {
+    auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
+    const view = await loaded();
+    api.getPersonalCapabilities.mockRejectedValueOnce(new Error('temporary capability failure'));
+    api.listServerReminders.mockResolvedValueOnce(page([{ ...reminder, subject: '列表仍可刷新' }]));
+    fireEvent.click(screen.getByRole('button', { name: '刷新邮件提醒' }));
+    await screen.findByRole('article', { name: '提醒：列表仍可刷新' });
+    expect(screen.getByRole('alert')).toHaveTextContent('提醒能力查询失败');
+    expect(screen.getByRole('button', { name: '刷新邮件提醒' })).toBeEnabled();
+    view.unmount();
+  });
+
   it("creates a reminder for the account email with a UTC timestamp", async () => {
     auth.isAuthenticated = true;
     auth.user = { email: "user@example.com" };
