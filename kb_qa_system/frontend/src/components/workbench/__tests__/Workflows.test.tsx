@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import JSZip from 'jszip';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { Workflows } from '../Workflows';
@@ -64,4 +65,27 @@ it('does not mark unsaved edits saved when retrying unrelated storage failures',
   await user.click(screen.getByRole('button', { name: '重试本机保存' }));
   expect(screen.getByText(/有未保存修改/)).toBeVisible();
   expect(screen.getByRole('button', { name: '手动运行工作流' })).toBeDisabled();
+});
+
+it('imports a visible XLSX sheet into the workflow input and preserves references', async () => {
+  const zip = new JSZip();
+  zip.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="输入数据" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  zip.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  zip.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>月份</t></is></c><c r="B1" t="inlineStr"><is><t>数量</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>一月</t></is></c><c r="B2"><v>12</v></c></row></sheetData></worksheet>');
+  const user = userEvent.setup(), view = render(<Workflows />);
+  await user.type(screen.getByLabelText('工作流参考材料'), '保留此参考');
+  const bytes = await zip.generateAsync({ type: 'uint8array' });
+  await user.upload(screen.getByLabelText('选择工作流 CSV 或 XLSX 文件'), new File([bytes], 'input.xlsx'));
+  expect(await screen.findByRole('status')).toHaveTextContent('工作表：输入数据');
+  expect(screen.getByLabelText('工作流 CSV')).toHaveValue('月份,数量\n一月,12');
+  expect(screen.getByLabelText('工作流参考材料')).toHaveValue('保留此参考');
+  view.unmount();
+});
+
+it('keeps the previous workflow CSV when an unsupported upload fails', async () => {
+  const user = userEvent.setup(); render(<Workflows />);
+  fireEvent.change(screen.getByLabelText('工作流 CSV'), { target: { value: '月份,数量\n一月,12' } });
+  await user.upload(screen.getByLabelText('选择工作流 CSV 或 XLSX 文件'), new File(['invalid'], 'input.xlsx'));
+  expect(await screen.findByRole('alert')).toBeVisible();
+  expect(screen.getByLabelText('工作流 CSV')).toHaveValue('月份,数量\n一月,12');
 });

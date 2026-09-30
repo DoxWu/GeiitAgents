@@ -42,7 +42,7 @@ try {
     if (!browser) throw new Error('Native debugger unavailable'); context = browser.contexts()[0]; page = context.pages()[0] || await context.waitForEvent('page');
   } else {
     const url = 'http://127.0.0.1:' + port + '/workbench';
-    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
+    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--configLoader', 'runner', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
     await expect.poll(async () => { try { return (await fetch(url)).ok; } catch { return false; } }, { timeout: 15000 }).toBe(true);
     browser = await chromium.launch({ headless: true }); context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1280, height: 900 } });
     if (['relay', 'account'].includes(mode)) {
@@ -85,7 +85,14 @@ try {
   const box = await handle.boundingBox(); await page.mouse.move(box.x + 30, box.y + 6); await page.mouse.down(); await page.mouse.move(box.x + 70, box.y + 146, { steps: 5 }); await page.mouse.up();
   await handle.press('ArrowRight'); await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 1');
   const workflowId = await field('已保存工作流').inputValue();
-  await field('工作流 CSV').fill('月份,销量\n一月,12\n二月,18'); await field('工作流参考材料').fill('合成资料：一月与二月。');
+  const xlsx = new JSZip();
+  xlsx.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="销量" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  xlsx.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  xlsx.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>月份</t></is></c><c r="B1" t="inlineStr"><is><t>销量</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>一月</t></is></c><c r="B2"><v>12</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>二月</t></is></c><c r="B3"><v>18</v></c></row></sheetData></worksheet>');
+  await field('选择工作流 CSV 或 XLSX 文件').setInputFiles({ name: 'workflow.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: await xlsx.generateAsync({ type: 'nodebuffer' }) });
+  await expect(page.getByText('工作表：销量', { exact: true })).toBeVisible();
+  await expect(field('工作流 CSV')).toHaveValue('月份,销量\n一月,12\n二月,18');
+  await field('工作流参考材料').fill('合成资料：一月与二月。');
   await button('手动运行工作流').click(); const history = page.getByLabel('工作流运行历史', { exact: true });
   await expect(history).toContainText('已按依赖顺序完成 3 个步骤'); expect(calls).toHaveLength(0);
   const csvRun = await field('选择工作流运行').inputValue();
@@ -142,7 +149,7 @@ try {
   expect(calls).toHaveLength(5); expect(errors).toEqual([]);
   expect(requests.filter(url => /huggingface|\.onnx(?:\?|$)/.test(url))).toEqual([]);
   if (mode === 'native') expect(requests.filter(url => url.startsWith(upstream))).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
   console.log(`Workflow ${mode} QA passed: ${output}`);
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); await writeFile(path.join(output, 'failure.json'), JSON.stringify({ message: String(error), errors }, null, 2)); throw error;

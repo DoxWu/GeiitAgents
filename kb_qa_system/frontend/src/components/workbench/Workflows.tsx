@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { NODE_LABELS, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
 import { WorkflowCanvas } from './WorkflowCanvas';
@@ -13,10 +14,12 @@ export function Workflows() {
   const store = useWorkbenchStore();
   const [draft, setDraft] = useState<WorkflowDefinition>(() => newWorkflow()), [dirty, setDirty] = useState(false), [selected, setSelected] = useState('');
   const [input, setInput] = useState<WorkflowInput>({ reference: '', csv: '' });
+  const [inputSheet, setInputSheet] = useState('');
+  const [inputError, setInputError] = useState('');
   const [from, setFrom] = useState(''), [to, setTo] = useState(''), [profileId, setProfileId] = useState('');
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
-  const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false);
+  const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false), inputGeneration = useRef(0), inputFile = useRef<HTMLInputElement>(null);
   dirtyRef.current = dirty;
   useEffect(() => {
     mounted.current = true;
@@ -37,6 +40,30 @@ export function Workflows() {
   const artifact = store.artifacts.find(a => a.id === artifactId && run?.artifactIds.includes(a.id)) ?? store.artifacts.find(a => run?.artifactIds.includes(a.id));
   function change(next: WorkflowDefinition) { setDraft(next); setDirty(true); setConsent(false); setNotice(''); }
   function patchNode(id: string, patch: Partial<WorkflowNode>) { change({ ...draft, nodes: draft.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }); }
+  async function importInputFile(file?: File) {
+    if (!file) return;
+    const epoch = ++inputGeneration.current;
+    try {
+      if (!file.size) throw new Error('请选择非空 CSV 或 XLSX 文件。');
+      let csv: string, sheetName = '';
+      if (/\.csv$/i.test(file.name)) {
+        if (file.size > 400000) throw new Error('CSV 文件不能超过 400 KB。');
+        csv = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+      } else if (/\.xlsx$/i.test(file.name)) {
+        if (file.size > 2_000_000) throw new Error('XLSX 文件不能超过 2 MB。');
+        const { parseFirstXlsxSheet } = await import('@/officeTasks/xlsx');
+        const parsed = await parseFirstXlsxSheet(await file.arrayBuffer());
+        csv = parsed.csv; sheetName = parsed.sheetName;
+      } else throw new Error('仅支持 UTF-8 CSV 或 XLSX 文件。');
+      if (!mounted.current || epoch !== inputGeneration.current) return;
+      const { parseChartCsv } = await import('@/officeTasks/chart');
+      parseChartCsv(csv);
+      if (!mounted.current || epoch !== inputGeneration.current) return;
+      setInput(current => ({ ...current, csv })); setInputSheet(sheetName); setInputError(''); setConsent(false);
+    } catch (e) {
+      if (mounted.current && epoch === inputGeneration.current) setInputError(e instanceof Error ? e.message : '无法读取 CSV 或 XLSX 文件。');
+    }
+  }
   function load(definition: WorkflowDefinition) {
     if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
     setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setFrom(''); setTo(''); setConsent(false); setError(''); setNotice('');
@@ -101,7 +128,8 @@ export function Workflows() {
     </fieldset>
     <section aria-label="工作流运行输入" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">本次运行输入</h2>
       <label className="work-label">工作流参考材料<textarea aria-label="工作流参考材料" className="work-input min-h-24" maxLength={50000} value={input.reference} onChange={e => { setInput({ ...input, reference: e.target.value }); setConsent(false); }} /></label>
-      <label className="work-label">工作流 CSV<textarea aria-label="工作流 CSV" className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv} onChange={e => { setInput({ ...input, csv: e.target.value }); setConsent(false); }} placeholder={'月份,销量\n一月,12\n二月,18'} /></label>
+      <label className="work-label">工作流 CSV<textarea aria-label="工作流 CSV" className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv} onChange={e => { inputGeneration.current++; setInput({ ...input, csv: e.target.value }); setInputSheet(''); setInputError(''); setConsent(false); }} placeholder={'月份,销量\n一月,12\n二月,18'} /></label>
+      <div className="flex flex-wrap items-center gap-2"><button type="button" className="work-command" onClick={() => inputFile.current?.click()}><FileUp size={16} />导入 CSV / XLSX</button><input ref={inputFile} hidden type="file" accept=".csv,.xlsx" aria-label="选择工作流 CSV 或 XLSX 文件" onChange={e => { void importInputFile(e.target.files?.[0]); e.target.value = ''; }} />{inputSheet && <span role="status" className="text-sm text-ink-secondary">工作表：{inputSheet}</span>}{inputError && <span role="alert" className="text-sm text-danger">{inputError}</span>}</div>
       <p className="text-xs text-ink-secondary">CSV 最多 50 行、12 列；输入随运行快照加密保存。节点不会读取其他文件。执行中可离开页签；锁库/关闭会中断，不自动重放。</p>
       {usesModel && <label className="work-label">工作流默认模型<select aria-label="工作流默认模型" className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setConsent(false); }}><option value="">选择模型</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
       {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果（最多 {draft.nodes.filter(n => n.kind === 'generate_document').length} 次模型请求，可能计费）</label>}

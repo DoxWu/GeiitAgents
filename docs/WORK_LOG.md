@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 本批新增本地图表 XLSX 导入。标准 `npm test` 全量 **111 文件、1059 项通过**，TypeScript、ESLint、生产 Web 与桌面开发构建通过。Cargo 自动发现仓库工具链；未签名 dev.25 NSIS 已构建，8,328,919 字节。生产 Chromium 验收覆盖 XLSX 首表导入/预览、CSV 多系列柱/线和饼图、SVG/PNG、加密恢复、390px 窄屏以及零新增 API/模型请求和页面错误。JSZip 在运行时按需加载。未执行原生 WebView2 安装验收，已知 CDP 脚本仍报 `Native debugger unavailable`；提醒夹具 Python 依赖 ACL 尚未解决。未调用真实模型/邮件，未推送或部署。DOCX 分页仍缺所需运行时，工作流条件/触发器/断线续跑、容量/强杀验收继续未完成；完整目标保持进行中。
+**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 最近两批将受限 XLSX 导入扩展到图表和工作流运行输入。标准 `npm test` 全量 **111 文件、1061 项通过**，TypeScript、ESLint、生产 Web 构建通过；扩展后的生产 Chromium 工作流验收通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、加密备份恢复。Cargo 自动发现仓库工具链；dev.26 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。dev.26 原生 WebView2 QA 再次未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收；提醒夹具 Python 依赖 ACL 尚未解决。未调用真实模型/邮件，未推送或部署。DOCX 分页仍缺所需运行时，工作流条件/触发器/断线续跑、容量/强杀验收继续未完成；完整目标保持进行中。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -12,7 +12,7 @@
 | 桌面基础工作台 | 已实现并有本地验证产物 | Tauri 2、独立对话、模型连接、加密库、Markdown 预览 |
 | 数据库恢复、备份、告警 | 底层能力及管理员接口/页面已实现，本地相关测试通过 | 独立持久队列、幂等与中断处理；不以当前线上资源作为开发前置 |
 | 客户端本地知识库 | 完整首轮闭环与当前开发机标准基准已完成 | 按需 E5、独立索引、模型表单、授权流式回答及停止原因、导出/加密归档；100 文件基线完成，低配/极限规模待测 |
-| 办公工具与持久任务 | Markdown/版本/DOCX/HTML、CSV/XLSX 本地图表和实际协议驱动的多步骤任务已实现并有本地验证 | XLSX 仅导入首个可见工作表，2 MB 输入/解压边界和公式/合并格拒绝；DOCX 分页、更多复杂格式和工具仍待做 |
+| 办公工具与持久任务 | Markdown/版本/DOCX/HTML、CSV/XLSX 本地图表和 XLSX 工作流输入、实际协议驱动的多步骤任务已实现并有本地验证 | XLSX 仅导入首个可见工作表，2 MB 输入/解压边界和公式/合并格拒绝；DOCX 分页、更多复杂格式和工具仍待做 |
 | 待办、笔记、定时邮件 | 本机记录/独立加密草稿/归档/批量导出/JSON 与 Markdown 导入/字段合并/整库备份、提醒编辑/分页/提交核查/模板/搜索已实现 | JSON 逐条预检查与完整值冲突保护、草稿另存；真实供应商/调度和容量验收仍待做 |
 | 文件整理与模型体验 | Windows 原生目录、跨目录移动/撤销、单文件及批量文本编辑/恢复、历史分页/检索、整库备份、模型目录、聊天/文档/来源回答四路径流式和办公工具协议已实现并有回归 | 筛选保留完整批次和操作范围；分页减少渲染但不降低整库数据量；多模态/专有协议、跨物理卷和低配仍待推进 |
 | 可视化工作流、性能与发布 | 手动 DAG 工作流已实现首版并有本地验证 | 画布布局/连线、四类节点、节点独立模型选型、修订/运行快照/加密检查点及整库备份；条件/触发器/断线续跑、压测、签名与更新仍待做 |
@@ -658,6 +658,13 @@
 - 验证：新增 XLSX ZIP 夹具解析测试和图表界面上传测试；定向测试 9 项通过。全量前端 **111 个测试文件 / 1059 项通过**，`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`git diff --check` 通过。生产 Web 构建产出 JSZip 97.54 KB（gzip 30.33 KB）独立 chunk；图表 UI chunk 55.56 KB（gzip 10.19 KB）。扩展后的 `verify-chart-series.mjs` 在生产 Chromium 通过 XLSX 导入/预览及完整现有图表验收，未新增 API/模型请求，无页面异常。
 - Cargo 与产物：开发配置升为 `0.1.0-dev.25`；`npm run desktop:build` 自动使用仓库 `.tools/cargo` / `.tools/rustup`，Vite desktop、Rust release、NSIS 成功。默认 `C:\Users\DOXIA` canonicalize 警告仍出现但不阻塞。未签名安装包 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.25_x64-setup.exe`，8,328,919 字节，SHA-256 `D715C67B39B6115CDCBC1FD1FA28D01CCFC1B60C65EF9A5ACC89BEF338BF33D7`。仅构建，未安装/升级、推送或部署。
 - 未完成/风险：本批未做 Windows 原生 WebView2 图表/XLSX 端到端验收；已知 CDP 验收报 `Native debugger unavailable`。XLSX 仅导入首表平面值，不处理样式、公式计算、日期格式、合并格或图表对象；超限拒绝时用户需自行缩小/清理工作簿。DOCX 原生分页、复杂办公格式、低配容量/强杀验收、工作流条件/触发器/断线续跑仍未完成；提醒 Python 夹具 ACL 仍待排查。后续继续这些项，完整目标保持 active。仅本地开发分支提交，不推送、不部署。
+
+### 2026-09-30：工作流输入导入 XLSX 与 dev.26
+
+- 实现：可视化工作流运行输入新增 UTF-8 CSV/XLSX 导入；CSV 上限 400 KB，XLSX 复用图表解析器首个可见工作表、2 MB 压缩文件和 XML/ZIP/公式/错误/合并单元格限制。导入后仅替换运行 CSV 并显示工作表名称；解析成功前保留原数据，手动编辑或更新输入时清除旧工作表标记，迟到导入不会覆盖新手工输入。运行快照仍只保存规范化 CSV，不保存原 XLSX。解析器和 JSZip 由用户点击选择文件后按需加载。
+- 验证：工作流/XLSX 定向前端 **22 项通过**；全量 **111 文件 / 1061 项通过**；TypeScript、ESLint、生产 Web 构建、验收脚本语法与 `git diff --check` 通过。更新 `verify-workflows.mjs` 后，生产 Chromium Web 验收覆盖 XLSX 转换数据实际执行本地检查/图表/Markdown DAG、DOCX 下载、加密运行快照和备份恢复；流式模型环节由本地合成 HTTP fixture 提供，5 个请求，无真实模型/账号/邮件访问。验收脚本采用 Vite runner loader，处理默认配置加载器被父目录 ACL 拒绝的问题。
+- 产物：开发配置升为 `0.1.0-dev.26`；`npm run desktop:build` 用 Cargo 自动发现重建独立 `target-dev` 未签名 NSIS 包，`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.26_x64-setup.exe` 为 8,331,620 字节，SHA-256 `30484C714C738CD97BDBBD464AF4FA773970359CC4F6853D768EB9378E256F9A`。Rustup 默认用户目录 canonicalize 警告不阻塞构建。没有安装、升级、推送或部署。
+- 未完成/风险：尚无 Windows 原生 WebView2 对该输入交互的验收；本次 dev.26 重试原生 CDP 脚本仍提示 `Native debugger unavailable`。DOCX 原生分页、条件/分支、触发器、断线续跑、单节点重试、低配与强杀验收、提醒 fixture Python ACL 仍未解决。完整改造继续 active，仅本地开发提交。
 
 ## 文档索引
 
