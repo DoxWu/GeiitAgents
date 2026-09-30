@@ -1,5 +1,6 @@
 // Production-browser QA with synthetic CSV only. Start `vite preview --port 1425` first.
 import { chromium, expect } from '@playwright/test';
+import JSZip from 'jszip';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -24,8 +25,19 @@ try {
   await page.getByRole('tab', { name: '任务', exact: true }).click();
   await page.getByRole('tab', { name: '图表工具' }).click();
   const requestCount = requests.filter(url => url.includes('/api/')).length;
+  const xlsx = new JSZip();
+  xlsx.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="季度导入" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  xlsx.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  xlsx.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>季度</t></is></c><c r="B1" t="inlineStr"><is><t>收入</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>第一季度</t></is></c><c r="B2"><v>120</v></c></row></sheetData></worksheet>');
+  const xlsxBytes = await xlsx.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  await page.getByLabel('图表标题', { exact: true }).fill('XLSX 导入验证');
+  await page.getByLabel('选择图表 CSV 或 XLSX 文件').setInputFiles({ name: 'quarter.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsxBytes });
+  await expect(page.getByRole('status')).toContainText('工作表：季度导入');
+  await expect(page.getByLabel('CSV 数据')).toHaveValue('季度,收入\n第一季度,120');
+  await page.getByRole('button', { name: '检查并预览' }).click();
+  await expect(page.getByText(/检查通过.*1 条数据/)).toBeVisible();
   await page.getByLabel('图表标题', { exact: true }).fill('季度收入与成本');
-  await page.getByLabel('选择图表 CSV 文件').setInputFiles({ name: 'series.csv', mimeType: 'text/csv', buffer: Buffer.from('季度,收入,成本\n第一季度,120,60\n第二季度,180,-30\n第三季度,240,80') });
+  await page.getByLabel('选择图表 CSV 或 XLSX 文件').setInputFiles({ name: 'series.csv', mimeType: 'text/csv', buffer: Buffer.from('季度,收入,成本\n第一季度,120,60\n第二季度,180,-30\n第三季度,240,80') });
   await page.getByRole('checkbox', { name: '数值列：成本' }).check();
   await page.getByRole('button', { name: '检查并预览' }).click();
   await expect(page.getByText(/检查通过.*2 个系列/)).toBeVisible();
@@ -79,5 +91,5 @@ try {
   expect(requests.some(url => /onnx|embedding|chat\/completions|private-models\/.*complete/.test(url))).toBe(false);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, svgBytes: Buffer.byteLength(svg), noModelRequests: true, encryptedRestore: true, mobileWidth: 390, pageErrors: errors }, null, 2));
-  console.log('Multi-series CSV, grouped bars, lines, single-series pie, SVG/PNG, encrypted restore, and 390px layout passed.');
+  console.log('XLSX sheet import, multi-series CSV, grouped bars, lines, single-series pie, SVG/PNG, encrypted restore, and 390px layout passed.');
 } finally { await context.close(); await browser.close(); }

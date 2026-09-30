@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 本批新增本地图表 XLSX 导入。标准 `npm test` 全量 **111 文件、1059 项通过**，TypeScript、ESLint、生产 Web 与桌面开发构建通过。Cargo 自动发现仓库工具链；未签名 dev.25 NSIS 已构建，8,328,919 字节。XLSX 解析和浏览器组件夹具测试覆盖限制与拒绝规则；JSZip 在运行时按需加载。未执行原生 WebView2 安装验收，已知 CDP 脚本仍报 `Native debugger unavailable`；提醒夹具 Python 依赖 ACL 尚未解决。未调用真实模型/邮件，未推送或部署。DOCX 分页仍缺所需运行时，工作流条件/触发器/断线续跑、容量/强杀验收继续未完成；完整目标保持进行中。
+**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 本批新增本地图表 XLSX 导入。标准 `npm test` 全量 **111 文件、1059 项通过**，TypeScript、ESLint、生产 Web 与桌面开发构建通过。Cargo 自动发现仓库工具链；未签名 dev.25 NSIS 已构建，8,328,919 字节。生产 Chromium 验收覆盖 XLSX 首表导入/预览、CSV 多系列柱/线和饼图、SVG/PNG、加密恢复、390px 窄屏以及零新增 API/模型请求和页面错误。JSZip 在运行时按需加载。未执行原生 WebView2 安装验收，已知 CDP 脚本仍报 `Native debugger unavailable`；提醒夹具 Python 依赖 ACL 尚未解决。未调用真实模型/邮件，未推送或部署。DOCX 分页仍缺所需运行时，工作流条件/触发器/断线续跑、容量/强杀验收继续未完成；完整目标保持进行中。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -655,7 +655,7 @@
 ### 2026-09-30：本地图表 XLSX 导入与 Cargo 重建 dev.25
 
 - 实现：图表导入现在支持 UTF-8 CSV 与 XLSX，显示读取的第一个可见工作表名称；切换输入会使旧检查快照失效，解析失败保留原输入。XLSX 限制压缩文件 2 MB、ZIP 条目 256、声明/实际解压合计 12 MB、单条目 8 MB、最多 50 行数据/12 列/2000 字符单元格；读取 shared/inline string、数值和布尔值。拒绝公式、表格错误、合并单元格、不安全关系路径、无效 XML、隐藏工作表全集、超限输入和高压缩比条目；日期序列不作日期推断。原始 XLSX 不进入加密任务，只保存转换后的 CSV。JSZip 是按需动态导入 chunk，不增加图表之外页面的首屏依赖。
-- 验证：新增 XLSX ZIP 夹具解析测试和图表界面上传测试；定向测试 9 项通过。全量前端 **111 个测试文件 / 1059 项通过**，`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`git diff --check` 通过。生产 Web 构建产出 JSZip 97.54 KB（gzip 30.33 KB）独立 chunk；图表 UI chunk 55.56 KB（gzip 10.19 KB）。
+- 验证：新增 XLSX ZIP 夹具解析测试和图表界面上传测试；定向测试 9 项通过。全量前端 **111 个测试文件 / 1059 项通过**，`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`git diff --check` 通过。生产 Web 构建产出 JSZip 97.54 KB（gzip 30.33 KB）独立 chunk；图表 UI chunk 55.56 KB（gzip 10.19 KB）。扩展后的 `verify-chart-series.mjs` 在生产 Chromium 通过 XLSX 导入/预览及完整现有图表验收，未新增 API/模型请求，无页面异常。
 - Cargo 与产物：开发配置升为 `0.1.0-dev.25`；`npm run desktop:build` 自动使用仓库 `.tools/cargo` / `.tools/rustup`，Vite desktop、Rust release、NSIS 成功。默认 `C:\Users\DOXIA` canonicalize 警告仍出现但不阻塞。未签名安装包 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.25_x64-setup.exe`，8,328,919 字节，SHA-256 `D715C67B39B6115CDCBC1FD1FA28D01CCFC1B60C65EF9A5ACC89BEF338BF33D7`。仅构建，未安装/升级、推送或部署。
 - 未完成/风险：本批未做 Windows 原生 WebView2 图表/XLSX 端到端验收；已知 CDP 验收报 `Native debugger unavailable`。XLSX 仅导入首表平面值，不处理样式、公式计算、日期格式、合并格或图表对象；超限拒绝时用户需自行缩小/清理工作簿。DOCX 原生分页、复杂办公格式、低配容量/强杀验收、工作流条件/触发器/断线续跑仍未完成；提醒 Python 夹具 ACL 仍待排查。后续继续这些项，完整目标保持 active。仅本地开发分支提交，不推送、不部署。
 
