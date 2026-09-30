@@ -21,7 +21,7 @@ import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { assertRunDirectories, undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
 import type { RenamePlan } from '@/fileOrganizer/plan';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
-import { completeToolModel } from '@/services/officeToolModel';
+import { completeToolModel, probeToolCallModel } from '@/services/officeToolModel';
 import { reminderOwner, validateReminderDraft, validateReminderTemplate, type ReminderDraft, type ReminderTemplate } from '@/personal/reminderDraft';
 import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
 
@@ -133,6 +133,7 @@ interface WorkbenchState {
   saveProfile: (input: Omit<ModelProfile, "hasKey">, apiKey: string, clearKey?: boolean) => Promise<void>;
   removeProfile: (id: string) => Promise<void>;
   testProfile: (id: string, signal?: AbortSignal) => Promise<void>;
+  testProfileToolSupport: (id: string, signal?: AbortSignal) => Promise<void>;
   discoverProfileModels: (input: ModelEndpoint, apiKey: string, clearKey: boolean, signal: AbortSignal) => Promise<ModelCatalog>;
   newConversation: (profileId?: string) => string;
   select: (id: string) => void;
@@ -779,7 +780,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (secrets.length >= 30 && !previous) throw new Error("最多保存 30 个模型连接。");
     const secret = keyForEndpoint(input, apiKey, clearKey, baseUrl);
     const configChanged = !previous || previous.mode !== input.mode || previous.baseUrl !== baseUrl || previous.model !== input.model.trim() || previous.maxTokens !== input.maxTokens || previous.apiKey !== secret;
-    const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret, textTestedAt: configChanged ? undefined : previous.textTestedAt };
+    const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret,
+      textTestedAt: configChanged ? undefined : previous.textTestedAt, toolTestedAt: configChanged ? undefined : previous.toolTestedAt };
     const next = [...secrets.filter((item) => item.id !== input.id), profile];
     secrets = next;
     set({ profiles: publicProfiles() });
@@ -827,6 +829,24 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         secrets = secrets.map(item => item.id === id ? current : item);
         set({ profiles: publicProfiles() });
       }
+      throw error;
+    }
+  },
+  testProfileToolSupport: async (id, signal) => {
+    const profile = get().profiles.find(item => item.id === id), secret = secrets.find(item => item.id === id);
+    if (!profile || !secret) throw new Error('请先保存模型连接。');
+    const epoch = generation, testedSecret = secret.apiKey;
+    await modelCheck(profile.mode, signal, requestSignal => probeToolCallModel(profile, secret.apiKey, requestSignal));
+    const current = secrets.find(item => item.id === id), currentPublic = get().profiles.find(item => item.id === id);
+    if (epoch !== generation || !get().unlocked || !vault || current?.apiKey !== testedSecret || !currentPublic
+      || currentPublic.mode !== profile.mode || currentPublic.baseUrl !== profile.baseUrl || currentPublic.model !== profile.model || currentPublic.maxTokens !== profile.maxTokens) {
+      throw new DOMException('连接配置已改变，测试结果未保存。', 'AbortError');
+    }
+    const testedAt = new Date().toISOString(), updated = { ...current, toolTestedAt: testedAt };
+    secrets = secrets.map(item => item.id === id ? updated : item); set({ profiles: publicProfiles() });
+    try { await persist(true); }
+    catch (error) {
+      if (epoch === generation && secrets.find(item => item.id === id) === updated) { secrets = secrets.map(item => item.id === id ? current : item); set({ profiles: publicProfiles() }); }
       throw error;
     }
   },

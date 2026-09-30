@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { completeToolModel } from '../officeToolModel';
+import { completeToolModel, probeToolCallModel } from '../officeToolModel';
 import { apiClient } from '@/api/client';
 import { invoke } from '@tauri-apps/api/core';
 import type { ModelProfile } from '@/types/workbench';
@@ -18,6 +18,23 @@ it('sends fixed tool schemas through local HTTP without a default output limit',
   expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['inspect_csv', 'render_chart', 'create_document']);
   expect(body).not.toHaveProperty('max_tokens'); expect(body.stream).toBe(false);
   expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ redirect: 'error', credentials: 'omit', cache: 'no-store' });
+});
+
+it('accepts only the requested inert empty-argument tool call as a capability probe', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: reply }] }))));
+  await expect(probeToolCallModel(profile, '', new AbortController().signal)).resolves.toBeUndefined();
+  const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+  expect(body.messages).toEqual([{ role: 'user', content: expect.stringContaining('inspect_csv exactly once') }]);
+  const answers = [
+    { content: 'I can help', tool_calls: [] },
+    { content: null, tool_calls: [{ ...reply.tool_calls[0], function: { ...reply.tool_calls[0].function, name: 'create_document' } }] },
+    { content: null, tool_calls: [{ ...reply.tool_calls[0], function: { ...reply.tool_calls[0].function, arguments: '{"extra":true}' } }] },
+    { content: null, tool_calls: [{ ...reply.tool_calls[0], function: { ...reply.tool_calls[0].function, arguments: '[]' } }] },
+  ];
+  for (const answer of answers) {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: answer }] }))));
+    await expect(probeToolCallModel(profile, '', new AbortController().signal)).rejects.toThrow('未执行任何工具');
+  }
 });
 
 it('keeps private keys in the relay header and account model choice on the server', async () => {

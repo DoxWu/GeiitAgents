@@ -8,7 +8,7 @@ import type { ModelCatalog } from '@/services/modelDiscovery';
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
   return { useWorkbenchStore: create(() => ({ profiles: [], accountModel: null, accountLoading: false, accountError: null,
-    saveProfile: vi.fn(), removeProfile: vi.fn(), discoverProfileModels: vi.fn(), testProfile: vi.fn(), refreshAccountModel: vi.fn() })) };
+    saveProfile: vi.fn(), removeProfile: vi.fn(), discoverProfileModels: vi.fn(), testProfile: vi.fn(), testProfileToolSupport: vi.fn(), refreshAccountModel: vi.fn() })) };
 });
 vi.mock('@/store/authStore', async () => {
   const { create } = await import('zustand');
@@ -94,6 +94,19 @@ it('shows the saved successful-test time only while the edited settings match', 
   expect(screen.getByText(/^文本调用：最近测试通过/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: 'changed-chat' } });
   expect(screen.getByText('文本调用：未验证')).toBeInTheDocument();
+});
+
+it('shows separately verified tool support and clears it when the edited model changes', async () => {
+  store.setState({ profiles: [{ id: 'saved', name: 'Saved', baseUrl: 'http://127.0.0.1:1234/v1', model: 'chat', hasKey: true, mode: 'local', toolTestedAt: '2026-09-30T08:00:00.000Z' }] });
+  vi.mocked(store.getState().testProfileToolSupport).mockResolvedValue(undefined);
+  render(<ModelConnections />); fireEvent.click(screen.getByLabelText('编辑 Saved'));
+  expect(screen.getByText(/^工具调用：最近测试通过/)).toBeInTheDocument();
+  fireEvent.click(screen.getByText('测试工具调用'));
+  await screen.findByText(/已按 inspect_csv 契约返回工具调用/);
+  expect(store.getState().testProfileToolSupport).toHaveBeenCalledWith('saved', expect.any(AbortSignal));
+  fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: 'changed-chat' } });
+  expect(screen.getByText(/工具调用：未验证/)).toBeInTheDocument();
+  expect(screen.getByText(/不执行工具或发送文件/)).toBeInTheDocument();
 });
 
 it('shows only the authorized account model with explicit permission refresh', () => {

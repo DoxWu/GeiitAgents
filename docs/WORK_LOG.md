@@ -638,6 +638,13 @@
 - 产物：开发通道版本升为 `0.1.0-dev.22`，已构建未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.22_x64-setup.exe`，8,235,829 字节，SHA-256 `ECF9E52372277D333195CAC59D4BC839D47DA262F7954C47DBAAD0E42CED9058`。未安装/升级、推送或部署。
 - 未完成及下一步：新 dev.22 WebView2 自动验收仍在 CDP 连接阶段报 `Native debugger unavailable`，当前脚本未判明应用启动与调试端口哪一侧失败；提醒 Python fixture 的依赖目录 ACL 尚未修复。继续 DOCX 原生分页、文件/笔记容量与断电/强杀、办公复杂格式和模型工具/多模态能力；工作流条件、触发、断线续跑也未实现。完整目标保持 active。
 
+### 2026-09-30：模型工具调用窄探测与 dev.23
+
+- 实现：模型连接设置增加用户主动发起的工具调用兼容性探测，只要求返回一次固定 `inspect_csv {}` 调用并校验格式；不会执行工具或发送文件。通过状态 `toolTestedAt` 加密保存在本机 vault 和加密备份中；端点、模型、模式、密钥或输出限制改变时清除，锁库、取消及迟到响应不会污染新配置。界面和 [模型能力说明](MODEL_DISCOVERY.md) 明确这只证明单工具单轮格式兼容。
+- 验证：前端全量 **110 文件 / 1048 项通过**；TypeScript、ESLint、生产 Web 构建及模型连接浏览器验收通过。浏览器验收覆盖工具探测、刷新/解锁后状态恢复、失败配置密钥保护，且无页面异常。`git diff --check` 通过。真实供应商调用未执行。
+- Cargo 与产物：沿用本地 Cargo 自动发现修复后，桌面开发构建成功，使用 `.tools/cargo` 与 `.tools/rustup`，Cargo/Rust 版本均为 1.98.1；Windows WebView2 原生验收仍报 `Native debugger unavailable`，该结果不视作通过。未签名 NSIS 包为 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.23_x64-setup.exe`，8,237,555 字节，SHA-256 `fd56149ae06717325d82030e8f1cbc0cd1f698c348d89101cb6471214c787abc`。开发构建目录与 release 产物隔离；未安装、推送或部署。
+- 未完成与风险：提醒端到端 QA Python 依赖 ACL 尚未解决；DOCX 原生分页、XLSX 解析、低配/中断验收及工作流条件、触发器、断线续跑仍未完成。工具探测可能产生供应商费用，结果不代表其他工具协议、多轮交互或服务当前在线。下一步继续这些办公能力和稳定性验收；完整目标保持进行中，仅本地提交、不推送或部署。
+
 ## 文档索引
 
 - [文件历史分页与检索](FILE_HISTORY_NAVIGATION.md)

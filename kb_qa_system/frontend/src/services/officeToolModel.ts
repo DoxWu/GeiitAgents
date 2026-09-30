@@ -3,6 +3,15 @@ import type { ModelProfile } from '@/types/workbench';
 import { OFFICE_TOOLS, normalizeToolReply, validateToolMessages, type ToolMessage, type ToolReply } from '@/officeTasks/toolProtocol';
 import { isDesktop, requirePrivateRelay, validateProfile } from './workbenchModel';
 
+export async function probeToolCallModel(profile: ModelProfile, apiKey: string, signal: AbortSignal): Promise<void> {
+  const reply = await completeToolModel(profile, apiKey, [{ role: 'user', content: 'Compatibility test only: call inspect_csv exactly once with an empty JSON object. Do not provide a text answer.' }], signal);
+  const call = reply.tool_calls.length === 1 ? reply.tool_calls[0] : undefined;
+  if (!call || call.function.name !== 'inspect_csv') throw new Error('模型未返回指定的工具调用。未执行任何工具；请确认模型服务支持兼容的工具调用协议。');
+  let args: unknown;
+  try { args = JSON.parse(call.function.arguments); } catch { throw new Error('模型返回的工具参数不是有效 JSON。未执行任何工具。'); }
+  if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length) throw new Error('模型返回的工具参数与空对象契约不匹配。未执行任何工具。');
+}
+
 export async function completeToolModel(profile: ModelProfile | null, apiKey: string, messages: ToolMessage[], signal: AbortSignal): Promise<ToolReply> {
   validateToolMessages(messages);
   if (signal.aborted) throw new DOMException('已取消', 'AbortError');

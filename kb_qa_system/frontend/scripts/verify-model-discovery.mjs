@@ -19,7 +19,10 @@ const server = createServer(async (request, response) => {
   calls.push({ path: request.url, method: request.method, hasKey: Boolean(request.headers.authorization), body: body ? JSON.parse(body) : null });
   response.setHeader('Content-Type', 'application/json');
   if (request.url === '/v1/models') response.end(JSON.stringify({ data: [{ id: 'local-chat', capabilities: ['vision'] }, { id: 'embedding-only' }, { id: 'local-chat' }] }));
-  else if (request.url === '/v1/chat/completions') response.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }));
+  else if (request.url === '/v1/chat/completions') {
+    const body = calls.at(-1)?.body;
+    response.end(JSON.stringify({ choices: [{ message: body?.tools ? { content: null, tool_calls: [{ id: 'probe1', type: 'function', function: { name: 'inspect_csv', arguments: '{}' } }] } : { content: 'OK' } }] }));
+  }
   else if (request.url === '/delayed/models') {
     const timer = setTimeout(() => { timers.delete(timer); response.end(JSON.stringify({ data: [{ id: 'late-result' }] })); }, 1000); timers.add(timer);
   } else { response.writeHead(404); response.end(JSON.stringify({ error: 'fixture-upstream-body-must-not-display' })); }
@@ -56,12 +59,19 @@ try {
   await expect(page.getByText(/^文本调用：最近测试通过/)).toBeVisible();
   expect(calls[1].body).not.toHaveProperty('max_tokens');
   expect(calls[1].body.model).toBe('local-chat');
+  await page.getByRole('button', { name: '测试工具调用' }).click();
+  await expect(page.getByRole('status')).toContainText('已按 inspect_csv 契约返回工具调用');
+  await expect(page.getByText(/^工具调用：最近测试通过/)).toBeVisible();
+  expect(calls[2].body.tools.map(tool => tool.function.name)).toEqual(['inspect_csv', 'render_chart', 'create_document']);
+  expect(calls[2].body.messages).toHaveLength(1);
+  expect(calls[2].body).not.toHaveProperty('max_tokens');
   await page.reload();
   await page.getByLabel('解锁口令', { exact: true }).fill('model-qa-passphrase');
   await page.getByRole('button', { name: '解锁', exact: true }).click();
   await page.getByRole('tab', { name: '模型', exact: true }).click();
   await page.getByLabel('编辑 本机 QA').click();
   await expect(page.getByText(/^文本调用：最近测试通过/)).toBeVisible();
+  await expect(page.getByText(/^工具调用：最近测试通过/)).toBeVisible();
   const panel = page.getByRole('heading', { name: '模型连接', exact: true }).locator('../..');
   await panel.evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: path.join(output, 'local-desktop.png'), fullPage: true });
@@ -75,7 +85,7 @@ try {
   await page.getByLabel('API Base URL').fill(base + '/other');
   await page.getByRole('button', { name: '获取模型列表' }).click();
   await expect(page.getByRole('status')).toContainText('重新填写');
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(3);
   await page.getByLabel('API Key', { exact: true }).fill('replacement-fixture-key');
   await page.getByRole('button', { name: '获取模型列表' }).click();
   await expect(page.getByRole('status')).toContainText('可继续手填');
@@ -127,7 +137,7 @@ try {
   await accountPage.getByRole('heading', { name: '模型连接', exact: true }).locator('../..').evaluate(element => { element.scrollTop = 0; });
   await accountPage.screenshot({ path: path.join(output, 'relay-account-desktop.png'), fullPage: true });
   expect(errors).toEqual([]);
-  const result = { passed: true, localHttpCalls: calls.length, relayAppApi: 'browser stub', accountAppApi: 'browser stub', screenshots: output, errors };
+  const result = { passed: true, localHttpCalls: calls.length, toolProbe: 'one inspect_csv call returned and not executed', relayAppApi: 'browser stub', accountAppApi: 'browser stub', screenshots: output, errors };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 } finally {

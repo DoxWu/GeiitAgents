@@ -6,6 +6,7 @@ export interface ModelProfile {
   model: string;
   maxTokens?: number;
   textTestedAt?: string;
+  toolTestedAt?: string;
   hasKey: boolean;
 }
 

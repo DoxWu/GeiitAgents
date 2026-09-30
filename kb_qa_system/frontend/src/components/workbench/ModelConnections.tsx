@@ -5,7 +5,7 @@ import { useAuthStore } from '@/store/authStore';
 import type { ModelProfile } from '@/types/workbench';
 import type { ModelCatalog } from '@/services/modelDiscovery';
 
-type Draft = Omit<ModelProfile, 'hasKey' | 'textTestedAt'>;
+type Draft = Omit<ModelProfile, 'hasKey' | 'textTestedAt' | 'toolTestedAt'>;
 const empty = (): Draft => ({ id: crypto.randomUUID(), name: '', mode: 'relay', baseUrl: '', model: '' });
 
 export function ModelConnections() {
@@ -17,11 +17,11 @@ export function ModelConnections() {
   const [draft, setDraft] = useState(empty);
   const [apiKey, setApiKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
-  const [operation, setOperation] = useState<'save' | 'test' | 'list' | null>(null);
+  const [operation, setOperation] = useState<'save' | 'test' | 'tool-test' | 'list' | null>(null);
   const [message, setMessage] = useState('');
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const active = useRef<AbortController | null>(null);
-  const busy = operation === 'save' || operation === 'test';
+  const busy = operation === 'save' || operation === 'test' || operation === 'tool-test';
   const existing = profiles.find(p => p.id === draft.id);
   const dirty = Boolean(apiKey || clearKey || !existing || (['name', 'baseUrl', 'model', 'mode', 'maxTokens'] as const).some(key => draft[key] !== existing[key]));
 
@@ -36,7 +36,7 @@ export function ModelConnections() {
 
   function reset(config: Draft = empty()) { invalidate(); setDraft(config); setApiKey(''); setClearKey(false); }
   function editConnection(change: Partial<Draft>) { invalidate(); setDraft({ ...draft, ...change }); }
-  async function action(kind: 'save' | 'test' | 'list', callback: (signal: AbortSignal) => Promise<() => void>) {
+  async function action(kind: 'save' | 'test' | 'tool-test' | 'list', callback: (signal: AbortSignal) => Promise<() => void>) {
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     setOperation(kind); setMessage('');
@@ -62,7 +62,7 @@ export function ModelConnections() {
     <div className="mb-6 divide-y divide-line border-y border-line">
       {profiles.map(profile => <div key={profile.id} className="flex items-center gap-3 py-3">
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{profile.name}</p><p className="truncate text-xs text-ink-secondary">{profile.model} · {profile.mode === 'local' ? '本机直连' : '云端临时转发'}</p></div>
-        <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, textTestedAt: __, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
+        <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
         <button className="work-icon" title="删除连接" aria-label={'删除 ' + profile.name} disabled={busy} onClick={() => { if (window.confirm('删除模型连接“' + profile.name + '”？')) void action('save', async () => { await useWorkbenchStore.getState().removeProfile(profile.id); return () => { reset(); setMessage('连接已删除。'); }; }); }}><Trash2 size={16} /></button>
       </div>)}
       {!profiles.length && <p className="py-4 text-sm text-ink-tertiary">暂无模型连接</p>}
@@ -71,7 +71,7 @@ export function ModelConnections() {
       await useWorkbenchStore.getState().saveProfile(draft, apiKey, clearKey);
       return () => {
         const saved = useWorkbenchStore.getState().profiles.find(p => p.id === draft.id);
-        if (saved) { const { hasKey: _, textTestedAt: __, ...config } = saved; setDraft(config); }
+        if (saved) { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, ...config } = saved; setDraft(config); }
         setApiKey(''); setClearKey(false); setMessage('连接已加密保存到本机。');
       };
     }); }}>
@@ -101,13 +101,15 @@ export function ModelConnections() {
       </fieldset>
       <div className="rounded-lg border border-line p-3 text-xs text-ink-secondary">
         <p>文本调用：{!dirty && existing?.textTestedAt ? '最近测试通过（' + new Date(existing.textTestedAt).toLocaleString() + '）' : '未验证'}</p>
-        <p>工具调用、图片输入、上下文与输出上限：未知。模型出现在列表中不代表支持这些能力，也可能是向量模型。</p>
+        <p>工具调用：{!dirty && existing?.toolTestedAt ? '最近测试通过（' + new Date(existing.toolTestedAt).toLocaleString() + '）' : '未验证'}。图片输入、上下文与输出上限仍未知。</p>
         <p>保存后可测试文本调用，会发送一条短消息，服务商可能计费。</p>
+        <p>工具调用测试会要求模型返回固定的 `inspect_csv` 空参数调用；不执行工具或发送文件，但服务商可能计费。</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="work-command bg-brand text-white" type="submit" disabled={Boolean(operation)}><Save size={16} />{operation === 'save' ? '处理中...' : '保存连接'}</button>
         <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('test', async signal => { await useWorkbenchStore.getState().testProfile(draft.id, signal); return () => { setMessage('模型文本调用成功，验证时间已加密保存。'); }; })}><PlugZap size={16} />测试连接</button>
-        {(operation === 'list' || operation === 'test') && <button className="work-command" type="button" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消请求</button>}
+        <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('tool-test', async signal => { await useWorkbenchStore.getState().testProfileToolSupport(draft.id, signal); return () => { setMessage('模型已按 inspect_csv 契约返回工具调用，验证时间已加密保存。'); }; })}><PlugZap size={16} />测试工具调用</button>
+        {(operation === 'list' || operation === 'test' || operation === 'tool-test') && <button className="work-command" type="button" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消请求</button>}
         <button className="work-icon" type="button" aria-label="清空表单" title="清空表单" disabled={busy} onClick={() => reset()}><X size={16} /></button>
       </div>
       {message && <p role="status" className="text-sm break-words">{message}</p>}

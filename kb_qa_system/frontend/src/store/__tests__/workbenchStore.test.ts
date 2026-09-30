@@ -5,7 +5,7 @@ import { useWorkbenchStore as store, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from 
 import { useAuthStore } from "../authStore";
 import { completeModel, completeAccountModel, getAccountModel } from "@/services/workbenchModel";
 import { discoverModels } from '@/services/modelDiscovery';
-import { completeToolModel } from '@/services/officeToolModel';
+import { completeToolModel, probeToolCallModel } from '@/services/officeToolModel';
 import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
@@ -15,7 +15,7 @@ import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart
 
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 vi.mock('@/services/modelDiscovery', () => ({ discoverModels: vi.fn() }));
-vi.mock('@/services/officeToolModel', () => ({ completeToolModel: vi.fn() }));
+vi.mock('@/services/officeToolModel', () => ({ completeToolModel: vi.fn(), probeToolCallModel: vi.fn() }));
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -26,6 +26,7 @@ beforeEach(async () => {
   vi.mocked(exportDocx).mockReset();
   vi.mocked(discoverModels).mockReset();
   vi.mocked(completeToolModel).mockReset();
+  vi.mocked(probeToolCallModel).mockReset();
   vi.mocked(completeAccountModel).mockReset(); vi.mocked(getAccountModel).mockReset();
   useAuthStore.setState({ user: null, isAuthenticated: false });
   store.setState({ accountModel: null });
@@ -191,6 +192,30 @@ it('encrypts the successful text-test time and clears it when connection setting
   expect(store.getState().profiles[0].textTestedAt).toBe(testedAt);
   await store.getState().saveProfile({ ...profile, model: 'changed-model' }, '');
   expect(store.getState().profiles[0].textTestedAt).toBeUndefined();
+});
+
+it('encrypts tool-call capability only after the inert probe and clears it after a config change', async () => {
+  vi.mocked(probeToolCallModel).mockResolvedValue(undefined);
+  await store.getState().testProfileToolSupport(profile.id);
+  const testedAt = store.getState().profiles[0].toolTestedAt;
+  expect(testedAt).toBeTruthy(); expect(probeToolCallModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.any(AbortSignal));
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(testedAt!);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().profiles[0].toolTestedAt).toBe(testedAt);
+  await store.getState().saveProfile({ ...profile, model: 'changed-model' }, '');
+  expect(store.getState().profiles[0].toolTestedAt).toBeUndefined();
+});
+
+it('discards a late tool capability result after the vault is locked', async () => {
+  let finish!: () => void;
+  vi.mocked(probeToolCallModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const controller = new AbortController(), pending = store.getState().testProfileToolSupport(profile.id, controller.signal);
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await store.getState().lock(); finish(); await rejected;
+  expect(store.getState().profiles).toEqual([]);
+  await store.getState().unlock(password);
+  expect(store.getState().profiles[0].toolTestedAt).toBeUndefined();
 });
 
 it('does not attach a late text-test result to a changed profile', async () => {

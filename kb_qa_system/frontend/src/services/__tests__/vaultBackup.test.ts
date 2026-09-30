@@ -100,10 +100,12 @@ it('accepts older minimal vaults and rejects unknown newer fields without droppi
 it('roundtrips an optional successful text-test time and rejects an invalid timestamp', async () => {
   const source = await vaultBackupFixture();
   source.profiles[0].textTestedAt = '2026-09-30T08:00:00.000Z';
-  await expect(validateVaultBackup(source)).resolves.toMatchObject({ profiles: [{ textTestedAt: source.profiles[0].textTestedAt }] });
+  source.profiles[0].toolTestedAt = '2026-09-30T09:00:00.000Z';
+  await expect(validateVaultBackup(source)).resolves.toMatchObject({ profiles: [{ textTestedAt: source.profiles[0].textTestedAt, toolTestedAt: source.profiles[0].toolTestedAt }] });
   const invalid = structuredClone(source); invalid.profiles[0].textTestedAt = 'not-a-date';
   await expect(validateVaultBackup(invalid)).rejects.toThrow('备份内容无效');
   const oldClient = structuredClone(source); delete oldClient.profiles[0].textTestedAt;
+  delete oldClient.profiles[0].toolTestedAt;
   await expect(validateVaultBackup(oldClient)).resolves.toMatchObject({ profiles: [{ id: 'local' }] });
 });
 
