@@ -36,7 +36,7 @@ try {
     let url = process.env.PERSONAL_QA_URL;
     if (!url) {
       const port = await unusedPort(); url = `http://127.0.0.1:${port}/workbench`;
-      app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
+      app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort', '--configLoader', 'runner'], { windowsHide: true, stdio: 'ignore' });
       let launchError; app.on('error', error => { launchError = error; });
       await expect.poll(async () => { if (launchError) throw launchError; try { return (await fetch(url)).ok; } catch { return false; } }, { timeout: 15000 }).toBe(true);
     }
@@ -163,12 +163,20 @@ try {
   await expect(page.getByRole('status')).toHaveText('已删除。'); await expect(button('保存记录')).toBeDisabled();
   await button('另存为新草稿').click(); await expect(page.getByRole('status')).toContainText('已复制为新草稿'); await save();
   await expect(content).toHaveValue(note + '\n\n自动保存故障期间的输入');
+  await button('笔记').click();
+  const markdownBefore = requests.filter(url => url.includes('/api/')).length;
+  await page.getByLabel('Markdown 笔记文件').setInputFiles({ name: 'Imported QA note.md', mimeType: 'text/markdown', buffer: Buffer.from('# Imported QA note\n\nLoaded locally.') });
+  await expect(title).toHaveValue('Imported QA note'); await expect(content).toHaveValue('# Imported QA note\n\nLoaded locally.');
+  await expect(button('恢复草稿：未保存的评审编辑')).toBeVisible();
+  await expect(page.getByText('Markdown 已作为独立笔记草稿导入；确认保存后写入本机加密库。')).toBeVisible();
+  expect(requests.filter(url => url.includes('/api/')).length).toBe(markdownBefore);
   expect(requests.filter(url => url.includes('/api/')).length).toBe(apiBefore);
   expect(requests.some(url => url.includes('example.test'))).toBe(false); expect(errors).toEqual([]);
   await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, native, checks: [
     'independent encrypted raw drafts', 'view switch, immediate lock and refresh recovery', 'fixed draft timezone across device timezone change',
     'UTC deadline, overdue and done', 'safe Markdown preview', 'revision-preserving final-write retry', 'autosave quota failure and retry',
     'selected Markdown/JSON download bytes', 'archive/restore and draft refusal', 'filter selection reset', 'delete and recover draft as new',
+    'UTF-8 Markdown import into a separate encrypted draft',
     ...(native ? [] : ['390px layout']), 'zero additional API/model requests',
   ], emailsSent: 0 }, null, 2));
   console.log(`Personal item ${native ? 'native' : 'browser'} verification passed. Output: ${output}`);

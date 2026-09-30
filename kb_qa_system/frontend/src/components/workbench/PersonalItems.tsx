@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Bell, Plus } from 'lucide-react';
+import { Bell, FileUp, Plus } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { PrivateMarkdown } from './LocalMarkdown';
 import { exportPersonalItems, isOverdue, personalMarkdown, selectedPersonalItems, type PersonalInput, type PersonalItem, type PersonalSelection, type Priority, type TodoStatus } from '@/personal/items';
 import { personalDraft, type PersonalDraft } from '@/personal/itemDraft';
+import { readMarkdownNote } from '@/personal/markdownImport';
 import { ServerReminders } from './ServerReminders';
 const PersonalImport = lazy(() => import('./PersonalImport').then(module => ({ default: module.PersonalImport })));
 
@@ -27,7 +28,7 @@ function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders
   const [selection, setSelection] = useState<PersonalSelection[]>([]);
   const [unstaged, setUnstaged] = useState(false), unstagedRef = useRef(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [now, setNow] = useState(Date.now);
-  const mounted = useRef(false);
+  const mounted = useRef(false), markdownInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     mounted.current = true;
     const timer = setInterval(() => setNow(Date.now()), 30000);
@@ -107,11 +108,24 @@ function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders
     setError(''); try { const chosen = selectedPersonalItems(store.personalItems, selection); download(exportPersonalItems(chosen, format), '笔记待办-' + new Date().toISOString().slice(0, 10) + (format === 'json' ? '.json' : '.md'), format === 'json' ? 'application/json;charset=utf-8' : undefined); }
     catch (e) { setError(e instanceof Error ? e.message : '导出失败。'); }
   }
+  async function importMarkdown(file: File) {
+    if (!mayLeave()) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const input = await readMarkdownNote(file);
+      const imported = { ...personalDraft(undefined, 'note'), input };
+      store.stagePersonalDraft(imported);
+      if (mounted.current) { display(imported); setSelection([]); setNotice('Markdown 已作为独立笔记草稿导入；确认保存后写入本机加密库。'); }
+    } catch (e) {
+      if (mounted.current) setError(e instanceof Error ? e.message : 'Markdown 导入失败，原文件未修改。');
+    } finally { if (mounted.current) setBusy(false); }
+  }
   return <section className="flex min-h-0 flex-1 flex-col" aria-label="笔记与待办">
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3">
       <button className="work-command" disabled={busy} onClick={() => { if (mayLeave()) onOpenImport(); }}>导入 JSON</button>
       <button className={`work-command ${kind === 'todo' ? 'bg-muted' : ''}`} disabled={busy} onClick={() => tab('todo')}>待办</button>
       <button className={`work-command ${kind === 'note' ? 'bg-muted' : ''}`} disabled={busy} onClick={() => tab('note')}>笔记</button>
+      {kind === 'note' && <><button className="work-command" disabled={busy} onClick={() => markdownInput.current?.click()}><FileUp size={16} />导入 Markdown 笔记</button><input ref={markdownInput} className="hidden" aria-label="Markdown 笔记文件" type="file" accept=".md,.markdown,text/markdown" disabled={busy} onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void importMarkdown(file); }} /></>}
       <button className="work-command" disabled={busy} onClick={() => select()}><Plus size={16} />{kind === 'note' ? '新建笔记' : '新建待办'}</button>
       <button className="work-command ml-auto" disabled={busy} onClick={() => { if (mayLeave()) onOpenReminders(); }}><Bell size={16} />邮件提醒</button>
     </div>

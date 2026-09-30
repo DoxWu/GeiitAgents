@@ -100,3 +100,26 @@ it('prevents starting unstorable edits at capacity while existing drafts remain 
   fireEvent.click(screen.getAllByRole('button', { name: '恢复草稿：未命名' })[0]);
   expect(title()).toBeEnabled(); expect(store.getState().personalDrafts).toHaveLength(100);
 });
+
+it('imports Markdown as a new note draft and preserves existing notes and drafts', async () => {
+  await store.getState().savePersonalItem(crypto.randomUUID(), note, 0);
+  render(<PersonalItems />); click('笔记');
+  fireEvent.change(title(), { target: { value: 'Existing draft' } });
+  fireEvent.change(screen.getByLabelText('笔记或待办内容'), { target: { value: 'Keep this draft.' } });
+  const existingDraftId = store.getState().personalDrafts[0].id;
+  const file = new File(['# Imported note\n\nSource text.'], 'Imported note.md', { type: 'text/markdown' });
+  fireEvent.change(screen.getByLabelText('Markdown 笔记文件'), { target: { files: [file] } });
+  await waitFor(() => expect(title()).toHaveValue('Imported note'));
+  expect(screen.getByLabelText('笔记或待办内容')).toHaveValue('# Imported note\n\nSource text.');
+  expect(store.getState().personalItems).toHaveLength(1);
+  expect(store.getState().personalDrafts).toHaveLength(2);
+  expect(store.getState().personalDrafts.some(value => value.id === existingDraftId && value.input.content === 'Keep this draft.')).toBe(true);
+  expect(screen.getByText('Markdown 已作为独立笔记草稿导入；确认保存后写入本机加密库。')).toBeInTheDocument();
+});
+
+it('keeps the active draft untouched when a Markdown file is rejected', async () => {
+  render(<PersonalItems />); click('笔记');
+  fireEvent.change(screen.getByLabelText('Markdown 笔记文件'), { target: { files: [new File(['bad'], 'notes.txt')] } });
+  await screen.findByText('请选择 .md 或 .markdown 文件。');
+  expect(title()).toHaveValue(''); expect(store.getState().personalDrafts).toHaveLength(0);
+});
