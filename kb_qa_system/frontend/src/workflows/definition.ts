@@ -2,7 +2,7 @@ export type WorkflowNodeKind = 'inspect_csv' | 'render_chart' | 'create_document
 export interface WorkflowNode {
   id: string; kind: WorkflowNodeKind; title: string; x: number; y: number;
   text: string; includeInputs: boolean; profileId?: string;
-  categoryColumn: number; valueColumns: number[]; chartType: 'bar' | 'line'; unit: string;
+  categoryColumn: number; valueColumns: number[]; chartType: 'bar' | 'line' | 'pie'; unit: string;
 }
 export interface WorkflowDefinition {
   id: string; name: string; revision: number; updatedAt: string;
@@ -42,7 +42,8 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
     text(n.id, 200, 1); text(n.title, 80, 1); text(n.text, n.kind === 'generate_document' ? 10000 : 50000);
     text(n.unit, 20); integer(n.x, 0, 2000); integer(n.y, 0, 2000); integer(n.categoryColumn, 0, 11);
     if (typeof n.kind !== 'string' || !Object.prototype.hasOwnProperty.call(NODE_LABELS, n.kind) || typeof n.includeInputs !== 'boolean'
-      || !['bar', 'line'].includes(String(n.chartType)) || !Array.isArray(n.valueColumns) || !n.valueColumns.length || n.valueColumns.length > 6) fail();
+      || !['bar', 'line', 'pie'].includes(String(n.chartType)) || !Array.isArray(n.valueColumns) || !n.valueColumns.length || n.valueColumns.length > 6
+      || n.chartType === 'pie' && n.valueColumns.length !== 1) fail();
     n.valueColumns.forEach(v => integer(v, 0, 11));
     if (new Set(n.valueColumns).size !== n.valueColumns.length || n.valueColumns.includes(n.categoryColumn)) fail('数值列不能重复或与分类列相同。');
     if (n.kind === 'generate_document' && !n.text.trim()) fail('模型步骤需要生成要求。');

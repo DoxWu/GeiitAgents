@@ -5,7 +5,7 @@ export interface ChartInput {
   valueColumn: number;
   /** Optional multi-series selection. valueColumn remains the legacy first series. */
   valueColumns?: number[];
-  chartType: 'bar' | 'line';
+  chartType: 'bar' | 'line' | 'pie';
   unit: string;
 }
 export interface ChartData { headers: string[]; rows: string[][] }
@@ -18,7 +18,7 @@ export interface CheckedChart {
   valueLabel: string;
   valueLabels: string[];
 }
-export const CHART_RENDERER_VERSION = 'local-chart/2';
+export const CHART_RENDERER_VERSION = 'local-chart/3';
 export const MAX_CHART_SERIES = 6;
 
 function hasControl(value: string): boolean {
@@ -69,7 +69,7 @@ export function parseChartCsv(source: string): ChartData {
 export function checkChart(input: ChartInput): CheckedChart {
   const clean: ChartInput = { ...input, title: input.title.trim(), unit: input.unit.trim() };
   if (!clean.title || clean.title.length > 80 || clean.unit.length > 20 || /[\r\n\t]/.test(clean.title + clean.unit) || hasControl(clean.title + clean.unit)) throw new Error('图表标题需要 1–80 字符，单位最多 20 字符，不能包含换行或控制字符。');
-  if (!['bar', 'line'].includes(clean.chartType)) throw new Error('请选择柱状图或折线图。');
+  if (!['bar', 'line', 'pie'].includes(clean.chartType)) throw new Error('请选择柱状图、折线图或饼图。');
   const data = parseChartCsv(clean.csv);
   const requestedColumns = clean.valueColumns === undefined ? [clean.valueColumn] : clean.valueColumns;
   if (!Array.isArray(requestedColumns) || requestedColumns.length < 1 || requestedColumns.length > MAX_CHART_SERIES) throw new Error(`请选择 1–${MAX_CHART_SERIES} 个数值系列。`);
@@ -79,6 +79,7 @@ export function checkChart(input: ChartInput): CheckedChart {
   if (valueColumns.includes(clean.categoryColumn)) throw new Error('分类列和数值列不能相同。');
   clean.valueColumn = valueColumns[0];
   clean.valueColumns = valueColumns;
+  if (clean.chartType === 'pie' && valueColumns.length !== 1) throw new Error('饼图只能选择一个数值系列。');
   if (!Number.isInteger(clean.categoryColumn) || clean.categoryColumn < 0 || clean.categoryColumn >= data.headers.length) throw new Error('请选择有效的分类列和数值列。');
   const labels = data.rows.map((row, index) => {
     const label = row[clean.categoryColumn].trim();
@@ -96,6 +97,11 @@ export function checkChart(input: ChartInput): CheckedChart {
     }),
   });
   const series = valueColumns.map(parseSeries);
+  if (clean.chartType === 'pie') {
+    const values = series[0].points.map(point => point.value);
+    if (values.some(value => value < 0)) throw new Error('饼图不支持负数，请改用柱状图或折线图。');
+    if (!values.some(value => value > 0)) throw new Error('饼图至少需要一个大于 0 的数值。');
+  }
   const points = series[0].points;
   const warnings: string[] = [];
   if (new Set(points.map(point => point.label)).size !== points.length) warnings.push('分类标签有重复：各行独立绘制，没有自动汇总。');
@@ -138,7 +144,35 @@ export function renderChartSvg(chart: CheckedChart): string {
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-description">`,
     `<title id="chart-title">${escapeXml(input.title)}</title><desc id="chart-description">${escapeXml(series.map(current => `${current.label}: ${current.points.map(point => `${point.label} ${point.value}`).join('，')}`).join('；'))}</desc>`,
     '<rect width="100%" height="100%" fill="#ffffff"/>', '<g font-family="Microsoft YaHei, Arial, sans-serif" font-size="13" fill="#243449">',
-    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${input.chartType === 'bar' ? '柱状图' : '折线图'}`)];
+    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${{ bar: '柱状图', line: '折线图', pie: '饼图' }[input.chartType]}`)];
+  if (input.chartType === 'pie') {
+    const width = Math.max(640, Array.from(input.title).length * 14 + 160, Array.from(valueLabels[0]).length * 13 + 160);
+    const centerX = Math.min(300, width / 2), centerY = 270, radius = 130;
+    const height = 520 + points.length * 24;
+    const total = points.reduce((sum, point) => sum + point.value, 0);
+    parts[0] = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-description">`;
+    parts[1] = `<title id="chart-title">${escapeXml(input.title)}</title><desc id="chart-description">${escapeXml(points.map(point => `${point.label} ${point.value}（${(point.value / total * 100).toFixed(1)}%）`).join('；'))}</desc>`;
+    parts.push('<circle cx="' + centerX + '" cy="' + centerY + '" r="' + radius + '" fill="#f1f5f9"/>');
+    let angle = -Math.PI / 2;
+    points.forEach((point, index) => {
+      if (point.value <= 0) return;
+      const next = angle + point.value / total * Math.PI * 2;
+      const x1 = centerX + radius * Math.cos(angle), y1 = centerY + radius * Math.sin(angle);
+      const x2 = centerX + radius * Math.cos(next), y2 = centerY + radius * Math.sin(next);
+      const percentage = point.value / total * 100;
+      if (percentage >= 99.999999) parts.push(`<circle data-category="${escapeXml(point.label)}" cx="${centerX}" cy="${centerY}" r="${radius}" fill="${colors[index % colors.length]}"><title>${escapeXml(`${point.label}: ${point.value} (${percentage.toFixed(1)}%)`)}</title></circle>`);
+      else parts.push(`<path data-category="${escapeXml(point.label)}" d="M ${centerX} ${centerY} L ${x1} ${y1} A ${radius} ${radius} 0 ${next - angle > Math.PI ? 1 : 0} 1 ${x2} ${y2} Z" fill="${colors[index % colors.length]}" stroke="#ffffff" stroke-width="1"><title>${escapeXml(`${point.label}: ${point.value} (${percentage.toFixed(1)}%)`)}</title></path>`);
+      angle = next;
+    });
+    points.forEach((point, index) => {
+      const x = 24, y = 500 + index * 24;
+      const percentage = (point.value / total * 100).toFixed(1);
+      parts.push(`<rect x="${x}" y="${y - 11}" width="12" height="12" fill="${colors[index % colors.length]}"/>`,
+        `<g><title>${escapeXml(`${point.label}: ${point.value} (${percentage}%)`)}</title>${tag(x + 20, y, `${Array.from(point.label).slice(0, 34).join('')}${Array.from(point.label).length > 34 ? '…' : ''} · ${numberText(point.value)} · ${percentage}%`)}</g>`);
+    });
+    parts.push('</g></svg>');
+    return parts.join('');
+  }
   for (let tick = 0; tick <= 4; tick++) {
     const value = low + (high - low) * tick / 4, yy = y(value);
     parts.push(`<line x1="${left}" x2="${right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/>`, tag(left - 12, yy + 4, numberText(value), 'text-anchor="end"'));

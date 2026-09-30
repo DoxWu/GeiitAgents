@@ -34,6 +34,30 @@ it('supports multiple numeric series while preserving the legacy first-series fi
   expect(Array.from(doc.querySelectorAll('rect title'), node => node.textContent)).toEqual(['收入 · 一月: 10', '收入 · 二月: 20', '成本 · 一月: 4', '成本 · 二月: 8']);
   expect(renderChartSvg(result)).not.toMatch(/NaN|Infinity/);
 });
+it('renders bounded pie slices with exact totals and rejects invalid pie input', () => {
+  const chart = checkChart({ ...input, csv: '类别,占比\n甲,3\n乙,1\n丙,0', chartType: 'pie' });
+  const svg = renderChartSvg(chart), doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  expect(doc.querySelector('parsererror')).toBeNull();
+  expect(doc.querySelectorAll('path[data-category]')).toHaveLength(2);
+  expect(doc.querySelector('path[data-category="甲"] title')?.textContent).toBe('甲: 3 (75.0%)');
+  expect(doc.querySelector('path[data-category="乙"] title')?.textContent).toBe('乙: 1 (25.0%)');
+  expect(doc.documentElement.textContent).toContain('丙 · 0 · 0.0%');
+  expect(Number(doc.documentElement.getAttribute('width')) * Number(doc.documentElement.getAttribute('height'))).toBeLessThanOrEqual(2_500_000);
+  for (const csv of ['类别,值\na,-1\nb,2', '类别,值\na,0\nb,0']) expect(() => checkChart({ ...input, csv, chartType: 'pie' })).toThrow();
+  expect(() => checkChart({ ...input, csv: '类别,a,b\nx,1,2', chartType: 'pie', valueColumns: [1, 2] })).toThrow('一个数值系列');
+});
+it('renders a single positive pie slice as a circle and escapes category labels', () => {
+  const doc = new DOMParser().parseFromString(renderChartSvg(checkChart({ ...input, csv: '类别,值\n<类别>,2', chartType: 'pie' })), 'image/svg+xml');
+  expect(doc.querySelector('circle[data-category="<类别>"] title')?.textContent).toBe('<类别>: 2 (100.0%)');
+  expect(doc.querySelector('path[data-category]')).toBeNull();
+  expect(doc.querySelector('script,image,a,foreignObject')).toBeNull();
+});
+it('keeps long pie titles and column labels within the PNG source-area limit', () => {
+  const chart = checkChart({ ...input, title: '标题'.repeat(40), csv: `类别,${'分类值'.repeat(20)}\na,1\nb,2`, chartType: 'pie' });
+  const doc = new DOMParser().parseFromString(renderChartSvg(chart), 'image/svg+xml');
+  expect(Number(doc.documentElement.getAttribute('width')) * Number(doc.documentElement.getAttribute('height'))).toBeLessThanOrEqual(2_500_000);
+  expect(Number(doc.documentElement.getAttribute('width'))).toBeGreaterThan(640);
+});
 it('rejects more than six series and selections that include the category column', () => {
   const csv = ['类别', 'a', 'b', 'c', 'd', 'e', 'f', 'g'].join(',') + '\nx,1,2,3,4,5,6,7';
   expect(() => checkChart({ ...input, csv, valueColumns: [1, 2, 3, 4, 5, 6, 7] })).toThrow('1–6');

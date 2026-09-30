@@ -79,11 +79,11 @@ export function ChartTasks() {
         <fieldset className="min-w-0 rounded border border-line p-3">
           <legend className="px-1 text-sm font-medium">数值列（可多选）</legend>
           <div className="grid gap-2 sm:grid-cols-2">{columns.map((header, index) => <label key={index} className="flex min-w-0 items-start gap-2 break-all text-sm">
-            <input type="checkbox" className="mt-1 shrink-0" aria-label={`数值列：${header}`} checked={selectedValueColumns.includes(index)} disabled={busy || index === input.categoryColumn || (!selectedValueColumns.includes(index) && selectedValueColumns.length >= MAX_CHART_SERIES)} onChange={event => { const valueColumns = event.target.checked ? [...selectedValueColumns, index] : selectedValueColumns.filter(column => column !== index); change({ valueColumn: valueColumns[0] ?? -1, valueColumns }); }} />{header}
+            <input type="checkbox" className="mt-1 shrink-0" aria-label={`数值列：${header}`} checked={selectedValueColumns.includes(index)} disabled={busy || index === input.categoryColumn || (input.chartType === 'pie' && !selectedValueColumns.includes(index)) || (!selectedValueColumns.includes(index) && selectedValueColumns.length >= MAX_CHART_SERIES)} onChange={event => { const valueColumns = event.target.checked ? [...selectedValueColumns, index] : selectedValueColumns.filter(column => column !== index); change({ valueColumn: valueColumns[0] ?? -1, valueColumns }); }} />{header}
           </label>)}</div>
-          <p className="mt-2 text-xs text-ink-secondary">选择 1–{MAX_CHART_SERIES} 个同量纲数值列，按勾选顺序绘制。</p>
+          <p className="mt-2 text-xs text-ink-secondary">柱状图/折线图可选择 1–{MAX_CHART_SERIES} 个同量纲数值列；饼图只支持单个非负系列。</p>
         </fieldset>
-        <label className="work-label">图表类型<select aria-label="图表类型" className="work-input" value={input.chartType} onChange={e => change({ chartType: e.target.value as ChartInput['chartType'] })}><option value="bar">柱状图</option><option value="line">折线图</option></select></label>
+        <label className="work-label">图表类型<select aria-label="图表类型" className="work-input" value={input.chartType} onChange={e => { const chartType = e.target.value as ChartInput['chartType']; change({ chartType, ...(chartType === 'pie' ? { valueColumn: selectedValueColumns[0] ?? -1, valueColumns: selectedValueColumns.slice(0, 1) } : {}) }); }}><option value="bar">柱状图</option><option value="line">折线图</option><option value="pie">饼图</option></select></label>
         <div className="flex flex-wrap items-end gap-2"><button className="work-command" onClick={inspect}><BarChart3 size={16} />检查并预览</button><button className="work-command bg-brand text-white" disabled={!checked || busy} onClick={() => void create()}><Play size={16} />{busy ? '保存中…' : '保存图表任务'}</button></div>
       </fieldset>
       {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}{notice && <p role="status" className="mt-4 text-sm">{notice}</p>}

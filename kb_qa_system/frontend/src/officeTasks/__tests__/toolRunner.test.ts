@@ -23,6 +23,18 @@ it('executes CSV inspection, deterministic chart and document tools with ordered
   expect(model).toHaveBeenCalledTimes(3);
 });
 
+it('allows the office tool model to create a local pie chart using one positive series', async () => {
+  const events: ToolCheckpoint[] = [];
+  const model = vi.fn().mockResolvedValueOnce(reply(call('pie', 'render_chart', {
+    title: 'Share', category_column: 0, value_columns: [1], chart_type: 'pie', unit: '%',
+  }))).mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+  await runOfficeTools('task', { ...input, csv: 'Kind,Share\nA,3\nB,1' }, new AbortController().signal, model, async event => { events.push(event); });
+  const artifact = events.find(event => event.artifact)?.artifact;
+  expect(artifact?.kind).toBe('svg');
+  expect(artifact?.content).toContain('data-category="A"');
+  expect(artifact?.content).toContain('75.0%');
+});
+
 it('returns invalid arguments as tool errors for a bounded repair, never as execution instructions', async () => {
   const events: ToolCheckpoint[] = [];
   const model = vi.fn().mockResolvedValueOnce(reply(call('invalid', 'create_document', '{')))

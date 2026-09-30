@@ -35,6 +35,15 @@ it.each(['cycle', 'duplicate', 'dangling', 'self', 'code', 'too-many'] as const)
 it('preflights static chart data without dispatching a model', () => {
   expect(() => prepareWorkflow(graph(), { reference: '', csv: 'x,y\na,=cmd()' })).toThrow('数值缺失或格式无效');
 });
+it('accepts and preflights a one-series pie chart workflow node', () => {
+  const chart = newWorkflowNode('render_chart', 0); chart.chartType = 'pie'; chart.valueColumns = [1];
+  const definition = { ...newWorkflow(), nodes: [chart] };
+  expect(validateWorkflow(definition).nodes[0].chartType).toBe('pie');
+  expect(() => prepareWorkflow(definition, { reference: '', csv: 'x,y\na,-1' })).toThrow('不支持负数');
+  chart.valueColumns = [1, 2];
+  expect(() => validateWorkflow(definition)).toThrow();
+});
+
 it('does not impose the model JSON context limit on local-only nodes', async () => {
   const node = newWorkflowNode('inspect_csv', 0), csv = 'name,value\n' + Array.from({ length: 49 }, () => 'x'.repeat(1900) + ',1').join('\n');
   const d = { ...newWorkflow(), nodes: [node] };

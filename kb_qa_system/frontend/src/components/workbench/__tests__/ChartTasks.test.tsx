@@ -26,6 +26,16 @@ it('previews every selected series and clears approval when selection changes', 
   expect(screen.getByRole('button', { name: '保存图表任务' })).toBeDisabled();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
 });
+it('selects and saves a single-series pie chart', async () => {
+  const user = userEvent.setup(); render(<ChartTasks />);
+  fireEvent.change(screen.getByLabelText('CSV 数据'), { target: { value: 'Category,Share\nA,3\nB,1' } });
+  await user.selectOptions(screen.getByLabelText('图表类型'), 'pie');
+  await user.click(screen.getByRole('button', { name: '检查并预览' }));
+  expect(screen.getByRole('img')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '保存图表任务' }));
+  expect(state.startChartTask).toHaveBeenCalledWith(expect.objectContaining({ chartType: 'pie', valueColumns: [1] }), expect.any(String));
+});
+
 it('removes a newly selected category from numeric series and rejects an empty selection', async () => {
   const user = userEvent.setup(); render(<ChartTasks />);
   fireEvent.change(screen.getByLabelText('CSV 数据'), { target: { value: '分类,值1,值2\na,2,3' } });
