@@ -10,6 +10,7 @@ import type { TaskStatus } from '@/types/workbench';
 import { exportWorkflowDefinition, importWorkflowDefinition, MAX_WORKFLOW_FILE_BYTES } from '@/workflows/portable';
 
 const statuses: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
+const RUNS_PER_PAGE = 10;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export function Workflows() {
   const store = useWorkbenchStore();
@@ -23,7 +24,7 @@ export function Workflows() {
   const [from, setFrom] = useState(''), [to, setTo] = useState(''), [edgeWhen, setEdgeWhen] = useState<'' | 'true' | 'false'>(''), [profileId, setProfileId] = useState('');
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [resumeConsent, setResumeConsent] = useState(false);
-  const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
+  const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState(''), [runsPage, setRunsPage] = useState(1);
   const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false), inputGeneration = useRef(0), inputFile = useRef<HTMLInputElement>(null);
   const workflowFile = useRef<HTMLInputElement>(null);
   dirtyRef.current = dirty && (draftPending || store.workflowDraftSaving || Boolean(store.storageError));
@@ -42,7 +43,11 @@ export function Workflows() {
   const signature = JSON.stringify([routes, store.accountModel]);
   useEffect(() => { setConsent(false); }, [signature]);
   const node = draft.nodes.find(n => n.id === selected);
-  const runs = store.taskRuns.filter(t => t.type === 'workflow.run'), run = runs.find(t => t.id === selectedRun) ?? runs[0];
+  const runs = store.taskRuns.filter(t => t.type === 'workflow.run');
+  const runsPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
+  const currentRunsPage = Math.min(runsPage, runsPageCount);
+  const pageRuns = runs.slice((currentRunsPage - 1) * RUNS_PER_PAGE, currentRunsPage * RUNS_PER_PAGE);
+  const run = pageRuns.find(t => t.id === selectedRun) ?? pageRuns[0];
   const runNeedsCloud = Boolean(run?.workflow?.definition.nodes.some(n => {
     if (n.kind !== 'generate_document') return false;
     const id = n.profileId || run.profileId;
@@ -119,7 +124,7 @@ export function Workflows() {
   }
   async function start() {
     if (starting.current) return;
-    starting.current = true; setError(''); setSelectedRun(''); setArtifactId('');
+    starting.current = true; setError(''); setSelectedRun(''); setArtifactId(''); setRunsPage(1);
     const allowed = consent; setConsent(false);
     try { const id = await store.startWorkflow(draft.id, draft.revision, input, chosen, allowed); if (mounted.current) setSelectedRun(id); }
     catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '工作流执行失败。'); }
@@ -132,7 +137,7 @@ export function Workflows() {
     if (runNeedsCloud && !resumeConsent) { setError('续跑云端步骤前请先确认本次授权。'); return; }
     starting.current = true; setError(''); setNotice('');
     const allowed = runNeedsCloud && resumeConsent; setResumeConsent(false);
-    setSelectedRun(''); setArtifactId('');
+    setSelectedRun(''); setArtifactId(''); setRunsPage(1);
     try {
       const id = await store.resumeWorkflow(taskId, fromNodeId, allowed);
       if (mounted.current) { setSelectedRun(id); setArtifactId(''); setNotice('已创建新的续跑记录；原运行记录和成果保持不变。'); }
@@ -193,7 +198,8 @@ export function Workflows() {
     {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
     {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}
     <section aria-label="工作流运行历史" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">运行历史</h2>
-      <label className="work-label">选择工作流运行<select aria-label="选择工作流运行" className="work-input" value={run?.id || ''} onChange={e => { setSelectedRun(e.target.value); setArtifactId(''); }}>{!runs.length && <option value="">暂无记录</option>}{runs.map(r => <option key={r.id} value={r.id}>{r.title} · 修订 {r.workflow?.definition.revision} · {statuses[r.status]} · {new Date(r.createdAt).toLocaleString()}</option>)}</select></label>
+      <label className="work-label">选择工作流运行<select aria-label="选择工作流运行" className="work-input" value={run?.id || ''} onChange={e => { setSelectedRun(e.target.value); setArtifactId(''); }}>{!runs.length && <option value="">暂无记录</option>}{pageRuns.map(r => <option key={r.id} value={r.id}>{r.title} · 修订 {r.workflow?.definition.revision} · {statuses[r.status]} · {new Date(r.createdAt).toLocaleString()}</option>)}</select></label>
+      {runs.length > RUNS_PER_PAGE && <nav aria-label="工作流运行历史分页" className="flex flex-wrap items-center gap-2 text-sm"><span>第 {currentRunsPage} / {runsPageCount} 页 · 共 {runs.length} 条</span><button className="work-command" disabled={currentRunsPage <= 1} onClick={() => { setRunsPage(currentRunsPage - 1); setSelectedRun(''); setArtifactId(''); }}>上一页运行</button><button className="work-command" disabled={currentRunsPage >= runsPageCount} onClick={() => { setRunsPage(currentRunsPage + 1); setSelectedRun(''); setArtifactId(''); }}>下一页运行</button></nav>}
       {run && <><p className="font-medium">{statuses[run.status]} · {run.artifactIds.length} 个成果</p>{run.error && <p className="text-sm text-danger">{run.error}</p>}{run.summary && <p className="text-sm">{run.summary}</p>}
         <div className="flex flex-wrap gap-2">{run.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(run.id)}>停止工作流</button> : <>
           {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled') && <>

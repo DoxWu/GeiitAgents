@@ -76,6 +76,30 @@ it('configures a condition node and labels its outgoing branch', async () => {
   expect(saved.nodes[0].kind).toBe('condition'); expect(saved.nodes[0].condition).toMatchObject({ source: 'csv', value: 'ready' }); expect(saved.edges[0].when).toBe('true');
 });
 
+it('paginates workflow history and keeps the selected run within the visible page', async () => {
+  const definition = { ...newWorkflow(), revision: 1, nodes: [newWorkflowNode('create_document', 0)] };
+  const createdAt = new Date().toISOString();
+  const runs = Array.from({ length: 12 }, (_, index) => ({
+    id: `run-${index}`, type: 'workflow.run' as const, workflow: { definition, input: { reference: '', csv: '' } },
+    title: `运行 ${index}`, profileId: '', instruction: '', status: 'succeeded' as const,
+    createdAt, updatedAt: createdAt, toolRunIds: [], artifactIds: [],
+  }));
+  store.setState({ taskRuns: runs });
+  const user = userEvent.setup(); render(<Workflows />);
+
+  expect(screen.getByLabelText('选择工作流运行').querySelectorAll('option')).toHaveLength(10);
+  expect(screen.getByRole('button', { name: '上一页运行' })).toBeDisabled();
+  expect(screen.getByText('第 1 / 2 页 · 共 12 条')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '下一页运行' }));
+  expect(screen.getByLabelText('选择工作流运行').querySelectorAll('option')).toHaveLength(2);
+  expect(screen.getByLabelText('选择工作流运行')).toHaveValue('run-10');
+  expect(screen.getByRole('button', { name: '下一页运行' })).toBeDisabled();
+  await user.selectOptions(screen.getByLabelText('选择工作流运行'), 'run-11');
+  expect(screen.getByText('已完成 · 0 个成果')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '上一页运行' }));
+  expect(screen.getByLabelText('选择工作流运行')).toHaveValue('run-0');
+});
+
 it('requires consent for each cloud run and clears it when runtime input changes', async () => {
   const d = { ...newWorkflow(), revision: 1, nodes: [newWorkflowNode('generate_document', 0)] };
   store.setState({ workflows: [d], profiles: [{ id: 'relay', name: 'cloud', mode: 'relay', baseUrl: 'https://example.test/v1', model: 'fixture', hasKey: true }] });
