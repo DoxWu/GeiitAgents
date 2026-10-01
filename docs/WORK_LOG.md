@@ -4,9 +4,9 @@
 
 ## 当前阶段
 
-本阶段状态更新（2026-10-02）：工作台长对话分页之后，本地知识库来源回答增加有界多轮追问，工作流画布增加缩放与依赖层级自动排列；图表工具新增多系列水平条形图并修复饼图备份恢复；MD/TXT 文件编辑新增保守三方合并；DOCX 导出新增页面与字体细调。全量前端 **119 文件 / 1158 项通过**，类型检查、lint、生产 Web 构建、办公/图表/工作流/文件编辑 Chromium 验收和 Cargo 回退检查通过。dev.53 未签名 NSIS 按最终源码重建，为 **8,396,545 字节**，SHA-256 `EAB668AC49C4B692DB5CC7516A1893A511900B56C7D6AD4C51993A73F11A46E4`。整体目标尚未完成。
+本阶段状态更新（2026-10-02）：工作台长对话分页之后，本地知识库来源回答增加有界多轮追问，工作流画布增加缩放与依赖层级自动排列；图表工具新增多系列水平条形图并修复饼图备份恢复；MD/TXT 文件编辑新增保守三方合并；DOCX 导出新增页面与字体细调。最近全量前端 **119 文件 / 1158 项通过**，类型检查、lint、生产 Web 构建、办公/图表/工作流/文件编辑 Chromium 验收通过。Cargo 可通过 npm 脚本自动回退，也可 dot-source 项目 PowerShell 脚本在当前会话直接使用。dev.54 未签名 NSIS 已重建，为 **8,396,381 字节**，SHA-256 `397FE70DAE5F0A72934DAF3C37ED28C1666BD6696CF92485493AA3AA4C3D38ED`。整体目标尚未完成。
 
-**处于应用改造阶段，完整目标未完成。** 当前批次为两个 Word 成果入口增加有界纸张、字体、字号、行距和页边距覆盖项；生产 Chromium 已核对下载 DOCX 的 OOXML，原有版式默认不变。Word/LibreOffice 实际分页仍待验收，原生 WebView2 本批未运行。PDF/PPTX、工作流调度、模型多模态与专有协议、文件跨卷/断电和低配性能仍未完成。没有改动线上部署或数据库迁移；未调用真实供应商、未发送邮件、未部署或推送。
+**处于应用改造阶段，完整目标未完成。** 最新一批修复 Cargo 在普通 PowerShell 中不可直接调用的问题：仓库内 Rust 工具链可由会话级加载脚本暴露，不改全局 PATH；dev.54 安装包已重建并核验。应用后续重点仍包括 Word/LibreOffice 实际分页验收、PDF/PPTX、工作流调度、模型多模态与专有协议、文件跨卷/断电和低配性能。没有改动线上部署或数据库迁移；未调用真实供应商、未发送邮件、未部署或推送。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -214,6 +214,14 @@
 | 工作流触发方式 | 已实现客户端手动触发；定时/事件触发和关闭客户端后的执行位置仍待设计；提醒已实现服务端一次/每日/每周及明确 DST 规则 | 工作流自动触发阶段 |
 
 ## 工作流水（第二版）
+
+### 2026-10-02：Cargo PowerShell 环境加载与 dev.54 重建
+
+- Cargo 环境：普通 PowerShell 未将 Cargo 放入 PATH，但仓库 `.tools` 内已有 Cargo/Rust 1.98.1。新增 `kb_qa_system/frontend/scripts/Use-ProjectRustToolchain.ps1`，dot-source 后仅修改当前 PowerShell 会话的 `CARGO_HOME`、`RUSTUP_HOME`、`CARGO`、`RUSTC` 与 PATH；项目 npm 脚本继续使用隔离的自动回退。没有安装全局 Rust 或修改用户/系统环境变量。
+- 验证：会话加载脚本 dot-source 后 `cargo --version` 与 `rustc --version` 均为 1.98.1；`npm run desktop:toolchain:test`、`npm run desktop:check`、`npm run desktop:build`、`git diff --check` 通过。Vite 有既有工作流模块静态/动态导入提示，不影响构建。
+- 构建产物：开发版升至 `0.1.0-dev.54`；成功生成未签名 NSIS `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.54_x64-setup.exe`，**8,396,381 字节**，SHA-256 `397FE70DAE5F0A72934DAF3C37ED28C1666BD6696CF92485493AA3AA4C3D38ED`。未安装、签名、部署或推送。
+- 继续推进：提醒归档、批量草稿恢复等功能已经实现，旧历史中的“未完成”只描述当时状态；当前未完成项以本文上方阶段矩阵和后续条目为准。工作流循环/触发、办公格式与 DOCX 分页验收、文件跨卷/中断、低配性能及模型协议仍待推进。
+- 未完成/风险：当前工具链没有安装 rustfmt 组件；Cargo check 和 Tauri 构建可用，但 `cargo fmt` 仍不可用。安装包未安装或签名，Windows 原生 WebView2 未作本轮验收。工作流循环/触发、办公分页/格式、低配/中断和模型协议仍待推进。
 
 历史流水见 [第一版完整记录](WORK_LOG_V1_2026-10-01.md)。以下仅追加新批次；旧证据与决策原文保留。
 
