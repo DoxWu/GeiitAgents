@@ -378,4 +378,5 @@
 - 验证：新增合并算法、重叠拒绝、UI 写入前保护、合并历史备份往返测试；定向 **4 文件 / 41 项通过**；全量 Vitest **119 文件 / 1156 项通过**；`npm run check`、ESLint、生产 Web 构建和脚本语法检查通过。最终源码下重跑 `npm run lint`、`desktop:toolchain:test`、`desktop:check` 和 `verify-file-text-edit.mjs --web` 均通过。浏览器验收使用真实 Chromium/OPFS 覆盖非重叠合并、三方预览、明文导出、再次确认写入、恢复追加历史、存储失败只重试记录、密文刷新恢复及 390px 无横向溢出；4 次实际文件写入、零页面异常。合并 UI 截图已检查。原生 WebView2 完整合并验收本批未运行。
 - 构建产物：开发通道为 `0.1.0-dev.52`；Cargo 回退测试、桌面检查和 release/NSIS 重建通过。未签名 NSIS `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.52_x64-setup.exe`，**8,392,304 字节**，SHA-256 `B460F4C2A531FE6D3F0DB8D1A7C6DA4EF01C965A720B287781AA3456A0737DB7`；未安装、签名、部署或推送。Vite 的既有工作流模块导入分包提示不影响构建。
 - 未完成/风险：保守算法不做语义合并；重叠/超限依然需要用户人工处理。浏览器文件身份在刷新后无法持久辨别同目录文件替换；原生 WebView2、真实强杀/断电、跨物理卷、历史归档/移动后关联及低配容量仍待验收。文档/PDF/PPTX、工作流触发/循环和模型多模态/专有协议也未完成。未访问生产文件/数据库、未调用真实模型、未发送邮件或部署。
-- 下一步：将本批功能和记录提交到本地 `develop/geiit-agents`；继续推进文档格式/图片识别、历史归档/移动关联、工作流循环/触发、模型多模态/协议、低配和原生故障验收。整体目标与远程发布前检查完成后再推送 `agents`。
+- Git：已将本批功能与记录提交至本地 `develop/geiit-agents`，提交 `830be11`（`feat: merge non-overlapping file edits`）；提交后工作树干净，未推送。
+- 下一步：继续推进文档格式/图片识别、文件历史归档/移动关联（先确定跨位置恢复的身份与授权约束）、工作流循环/触发、模型多模态/协议、低配和原生故障验收。整体目标与远程发布前检查完成后再普通推送 `agents`。
