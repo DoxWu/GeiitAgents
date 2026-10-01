@@ -7,6 +7,7 @@ import { validateVaultBackup } from '../vaultBackupSchema';
 import { PrivateVault } from '../privateVault';
 import { vaultBackupFixture } from '@/test/vaultBackupFixture';
 import { sha256Text } from '@/officeTasks/document';
+import { snapshotText } from '@/fileOrganizer/textEdit';
 import { checkChart, renderChartSvg } from '@/officeTasks/chart';
 import type { VaultData } from '@/types/workbench';
 import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
@@ -38,6 +39,17 @@ it('roundtrips an incomplete encrypted workflow draft without promoting it to a 
   const restored = await importVaultBackup(file, '1234');
   expect(restored.data.workflowDraft).toEqual(workflowDraft);
   expect(restored.data.workflows).toBeUndefined();
+});
+
+it('preserves validated three-way file merge snapshots in encrypted backups', async () => {
+  const source = await vaultBackupFixture(), version = source.fileEditVersions![0];
+  version.merge = {
+    base: await snapshotText('base\n'), local: await snapshotText('local\n'), current: await snapshotText('remote\n'),
+  };
+  source.fileEditDraft!.merge = structuredClone(version.merge);
+  const backup = await exportVaultBackup(source, '1234'), restored = await importVaultBackup(backup.file, '1234');
+  expect(restored.data.fileEditVersions![0].merge).toEqual(version.merge);
+  expect(restored.data.fileEditDraft!.merge).toEqual(version.merge);
 });
 
 it.each(['pie', 'horizontal_bar'] as const)('roundtrips a %s chart and its SVG in an encrypted backup', async chartType => {

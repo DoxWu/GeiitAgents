@@ -5,6 +5,7 @@ import { validFileName } from './plan';
 export const MAX_TEXT_BYTES = 256 * 1024;
 export const MAX_VERSION_BYTES = 2 * 1024 * 1024;
 export interface TextSnapshot { text: string; sha256: string; identity?: string }
+export interface FileEditMerge { base: TextSnapshot; local: TextSnapshot; current: TextSnapshot }
 export type Newline = 'lf' | 'crlf' | 'cr' | 'mixed';
 export interface FileEditDraft {
   id: string;
@@ -18,6 +19,7 @@ export interface FileEditDraft {
   bom: boolean;
   restoredFrom?: string;
   restoreText?: string;
+  merge?: FileEditMerge;
 }
 export interface FileEditVersion {
   id: string;
@@ -34,6 +36,7 @@ export interface FileEditVersion {
   restoredFrom?: string;
   error?: string;
   inspection?: { outcome: 'before' | 'after' | 'different'; checkedAt: string };
+  merge?: FileEditMerge;
 }
 const encoder = new TextEncoder();
 // Never persisted. Browser handles can detect same-session replacement, but
@@ -77,13 +80,26 @@ export function validateDraft(draft: FileEditDraft) {
   validateTextName(draft.name); textBytes(draft.before.text); textBytes(draft.content);
   if (!['lf', 'crlf', 'cr', 'mixed'].includes(draft.newline)) throw new Error('换行格式无效。');
   if (draft.restoreText !== undefined) textBytes(draft.restoreText);
+  if (draft.merge) for (const snapshot of [draft.merge.base, draft.merge.local, draft.merge.current]) textBytes(snapshot.text);
 }
 export function assertTextDirectory(record: Pick<FileEditDraft, 'directoryIdentity'>, directory: OrganizerDirectoryHandle, acknowledged: boolean) {
   if (record.directoryIdentity ? record.directoryIdentity !== directory.identity : !!directory.identity) throw new Error('所选目录与文本记录不一致。');
   if (!directory.identity && !acknowledged) throw new Error('浏览器不能持久识别原目录，请确认已选择正确目录。');
 }
+export async function readFileForMerge(directory: OrganizerDirectoryHandle, draft: FileEditDraft, acknowledged: boolean) {
+  return exclusively(async () => {
+    validateDraft(draft); assertTextDirectory(draft, directory, acknowledged);
+    const handle = await directory.getFileHandle(draft.name), opened = readHandles.get(draft.before);
+    if (opened?.isSameEntry && !await opened.isSameEntry(handle)) throw new Error('文件已被替换或目录已改变，不能自动合并。');
+    const current = await readHandle(handle);
+    if (draft.before.identity && current.identity !== draft.before.identity) throw new Error('文件身份已改变，不能自动合并。');
+    readHandles.set(current, handle); return current;
+  });
+}
 export function assertVersionCapacity(records: FileEditVersion[], next: FileEditVersion) {
-  if (records.length >= 50 || [...records, next].reduce((n, r) => n + textBytes(r.before.text).length + textBytes(r.after.text).length, 0) > MAX_VERSION_BYTES) {
+  const bytes = (record: FileEditVersion) => textBytes(record.before.text).length + textBytes(record.after.text).length
+    + (record.merge ? [record.merge.base, record.merge.local, record.merge.current].reduce((sum, snapshot) => sum + textBytes(snapshot.text).length, 0) : 0);
+  if (records.length >= 50 || [...records, next].reduce((n, record) => n + bytes(record), 0) > MAX_VERSION_BYTES) {
     throw new Error('文本历史最多 50 条、前后文本合计 2 MiB。请先导出并删除不需要的已核实记录。');
   }
 }

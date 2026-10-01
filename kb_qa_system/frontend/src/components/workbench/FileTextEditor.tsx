@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
-import { draftText, textBytes, textFormat, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
+import { draftText, readFileForMerge, textBytes, textFormat, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
+import { mergeNonOverlappingText } from '@/fileOrganizer/threeWayMerge';
 import { compareArtifactText } from '@/officeTasks/artifactDiff';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { selectTextHistory } from '@/fileOrganizer/historyView';
@@ -35,6 +36,8 @@ export function FileTextEditor() {
   }, [draft]);
   const preview = draft && previewId === draft.editId && !encoded.error;
   const diff = useMemo(() => preview && draft ? compareArtifactText(draft.before.text, encoded.text) : null, [preview, draft, encoded.text]);
+  const mergeableConflict = !!draft && !store.fileEditVersions.some(record => record.draftId === draft.id && record.status !== 'not-applied')
+    && error.includes('外部修改');
   async function act(operation: () => Promise<void>) {
     if (working.current) return;
     working.current = true; setLoading(true); setError(''); setNotice('');
@@ -55,6 +58,24 @@ export function FileTextEditor() {
       if (directory && handles.current.delete(directory)) directory.release?.();
       setDirectory(selected); setNames(found.sort((a, b) => a.localeCompare(b))); setName(''); setAcknowledged(false); setPreviewId('');
     } catch (e) { if (handles.current.delete(selected)) selected.release?.(); throw e; }
+  }
+  async function mergeExternalChanges() {
+    if (!directory || !draft || !encoded.text) return;
+    await act(async () => {
+      const current = await readFileForMerge(directory, draft, acknowledged);
+      const base = textFormat(draft.before.text), local = textFormat(encoded.text), remote = textFormat(current.text);
+      if (remote.newline === 'mixed' || local.newline === 'mixed') throw new Error('文件包含混合换行，不能安全自动合并；请导出草稿并手动处理。');
+      const result = mergeNonOverlappingText(base.content, local.content, remote.content);
+      if ('reason' in result) throw new Error(result.reason === 'overlap' ? '本机草稿与外部修改触及相同文本行，不能自动合并；请导出草稿并手动处理。' : '文本超过自动合并的精确比较上限，请导出草稿并手动处理。');
+      const newline = local.newline as Exclude<Newline, 'mixed'>;
+      const merged = result.text.replace(/\n/g, newline === 'crlf' ? '\r\n' : newline === 'cr' ? '\r' : '\n');
+      textBytes((remote.bom ? '\uFEFF' : '') + merged);
+      await store.rebaseFileEdit(draft.id, current, result.text, newline);
+      if (!mounted.current) return;
+      const rebased = useWorkbenchStore.getState().fileEditDraft;
+      if (rebased) setPreviewId(rebased.editId);
+      setNotice('不冲突的修改已合并到最新文件版本；请检查三方快照和写入差异后再确认。');
+    });
   }
   function update(content: string, newline: Newline) {
     if (!draft) return;
@@ -88,8 +109,10 @@ export function FileTextEditor() {
         <button className="work-command" disabled={!!encoded.error} onClick={() => download(encoded.text, '草稿-' + draft.name)}>导出草稿（明文）</button>
         <button className="work-command" onClick={() => download(draft.before.text, '原文-' + draft.name)}>导出读取时原文（明文）</button>
         <button className="work-command" disabled={busy} onClick={() => { if (window.confirm('丢弃当前文本草稿？文件和已有版本记录不会改变。')) void act(() => store.discardFileEdit(draft.id)); }}>丢弃文本草稿</button></div>
+      {mergeableConflict && <div className="border-t border-line pt-3"><p className="text-sm">检测到文件在读取后发生变化。可以尝试合并互不重叠的逐行改动；冲突或超限时不会写入文件。</p><button className="work-command mt-2" disabled={busy || !!encoded.error} onClick={() => void mergeExternalChanges()}>合并不冲突的外部修改</button></div>}
       {preview && diff && <section aria-label="文本差异预览" className="space-y-3 border-t border-line pt-3">
         <h4 className="font-medium">写入前预览</h4><p className="text-xs">写入版本：{formatLabel(encoded.text)}。BOM、换行或末尾换行变化也会写入。</p>
+        {draft.merge && <section className="grid gap-3 border-y border-line py-3 md:grid-cols-3" aria-label="三方合并记录"><label className="work-label">合并基准（读取时原文）<textarea readOnly className="work-input h-40 font-mono text-xs" value={draft.merge.base.text} /></label><label className="work-label">本机草稿<textarea readOnly className="work-input h-40 font-mono text-xs" value={draft.merge.local.text} /></label><label className="work-label">合并前最新文件<textarea readOnly className="work-input h-40 font-mono text-xs" value={draft.merge.current.text} /></label></section>}
         {diff.identical ? <p className="text-sm">内容没有变化。</p> : <>
           <p className="text-sm">{diff.mode === 'too-large' ? '文本超过逐行对比范围，请检查下面完整原文和写入版本。' : diff.mode === 'coarse' ? '变更较多，显示整段差异；请同时检查完整文本。' : `新增 ${diff.added} 行，移除 ${diff.removed} 行。`}{diff.rows.length > 400 ? ' 行差异仅显示前 400 行，完整文本见下方。' : ''}</p>
           {!!diff.rows.length && <pre className="max-h-64 overflow-auto rounded bg-surface-secondary p-3 text-xs" aria-label="逐行差异">{diff.rows.slice(0, 400).map((row, i) => <span className={`block ${row.kind === 'add' ? 'text-success' : row.kind === 'remove' ? 'text-danger' : ''}`} key={i}>{row.kind === 'add' ? '+ ' : row.kind === 'remove' ? '- ' : '  '}{row.text.replace(/\r/g, '␍').replace(/\n$/, '')}</span>)}</pre>}
@@ -99,7 +122,7 @@ export function FileTextEditor() {
       </section>}
     </section>}
     <section className="space-y-3 border-t border-line pt-4" aria-label="文本版本历史"><h3 className="font-semibold">文本版本历史</h3>
-      <p className="text-xs text-ink-secondary">最多 50 条、前后文本合计 2 MiB，存储配额可能更早耗尽；不自动淘汰版本。中断后先核验；核验只比较当前内容，不会重放写入。原生写入会尝试失败回滚，但不保证断电时自动恢复。</p>
+      <p className="text-xs text-ink-secondary">最多 50 条、前后文本及合并快照合计 2 MiB，存储配额可能更早耗尽；不自动淘汰版本。中断后先核验；核验只比较当前内容，不会重放写入。原生写入会尝试失败回滚，但不保证断电时自动恢复。</p>
       {!store.fileEditVersions.length && <p className="text-sm">暂无文本版本</p>}
       <FileHistoryControls {...history} label="文本历史" statuses={statusLabels} busy={busy} />
       {history.rows.map(record => <FileHistoryDetails key={record.id} summary={<>{record.directoryName} / {record.name} · {statusLabels[record.status]} · {new Date(record.createdAt).toLocaleString()}</>}>{() => <>

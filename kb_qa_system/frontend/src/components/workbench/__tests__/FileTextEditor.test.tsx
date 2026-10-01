@@ -50,6 +50,26 @@ it('preserves an external edit and shows the conflict while keeping the draft av
   directory.put('a.md', 'external'); await user.click(screen.getByRole('button', { name: '确认写入所选文件' }));
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('外部修改'));
   expect(screen.getByLabelText('文本编辑内容')).toHaveValue('draft'); expect(directory.closes).toBe(0);
+  await user.click(screen.getByRole('button', { name: '合并不冲突的外部修改' }));
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('相同文本行'));
+  expect(await directory.files.get('a.md')!.text()).toBe('external'); expect(directory.closes).toBe(0);
+});
+it('merges independent local and external line edits, previews all three inputs, then writes only after confirmation', async () => {
+  directory.put('a.md', '# original\r\nSecond\r\n');
+  render(<FileTextEditor />); const user = await open();
+  fireEvent.change(screen.getByLabelText('文本编辑内容'), { target: { value: '# local\nSecond\n' } });
+  await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: '预览文本差异' }));
+  directory.put('a.md', '# original\r\nSecond external\r\n');
+  await user.click(screen.getByRole('button', { name: '确认写入所选文件' }));
+  await screen.findByRole('button', { name: '合并不冲突的外部修改' });
+  await user.click(screen.getByRole('button', { name: '合并不冲突的外部修改' }));
+  await screen.findByRole('region', { name: '三方合并记录' });
+  expect(screen.getByLabelText('文本编辑内容')).toHaveValue('# local\nSecond external\n');
+  expect(await directory.files.get('a.md')!.text()).toBe('# original\r\nSecond external\r\n');
+  await user.click(screen.getByRole('button', { name: '确认写入所选文件' }));
+  await screen.findByText('文件已写入并校验，前后版本已加密保存。');
+  expect(await directory.files.get('a.md')!.text()).toBe('# local\r\nSecond external\r\n');
+  expect(store.getState().fileEditVersions[0].merge).toMatchObject({ base: { text: '# original\r\nSecond\r\n' }, local: { text: '# local\r\nSecond\r\n' }, current: { text: '# original\r\nSecond external\r\n' } });
 });
 it('releases a picker result when the editor closes while the picker is open', async () => {
   let resolve!: (value: MemoryDirectory) => void;

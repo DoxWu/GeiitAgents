@@ -26,7 +26,7 @@ import type { OfficeToolInput } from '@/officeTasks/toolRunner';
 import type { DocxStyle } from '@/officeTasks/docxStyles';
 import { completeToolModel, probeToolCallModel } from '@/services/officeToolModel';
 import { reminderOwner, validateReminderDraft, validateReminderTemplate, type ReminderDraft, type ReminderTemplate } from '@/personal/reminderDraft';
-import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline } from '@/fileOrganizer/textEdit';
+import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline, type TextSnapshot } from '@/fileOrganizer/textEdit';
 
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
@@ -95,6 +95,7 @@ interface WorkbenchState {
   fileEditSaving: boolean;
   openFileEdit: (directory: OrganizerDirectoryHandle, name: string, acknowledged: boolean, restoreId?: string) => Promise<void>;
   stageFileEdit: (id: string, content: string, newline: Newline) => void;
+  rebaseFileEdit: (id: string, current: TextSnapshot, content: string, newline: Exclude<Newline, 'mixed'>) => Promise<void>;
   discardFileEdit: (id: string) => Promise<void>;
   commitFileEdit: (directory: OrganizerDirectoryHandle, editId: string, acknowledged: boolean) => Promise<void>;
   inspectFileEdit: (directory: OrganizerDirectoryHandle, id: string, acknowledged: boolean) => Promise<void>;
@@ -432,6 +433,20 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     validateDraft(draft); fileEditDraftVersion++; set({ fileEditDraft: draft, fileEditSaving: true });
     clearFileEditTimer(); fileEditTimer = setTimeout(() => { fileEditTimer = undefined; void persist(); }, 400);
   },
+  rebaseFileEdit: async (id, current, content, newline) => {
+    if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件操作完成。');
+    if (get().storageError) throw new Error('请先重试本机保存。');
+    const original = get().fileEditDraft;
+    if (!original || original.id !== id) throw new Error('草稿已改变，请重新读取文件。');
+    if (get().fileEditVersions.some(record => record.draftId === id && record.status !== 'not-applied')) throw new Error('此草稿已有写入记录，请先核验，不可重新合并。');
+    if (original.before.identity && current.identity !== original.before.identity) throw new Error('文件身份已改变，不能自动合并。');
+    const local = await snapshotText(draftText(original), original.before.identity);
+    const merge = { base: original.before, local, current };
+    const draft: FileEditDraft = { ...original, before: current, content, newline, bom: textFormat(current.text).bom, editId: crypto.randomUUID(), merge };
+    delete draft.restoreText; delete draft.restoredFrom;
+    validateDraft(draft); clearFileEditTimer(); fileEditDraftVersion++; set({ fileEditDraft: draft, fileEditSaving: true });
+    await persist(true);
+  },
   discardFileEdit: async id => {
     if (!get().unlocked || !vault || organizerInFlight) throw new Error('请先解锁并等待文件操作完成。');
     const draft = get().fileEditDraft, epoch = generation;
@@ -459,7 +474,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       const after = await snapshotText(text, draft.before.identity); guard();
       const now = new Date().toISOString();
       const version: FileEditVersion = { id: crypto.randomUUID(), draftId: draft.id, name: draft.name, directoryName: draft.directoryName, directoryIdentity: draft.directoryIdentity,
-        before: draft.before, after, status: 'running', createdAt: now, updatedAt: now, restoredFrom: draft.restoredFrom };
+        before: draft.before, after, status: 'running', createdAt: now, updatedAt: now, restoredFrom: draft.restoredFrom, merge: draft.merge };
       assertVersionCapacity(get().fileEditVersions, version);
       await writeDirectoryText(directory, draft, after, { acknowledged, guard, beforeWrite: async () => {
         guard(); id = version.id;
