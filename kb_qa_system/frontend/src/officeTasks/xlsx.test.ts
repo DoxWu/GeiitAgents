@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { expect, it } from 'vitest';
-import { parseFirstXlsxSheet } from './xlsx';
+import { exportChartXlsx, parseFirstXlsxSheet } from './xlsx';
 
 const workbook = (sheets: string, sheetXml: string, sharedStrings?: string, relationshipTarget = 'worksheets/sheet1.xml') => {
   const zip = new JSZip();
@@ -50,4 +50,15 @@ it('enforces row, column, archive and compressed-expansion limits', async () => 
   const bomb = new JSZip();
   bomb.file('xl/workbook.xml', 'x'.repeat(2_000_000));
   await expect(parseFirstXlsxSheet(await bomb.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 9 } }))).rejects.toThrow();
+});
+
+it('exports bounded chart data as a workbook with literal text cells and numeric series', async () => {
+  const bytes = await exportChartXlsx({ title: "Quarter/[Team]*'s Results", csv: '分类,值\n=1+1,1.25', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '件' });
+  await expect(parseFirstXlsxSheet(bytes)).resolves.toEqual({ csv: '分类,值\n=1+1,1.25', sheetName: "Quarter  Team  's Results" });
+  const zip = await JSZip.loadAsync(bytes), sheetXml = await zip.file('xl/worksheets/sheet1.xml')!.async('text');
+  expect(sheetXml).toContain('<c r="A2" t="inlineStr"><is><t xml:space="preserve">=1+1</t></is></c>');
+  expect(sheetXml).toContain('<c r="B2"><v>1.25</v></c>');
+  expect(sheetXml).not.toMatch(/<f(?:\s|>)/);
+  await expect(exportChartXlsx({ title: 'bad', csv: '分类,值\na,=1+1', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '' })).rejects.toThrow('公式');
+  await expect(exportChartXlsx({ title: 'bad', csv: '分类,值\n\uFFFF,1', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '' })).rejects.toThrow('XML');
 });

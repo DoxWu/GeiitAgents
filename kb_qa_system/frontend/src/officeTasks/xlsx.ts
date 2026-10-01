@@ -1,5 +1,5 @@
 import type JSZip from 'jszip';
-import { parseChartCsv } from './chart';
+import { checkChart, parseChartCsv, type ChartInput } from './chart';
 
 const MAX_ARCHIVE_BYTES = 2_000_000;
 const MAX_ENTRY_COUNT = 256;
@@ -23,6 +23,7 @@ interface ZipEntry extends JSZip.JSZipObject {
 }
 
 export interface ParsedWorkbookSheet { csv: string; sheetName: string }
+export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function fail(message: string): never { throw new Error(message); }
 
@@ -180,4 +181,44 @@ export async function parseFirstXlsxSheet(data: ArrayBuffer | Uint8Array): Promi
   if (csv.length > 100_000) fail('XLSX 转换后的表格超过 100000 个字符。');
   parseChartCsv(csv);
   return { csv, sheetName: selected.getAttribute('name')?.slice(0, 100) || 'Sheet1' };
+}
+
+function xmlText(value: string): string {
+  if (Array.from(value).some(char => {
+    const code = char.codePointAt(0)!;
+    return !(code === 9 || code === 10 || code === 13 || code >= 0x20 && code <= 0xd7ff || code >= 0xe000 && code <= 0xfffd || code >= 0x10000 && code <= 0x10ffff);
+  })) throw new Error('XLSX 文本包含 XML 不支持的字符。');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;').replace(/\r/g, '&#13;');
+}
+
+function columnName(index: number): string {
+  let value = index + 1, result = '';
+  while (value) { const remainder = (value - 1) % 26; result = String.fromCharCode(65 + remainder) + result; value = Math.floor((value - 1) / 26); }
+  return result;
+}
+
+function sheetName(title: string): string {
+  const value = Array.from(title, char => {
+    const code = char.charCodeAt(0);
+    return '\\/*?:[]'.includes(char) || code < 32 ? ' ' : char;
+  }).join('').replace(/^'+|'+$/g, '').trim().slice(0, 31);
+  return value || '数据';
+}
+
+export async function exportChartXlsx(input: ChartInput): Promise<Uint8Array> {
+  checkChart(input);
+  const data = parseChartCsv(input.csv), numericColumns = new Set(input.valueColumns ?? [input.valueColumn]);
+  const rows = [data.headers, ...data.rows];
+  const sheetRows = rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => {
+    const reference = `${columnName(columnIndex)}${rowIndex + 1}`;
+    if (rowIndex > 0 && numericColumns.has(columnIndex)) return `<c r="${reference}"><v>${Number(value)}</v></c>`;
+    return `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${xmlText(value)}</t></is></c>`;
+  }).join('')}</row>`).join('');
+  const zipModule = await import('jszip'), zip = new zipModule.default();
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+  zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+  zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xmlText(sheetName(input.title))}" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+  zip.file('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  zip.file('xl/worksheets/sheet1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`);
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }

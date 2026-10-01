@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Download, FileUp, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { checkChart, parseChartCsv, renderChartSvg, MAX_CHART_SERIES, type ChartInput } from '@/officeTasks/chart';
-import { parseFirstXlsxSheet } from '@/officeTasks/xlsx';
+import { exportChartXlsx, parseFirstXlsxSheet, XLSX_MIME } from '@/officeTasks/xlsx';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import type { TaskStatus } from '@/types/workbench';
 
@@ -105,7 +105,7 @@ export function ChartTasks() {
         <p className="mt-2 text-sm">{status[task.status]} · {new Date(task.updatedAt).toLocaleString()}</p>{task.error && <p className="text-sm text-danger">{task.error}</p>}
         <details className="mt-3 text-xs"><summary>图表执行记录</summary>{store.toolRuns.filter(tool => tool.taskId === task.id).map(tool => <p className="mt-1" key={tool.id}>{tool.tool} · {status[tool.status]}{tool.converterVersion ? ` · ${tool.converterVersion}` : ''}</p>)}</details>
         {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
-        {artifact && <ChartDownloads key={artifact.id} svg={artifact.content} name={artifact.name} title={task.title} sha256={artifact.sha256} />}
+        {artifact && <ChartDownloads key={artifact.id} svg={artifact.content} name={artifact.name} title={task.title} sha256={artifact.sha256} chartInput={task.chartInput} />}
         {savedData && <ChartChecks data={savedData} />}
       </section>}
     </div></div>
@@ -120,8 +120,8 @@ function ChartChecks({ data }: { data: ReturnType<typeof checkChart> }) {
   </div>;
 }
 
-function ChartDownloads({ svg, name, title, sha256 }: { svg: string; name: string; title: string; sha256: string }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+function ChartDownloads({ svg, name, title, sha256, chartInput }: { svg: string; name: string; title: string; sha256: string; chartInput?: ChartInput }) {
+  const [busy, setBusy] = useState(false), [xlsxBusy, setXlsxBusy] = useState(false), [error, setError] = useState('');
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   async function png() {
@@ -140,7 +140,16 @@ function ChartDownloads({ svg, name, title, sha256 }: { svg: string; name: strin
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'PNG 导出失败。'); }
     finally { URL.revokeObjectURL(url); if (mounted.current) setBusy(false); }
   }
+  async function xlsx() {
+    setXlsxBusy(true); setError('');
+    try {
+      if (!chartInput || !useWorkbenchStore.getState().unlocked) return;
+      const bytes = await exportChartXlsx(chartInput);
+      if (mounted.current && useWorkbenchStore.getState().unlocked) download(new Blob([bytes.slice().buffer], { type: XLSX_MIME }), name.replace(/\.svg$/i, '.xlsx'));
+    } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'XLSX 导出失败。'); }
+    finally { if (mounted.current) setXlsxBusy(false); }
+  }
   return <div className="mt-4"><p className="text-xs text-ink-secondary">成果 SHA-256 {sha256.slice(0, 12)}… · 下载文件为明文</p>
-    <div className="mt-3 flex flex-wrap gap-2"><button className="work-command" onClick={() => download(new Blob([svg], { type: 'image/svg+xml' }), name)}><Download size={16} />下载 SVG</button><button className="work-command" disabled={busy} onClick={() => void png()}><Download size={16} />{busy ? '转换中…' : '下载 PNG'}</button></div>
+    <div className="mt-3 flex flex-wrap gap-2"><button className="work-command" onClick={() => download(new Blob([svg], { type: 'image/svg+xml' }), name)}><Download size={16} />下载 SVG</button><button className="work-command" disabled={busy} onClick={() => void png()}><Download size={16} />{busy ? '转换中…' : '下载 PNG'}</button>{chartInput && <button className="work-command" disabled={xlsxBusy} onClick={() => void xlsx()}><Download size={16} />{xlsxBusy ? '生成中…' : '下载 XLSX 数据'}</button>}</div>
     {error && <p role="alert" className="mt-2 text-sm text-danger">{error}</p>}<ChartImage svg={svg} title={`成果：${title}`} /></div>;
 }

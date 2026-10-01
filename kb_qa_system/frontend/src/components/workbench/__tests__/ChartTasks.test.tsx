@@ -5,9 +5,12 @@ import userEvent from '@testing-library/user-event';
 import type { TaskRun } from '@/types/workbench';
 import { ChartTasks } from '../ChartTasks';
 
-const { state } = vi.hoisted(() => ({ state: { taskRuns: [] as TaskRun[], artifacts: [], toolRuns: [], startChartTask: vi.fn(), storageError: null } }));
-vi.mock('@/store/workbenchStore', () => ({ useWorkbenchStore: () => state }));
-beforeEach(() => { state.taskRuns = []; state.startChartTask.mockReset().mockResolvedValue('chart:fixture'); vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {}); });
+const { state, getState } = vi.hoisted(() => {
+  const value = { taskRuns: [] as TaskRun[], artifacts: [] as { id: string; taskId: string; kind: string; content: string; name: string; sha256?: string }[], toolRuns: [], startChartTask: vi.fn(), storageError: null as string | null, unlocked: true };
+  return { state: value, getState: () => value };
+});
+vi.mock('@/store/workbenchStore', () => { const hook = () => state; Object.assign(hook, { getState }); return { useWorkbenchStore: hook }; });
+beforeEach(() => { state.taskRuns = []; state.artifacts = []; state.startChartTask.mockReset().mockResolvedValue('chart:fixture'); vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture'); vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {}); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('previews every selected series and clears approval when selection changes', async () => {
@@ -73,4 +76,14 @@ it('imports a bounded XLSX sheet into the chart editor without replacing other f
   expect(await screen.findByRole('status')).toHaveTextContent('工作表：季度数据');
   expect(screen.getByLabelText('CSV 数据')).toHaveValue('月份,销售额\n一月,12');
   expect(screen.getByLabelText('图表标题')).toHaveValue('季度销售额');
+});
+
+it('downloads the saved chart input as an XLSX workbook', async () => {
+  state.taskRuns = [{ id: 'saved-chart', type: 'chart.generate', title: '销售', status: 'succeeded', profileId: '', instruction: '', createdAt: '', updatedAt: '', toolRunIds: [], artifactIds: ['svg-1'], chartInput: { title: '销售', csv: '分类,数值\n甲,2', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '元' } }];
+  state.artifacts = [{ id: 'svg-1', taskId: 'saved-chart', kind: 'svg', content: '<svg/>', name: '销售.svg', sha256: 'fixture' }];
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {}), user = userEvent.setup(); render(<ChartTasks />);
+  await user.click(screen.getByRole('button', { name: '下载 XLSX 数据' }));
+  await screen.findByRole('button', { name: '下载 XLSX 数据' });
+  expect(click).toHaveBeenCalled();
+  expect(URL.createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
 });
