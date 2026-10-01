@@ -40,7 +40,7 @@ dev.18 文本版本新增批次分组字段和 `not-started` 状态，含这些�
 - 外层格式 `geiit-workbench-backup`、版本 1；PBKDF2-SHA256 固定 600000 次、随机 16 字节盐；AES-256-GCM、随机 12 字节 IV、AAD `geiit-workbench-backup:1`。外层只含算法参数和密文。
 - 内层 `{ version: 1, exportedAt, data: VaultData }`；时间和数量不公开在外层。每次导出独立随机盐/IV，与原工作台口令和本地加密信封分开。
 - 口令 4–256 个字符；建议较长独立口令。四位是最低交互限制，不能抵御弱口令离线猜测；备份口令遗失无法恢复。
-- 加密文件最多 24 MiB，明文负载最多 16 MiB；Base64、UTF-8、对象字段、集合数量与文本长度均有界。实际 localStorage 配额可能远小于上限，预检查成功不等于最终一定能写入。
+- 加密文件最多 24 MiB，明文负载最多 16 MiB；本机密钥库也会在加密前拒绝超过 16 MiB UTF-8 快照。Base64、UTF-8、对象字段、集合数量与文本长度均有界。实际 localStorage 配额可能远小于上限，预检查成功不等于最终一定能写入。
 - 导出和导入共用严格校验：未知字段拒绝、ID 唯一、任务/工具/成果引用、成果摘要、文本摘要与容量、合法文件名及 SVG 标签/属性允许清单。支持旧库缺少可选集合；不静默丢弃未来版本的字段。未知/损坏的现有历史可能需要后续迁移器，当前不能选择跳过损坏项。
 - `src/services/vaultBackup.ts`：`exportVaultBackup`、`importVaultBackup`、`prepareVaultReplacement`；`vaultBackupSchema.ts`：校验规则。`privateVault.ts`：共用写锁。
 - `src/store/workbenchStore.ts`：`exportWorkbenchBackup`、`prepareWorkbenchRestore`、`commitWorkbenchRestore`、`cancelVaultTransfer`。公开预览只保留计数和随机 ID，待提交数据为新口令下的密文，密钥不进入 Zustand 公共状态。

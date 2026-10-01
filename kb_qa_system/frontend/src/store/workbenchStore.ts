@@ -212,8 +212,10 @@ async function persist(required = false) {
       if (draftVersion === personalDraftVersion) { clearPersonalTimer(); useWorkbenchStore.setState({ personalDraftSaving: false }); }
       if (textVersion === fileEditDraftVersion) { clearFileEditTimer(); useWorkbenchStore.setState({ fileEditSaving: false }); }
     }
-  } catch {
-    const message = "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
+  } catch (error) {
+    const message = error instanceof Error && error.message.includes('超过 16 MiB 快照上限')
+      ? error.message
+      : "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
     if (epoch === generation) useWorkbenchStore.setState({ storageError: message });
     if (required) throw new Error(message);
   }

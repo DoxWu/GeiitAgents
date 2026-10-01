@@ -1,7 +1,7 @@
 import { webcrypto } from "node:crypto";
 import { TextDecoder, TextEncoder } from "node:util";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { PrivateVault } from "../privateVault";
+import { MAX_VAULT_SNAPSHOT_BYTES, PrivateVault } from "../privateVault";
 import type { VaultData } from "@/types/workbench";
 
 const password = "a-test-passphrase-123";
@@ -33,6 +33,12 @@ describe("encrypted private vault", () => {
     await Promise.all([vault.save(sample), vault.save({ profiles: [], conversations: [] })]);
     expect(JSON.parse(localStorage.getItem("vault")!).iv).not.toBe(first);
     expect((await new PrivateVault(localStorage, "vault").unlock(password)).profiles).toEqual([]);
+  });
+  it("rejects an oversized UTF-8 snapshot before encryption or storage", async () => {
+    const vault = new PrivateVault(localStorage, "vault"); await vault.unlock(password);
+    const huge: VaultData = { ...sample, conversations: [{ id: "conversation", profileId: "one", title: "large", updatedAt: new Date().toISOString(), messages: [{ id: "message", role: "user", content: "x".repeat(MAX_VAULT_SNAPSHOT_BYTES), createdAt: new Date().toISOString() }] }] };
+    await expect(vault.save(huge)).rejects.toThrow('超过 16 MiB 快照上限');
+    expect(localStorage.getItem("vault")).toBeTruthy();
   });
   it("rejects writes after locking and detects another window's changes", async () => {
     const vault = new PrivateVault(localStorage, "vault"); await vault.unlock(password);

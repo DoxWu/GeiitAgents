@@ -1,6 +1,7 @@
 import type { VaultData } from "@/types/workbench";
 
 const ITERATIONS = 600_000;
+export const MAX_VAULT_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 const encoder = new TextEncoder();
 const context = encoder.encode("geiit-private-workbench-v1");
 
@@ -104,6 +105,7 @@ export class PrivateVault {
 
   save(data: VaultData): Promise<void> {
     const snapshot = JSON.stringify(data);
+    if (encoder.encode(snapshot).byteLength > MAX_VAULT_SNAPSHOT_BYTES) return Promise.reject(new Error("本机工作台数据超过 16 MiB 快照上限，请导出备份后删除不需要的历史或正文。"));
     const key = this.key;
     const salt = this.salt;
     const epoch = this.epoch;
