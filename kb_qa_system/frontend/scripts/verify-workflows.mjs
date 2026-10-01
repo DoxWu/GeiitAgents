@@ -81,6 +81,15 @@ try {
   async function connect(from, to) { await field('前置步骤').selectOption(from); await field('后续步骤').selectOption(to); await button('连接步骤').click(); }
   await connect(options[1], options[2]); await connect(options[1], options[3]); await connect(options[2], options[3]);
   await connect(options[3], options[1]); await expect(page.getByRole('alert')).toContainText('循环依赖');
+  await button('放大画布').click(); await expect(page.getByLabel('画布缩放比例')).toHaveText('110%');
+  await button('自动排列步骤').click();
+  expect(await button('移动步骤 2').evaluate(n => n.parentElement.style.left)).toBe('304px');
+  expect(await button('移动步骤 3').evaluate(n => n.parentElement.style.left)).toBe('584px');
+  const scaledHandle = button('移动步骤 2'); await scaledHandle.scrollIntoViewIfNeeded();
+  const scaledBox = await scaledHandle.boundingBox();
+  await page.mouse.move(scaledBox.x + 30, scaledBox.y + 6); await page.mouse.down(); await page.mouse.move(scaledBox.x + 140, scaledBox.y + 6, { steps: 5 }); await page.mouse.up();
+  expect(await scaledHandle.evaluate(n => n.parentElement.style.left)).toBe('404px');
+  await button('自动排列步骤').click(); await button('重置画布缩放').click(); await expect(page.getByLabel('画布缩放比例')).toHaveText('100%');
   const handle = button('移动步骤 1'); await handle.scrollIntoViewIfNeeded();
   const box = await handle.boundingBox(); await page.mouse.move(box.x + 30, box.y + 6); await page.mouse.down(); await page.mouse.move(box.x + 70, box.y + 146, { steps: 5 }); await page.mouse.up();
   await handle.press('ArrowRight'); await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 1');

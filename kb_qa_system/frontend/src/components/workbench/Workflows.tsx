@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
-import { NODE_LABELS, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
+import { NODE_LABELS, autoLayoutWorkflow, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { ToolArtifact } from './ToolArtifact';
 import { GenerationPreview } from './GenerationPreview';
@@ -122,6 +122,10 @@ export function Workflows() {
     try { const next = { ...draft, edges: [...draft.edges, { from, to, ...(edgeWhen ? { when: edgeWhen } : {}) }] }; validateWorkflow(next); change(next); setEdgeWhen(''); setError(''); }
     catch (e) { setError(e instanceof Error ? e.message : '无法连接。'); }
   }
+  function autoLayout() {
+    try { change(autoLayoutWorkflow(draft)); setError(''); setNotice('步骤已按依赖层级自动排列；点击保存工作流后生效。'); }
+    catch (e) { setError(e instanceof Error ? e.message : '无法自动排列步骤，请先修复工作流连线。'); }
+  }
   async function start() {
     if (starting.current) return;
     starting.current = true; setError(''); setSelectedRun(''); setArtifactId(''); setRunsPage(1);
@@ -157,7 +161,7 @@ export function Workflows() {
     <fieldset disabled={busy} className="min-w-0 space-y-4">
       <label className="work-label">工作流名称<input className="work-input" maxLength={100} value={draft.name} onChange={e => change({ ...draft, name: e.target.value })} /></label>
       <div className="flex flex-wrap gap-2">{(Object.entries(NODE_LABELS) as [WorkflowNodeKind, string][]).map(([kind, label]) => <button key={kind} className="work-command" disabled={draft.nodes.length >= 12} onClick={() => { const next = newWorkflowNode(kind, draft.nodes.length); change({ ...draft, nodes: [...draft.nodes, next] }); setSelected(next.id); }}>添加{label}</button>)}</div>
-      <WorkflowCanvas definition={draft} selected={selected} onSelect={setSelected} onMove={(id, x, y) => patchNode(id, { x, y })} />
+      <WorkflowCanvas definition={draft} selected={selected} onSelect={setSelected} onMove={(id, x, y) => patchNode(id, { x, y })} onAutoLayout={autoLayout} />
       {node && <section className="grid min-w-0 gap-3 rounded border border-line p-4 sm:grid-cols-2" aria-label="步骤配置">
         <label className="work-label">步骤标题<input className="work-input" value={node.title} maxLength={80} onChange={e => patchNode(node.id, { title: e.target.value })} /></label>
         <button className="work-command justify-self-start self-end" onClick={() => { change({ ...draft, nodes: draft.nodes.filter(n => n.id !== node.id), edges: draft.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelected(''); }}>删除步骤及连线</button>

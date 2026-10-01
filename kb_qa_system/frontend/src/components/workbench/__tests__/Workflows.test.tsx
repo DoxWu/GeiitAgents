@@ -58,6 +58,21 @@ it('edits nodes, connects them, rejects a cycle, and persists keyboard layout ch
   await waitFor(() => expect(store.getState().saveWorkflow).toHaveBeenCalled());
   const saved = vi.mocked(store.getState().saveWorkflow).mock.calls[0][0]; expect(saved.nodes[0].x).toBe(44); expect(saved.edges).toHaveLength(1);
 });
+
+it('supports bounded zoom and deterministic dependency auto-layout', async () => {
+  const user = userEvent.setup(); render(<Workflows />);
+  await user.click(screen.getByRole('button', { name: '添加检查 CSV' }));
+  await user.click(screen.getByRole('button', { name: '添加整理 Markdown' }));
+  const options = screen.getByLabelText('前置步骤').querySelectorAll('option');
+  await user.selectOptions(screen.getByLabelText('前置步骤'), options[1].value); await user.selectOptions(screen.getByLabelText('后续步骤'), options[2].value); await user.click(screen.getByRole('button', { name: '连接步骤' }));
+  expect(screen.getByLabelText('画布缩放比例')).toHaveTextContent('100%');
+  await user.click(screen.getByRole('button', { name: '放大画布' })); expect(screen.getByLabelText('画布缩放比例')).toHaveTextContent('110%');
+  await user.click(screen.getByRole('button', { name: '自动排列步骤' }));
+  const first = screen.getByRole('button', { name: '编辑步骤 1' }).parentElement as HTMLElement;
+  const second = screen.getByRole('button', { name: '编辑步骤 2' }).parentElement as HTMLElement;
+  expect(first.style.left).toBe('24px'); expect(second.style.left).toBe('304px');
+  await user.click(screen.getByRole('button', { name: '重置画布缩放' })); expect(screen.getByLabelText('画布缩放比例')).toHaveTextContent('100%');
+});
 it('configures a condition node and labels its outgoing branch', async () => {
   const user = userEvent.setup(); render(<Workflows />);
   const addCondition = screen.getAllByRole('button').find(button => button.textContent?.includes('\u6761\u4ef6'))!;

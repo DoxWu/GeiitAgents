@@ -98,6 +98,32 @@ export function workflowOrder(definition: WorkflowDefinition): WorkflowNode[] {
   }
   return output;
 }
+
+/** Generate a deterministic, bounded layout without changing graph semantics. */
+export function autoLayoutWorkflow(definition: WorkflowDefinition): WorkflowDefinition {
+  const order = workflowOrder(definition), levels = new Map<string, number>();
+  for (const node of order) {
+    const parents = definition.edges.filter(edge => edge.to === node.id).map(edge => levels.get(edge.from) ?? 0);
+    levels.set(node.id, parents.length ? Math.max(...parents) + 1 : 0);
+  }
+  const columns = new Map<number, WorkflowNode[]>();
+  for (const node of order) {
+    const level = levels.get(node.id) ?? 0, list = columns.get(level) ?? [];
+    list.push(node); columns.set(level, list);
+  }
+  const positions = new Map<string, { x: number; y: number }>();
+  const bandHeights = new Map<number, number>();
+  for (const [level, nodes] of columns) {
+    const band = Math.floor(level / 7);
+    bandHeights.set(band, Math.max(bandHeights.get(band) ?? 0, nodes.length));
+  }
+  for (const [level, nodes] of columns) nodes.forEach((node, index) => {
+    const band = Math.floor(level / 7), column = level % 7;
+    const row = Array.from(bandHeights).reduce((sum, [otherBand, rows]) => sum + (otherBand < band ? rows : 0), index);
+    positions.set(node.id, { x: Math.min(2000, 24 + column * 280), y: Math.min(2000, 24 + row * 170) });
+  });
+  return { ...definition, nodes: definition.nodes.map(node => ({ ...node, ...(positions.get(node.id) ?? { x: node.x, y: node.y }) })) };
+}
 export function validateWorkflowInput(value: unknown): WorkflowInput {
   const input = record(value, ['reference', 'csv']); text(input.reference, 50000); text(input.csv, 100000);
   return { reference: input.reference, csv: input.csv };
