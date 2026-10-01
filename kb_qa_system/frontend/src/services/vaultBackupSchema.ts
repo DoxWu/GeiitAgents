@@ -34,7 +34,7 @@ const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local'), baseU
 const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: str(1000), profileId: str(200), updatedAt: date,
   messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
 const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)) };
-const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'line'), unit: str(20) });
+const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'horizontal_bar', 'line', 'pie'), unit: str(20) });
 const workflow: Check = value => { validateWorkflow(value); };
 const workflowDraft: Check = value => { validateWorkflow(value, true); };
 const workflowInput: Check = value => { validateWorkflowInput(value); };
@@ -74,8 +74,8 @@ function safeSvg(content: string) {
   if (/<!DOCTYPE|<!ENTITY|<\?/i.test(content)) fail();
   const doc = new DOMParser().parseFromString(content, 'image/svg+xml');
   if (doc.querySelector('parsererror') || doc.documentElement.localName !== 'svg') fail();
-  const elements = new Set(['svg', 'g', 'title', 'desc', 'rect', 'text', 'line', 'polyline', 'circle']);
-  const attributes = new Set(['xmlns', 'width', 'height', 'viewBox', 'role', 'aria-labelledby', 'id', 'x', 'y', 'x1', 'x2', 'y1', 'y2', 'cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width', 'font-family', 'font-size', 'font-weight', 'text-anchor', 'transform', 'data-series', 'points']);
+  const elements = new Set(['svg', 'g', 'title', 'desc', 'rect', 'text', 'line', 'polyline', 'circle', 'path']);
+  const attributes = new Set(['xmlns', 'width', 'height', 'viewBox', 'role', 'aria-labelledby', 'id', 'x', 'y', 'x1', 'x2', 'y1', 'y2', 'cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width', 'font-family', 'font-size', 'font-weight', 'text-anchor', 'transform', 'data-series', 'data-category', 'points', 'd']);
   for (const node of [doc.documentElement, ...doc.documentElement.querySelectorAll('*')]) {
     if (node.namespaceURI !== 'http://www.w3.org/2000/svg' || !elements.has(node.localName)) fail();
     for (const attr of Array.from(node.attributes)) {

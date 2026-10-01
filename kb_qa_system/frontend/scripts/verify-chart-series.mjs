@@ -84,6 +84,18 @@ try {
   expect(pieSvg).toContain('22.2%');
   await pie.saveAs(path.join(output, 'series-pie.svg'));
   await (await download('下载 PNG')).saveAs(path.join(output, 'series-pie.png'));
+  await page.getByLabel('图表类型').selectOption('horizontal_bar');
+  await page.getByRole('checkbox', { name: '数值列：成本' }).check();
+  await page.getByRole('button', { name: '检查并预览' }).click();
+  await expect(page.getByText(/检查通过.*2 个系列/)).toBeVisible();
+  await page.getByRole('button', { name: '保存图表任务' }).click();
+  await expect(page.getByRole('status')).toContainText('已保存');
+  const horizontal = await download('下载 SVG'), horizontalSvg = await readFile(await horizontal.path(), 'utf8');
+  expect(horizontalSvg).toContain('水平条形图');
+  expect(horizontalSvg.match(/<rect data-series=/g)).toHaveLength(6);
+  expect(horizontalSvg).toContain('data-category="第二季度"');
+  await horizontal.saveAs(path.join(output, 'series-horizontal.svg'));
+  await (await download('下载 PNG')).saveAs(path.join(output, 'series-horizontal.png'));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('region', { name: '图表任务详情' }).locator('img').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'mobile.png') });
@@ -92,5 +104,5 @@ try {
   expect(requests.some(url => /onnx|embedding|chat\/completions|private-models\/.*complete/.test(url))).toBe(false);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, svgBytes: Buffer.byteLength(svg), noModelRequests: true, encryptedRestore: true, mobileWidth: 390, pageErrors: errors }, null, 2));
-  console.log('XLSX sheet import, multi-series CSV, grouped bars, lines, single-series pie, SVG/PNG, encrypted restore, and 390px layout passed.');
+  console.log('XLSX sheet import, multi-series CSV, grouped bars, horizontal bars, lines, single-series pie, SVG/PNG, encrypted restore, and 390px layout passed.');
 } finally { await context.close(); await browser.close(); }

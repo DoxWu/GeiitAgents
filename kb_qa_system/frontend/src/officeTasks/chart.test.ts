@@ -125,6 +125,17 @@ it('renders zero-baseline bars with correct value ratios and negative direction'
   expect(Number(bars[2].getAttribute('y'))).toBeGreaterThan(Number(bars[0].getAttribute('y')));
   expect(Number(bars[3].getAttribute('height'))).toBe(0);
 });
+it('renders multi-series horizontal bars with a shared zero baseline and bounded category labels', () => {
+  const chart = checkChart({ ...input, chartType: 'horizontal_bar', csv: `类别,收入,成本\n${'长标签'.repeat(20)},10,-5\n第二项,-10,0` , valueColumns: [1, 2] });
+  const doc = new DOMParser().parseFromString(renderChartSvg(chart), 'image/svg+xml');
+  expect(doc.querySelector('parsererror')).toBeNull();
+  expect(doc.querySelectorAll('rect[data-series]')).toHaveLength(4);
+  expect(doc.querySelector('rect[data-series="收入"][data-category^="长标签"]')).toBeTruthy();
+  expect(doc.querySelector('text')?.textContent).toBe('测试图表');
+  expect(doc.documentElement.getAttribute('height')).toBe('298');
+  expect(doc.documentElement.textContent).toContain('水平条形图');
+  expect(doc.documentElement.outerHTML).not.toMatch(/NaN|Infinity/);
+});
 it('supports all-negative, all-zero and categorical line data without invalid geometry', () => {
   for (const csv of ['a,b\nx,0\ny,0', 'a,b\nx,-1\ny,-2', 'a,b\nx,1e-9\ny,1e12']) {
     const svg = renderChartSvg(checkChart({ ...input, csv, chartType: 'line' }));

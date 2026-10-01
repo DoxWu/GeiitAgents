@@ -102,9 +102,9 @@ export async function executeOfficeTool(call: ToolCall, input: OfficeToolInput, 
   if (call.function.name === 'render_chart') {
     const args = objectArgs(call, ['title', 'category_column', 'value_columns', 'chart_type', 'unit']);
     if (typeof args.title !== 'string' || typeof args.unit !== 'string' || typeof args.category_column !== 'number' || !Array.isArray(args.value_columns)
-      || !args.value_columns.every(value => typeof value === 'number') || !['bar', 'line', 'pie'].includes(String(args.chart_type))) throw new Error('图表工具参数类型无效。');
+      || !args.value_columns.every(value => typeof value === 'number') || !['bar', 'horizontal_bar', 'line', 'pie'].includes(String(args.chart_type))) throw new Error('图表工具参数类型无效。');
     if (!input.csv) throw new Error('本任务没有提供 CSV。');
-    const checked = checkChart({ title: args.title, csv: input.csv, categoryColumn: args.category_column, valueColumn: args.value_columns[0], valueColumns: args.value_columns, chartType: args.chart_type as 'bar' | 'line' | 'pie', unit: args.unit });
+    const checked = checkChart({ title: args.title, csv: input.csv, categoryColumn: args.category_column, valueColumn: args.value_columns[0], valueColumns: args.value_columns, chartType: args.chart_type as 'bar' | 'horizontal_bar' | 'line' | 'pie', unit: args.unit });
     kind = 'svg'; content = renderChartSvg(checked); title = checked.input.title; warnings = checked.warnings;
   } else {
     const args = objectArgs(call, ['title', 'markdown']);

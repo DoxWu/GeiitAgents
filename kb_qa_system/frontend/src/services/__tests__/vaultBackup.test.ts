@@ -7,6 +7,7 @@ import { validateVaultBackup } from '../vaultBackupSchema';
 import { PrivateVault } from '../privateVault';
 import { vaultBackupFixture } from '@/test/vaultBackupFixture';
 import { sha256Text } from '@/officeTasks/document';
+import { checkChart, renderChartSvg } from '@/officeTasks/chart';
 import type { VaultData } from '@/types/workbench';
 import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 
@@ -37,6 +38,18 @@ it('roundtrips an incomplete encrypted workflow draft without promoting it to a 
   const restored = await importVaultBackup(file, '1234');
   expect(restored.data.workflowDraft).toEqual(workflowDraft);
   expect(restored.data.workflows).toBeUndefined();
+});
+
+it.each(['pie', 'horizontal_bar'] as const)('roundtrips a %s chart and its SVG in an encrypted backup', async chartType => {
+  const source = await vaultBackupFixture();
+  const chart = checkChart({ title: '备份图表', unit: '件', chartType, csv: '类别,数值\n甲,3\n乙,1', categoryColumn: 0, valueColumn: 1 });
+  const svg = renderChartSvg(chart), task = source.taskRuns![0], artifact = source.artifacts![0];
+  task.type = 'chart.generate'; task.chartInput = chart.input;
+  artifact.content = svg; artifact.sha256 = await sha256Text(svg); artifact.name = '备份图表.svg';
+  const { file } = await exportVaultBackup(source, '1234');
+  const restored = await importVaultBackup(file, '1234');
+  expect(restored.data.taskRuns![0].chartInput?.chartType).toBe(chartType);
+  expect(restored.data.artifacts![0].content).toBe(svg);
 });
 
 it('includes keys only by opt-in and uses independent salt/nonces for each export', async () => {

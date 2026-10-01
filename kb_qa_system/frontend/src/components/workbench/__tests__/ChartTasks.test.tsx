@@ -39,6 +39,16 @@ it('selects and saves a single-series pie chart', async () => {
   await user.click(screen.getByRole('button', { name: '保存图表任务' }));
   expect(state.startChartTask).toHaveBeenCalledWith(expect.objectContaining({ chartType: 'pie', valueColumns: [1] }), expect.any(String));
 });
+it('selects and saves a horizontal bar chart without limiting multiple series', async () => {
+  const user = userEvent.setup(); render(<ChartTasks />);
+  fireEvent.change(screen.getByLabelText('CSV 数据'), { target: { value: '月份,收入,成本\n一月,20,5\n二月,30,8' } });
+  await user.click(screen.getByRole('checkbox', { name: '数值列：成本' }));
+  await user.selectOptions(screen.getByLabelText('图表类型'), 'horizontal_bar');
+  await user.click(screen.getByRole('button', { name: '检查并预览' }));
+  expect(screen.getByRole('img')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '保存图表任务' }));
+  expect(state.startChartTask).toHaveBeenCalledWith(expect.objectContaining({ chartType: 'horizontal_bar', valueColumns: [1, 2] }), expect.any(String));
+});
 
 it('removes a newly selected category from numeric series and rejects an empty selection', async () => {
   const user = userEvent.setup(); render(<ChartTasks />);

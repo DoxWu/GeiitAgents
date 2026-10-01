@@ -43,6 +43,12 @@ it('accepts and preflights a one-series pie chart workflow node', () => {
   chart.valueColumns = [1, 2];
   expect(() => validateWorkflow(definition)).toThrow();
 });
+it('accepts a horizontal bar chart workflow definition', () => {
+  const chart = newWorkflowNode('render_chart', 0); chart.chartType = 'horizontal_bar';
+  const definition = { ...newWorkflow(), nodes: [chart] };
+  expect(validateWorkflow(definition).nodes[0].chartType).toBe('horizontal_bar');
+  expect(prepareWorkflow(definition, input).definition.nodes[0].chartType).toBe('horizontal_bar');
+});
 
 it('validates and executes only the selected condition branch', async () => {
   const condition = newWorkflowNode('condition', 0), yes = newWorkflowNode('create_document', 1), no = newWorkflowNode('create_document', 2);

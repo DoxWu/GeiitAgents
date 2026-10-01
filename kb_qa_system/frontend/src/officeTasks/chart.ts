@@ -5,7 +5,7 @@ export interface ChartInput {
   valueColumn: number;
   /** Optional multi-series selection. valueColumn remains the legacy first series. */
   valueColumns?: number[];
-  chartType: 'bar' | 'line' | 'pie';
+  chartType: 'bar' | 'horizontal_bar' | 'line' | 'pie';
   unit: string;
 }
 export interface ChartData { headers: string[]; rows: string[][] }
@@ -18,7 +18,7 @@ export interface CheckedChart {
   valueLabel: string;
   valueLabels: string[];
 }
-export const CHART_RENDERER_VERSION = 'local-chart/3';
+export const CHART_RENDERER_VERSION = 'local-chart/4';
 export const MAX_CHART_SERIES = 6;
 
 function hasControl(value: string): boolean {
@@ -69,7 +69,7 @@ export function parseChartCsv(source: string): ChartData {
 export function checkChart(input: ChartInput): CheckedChart {
   const clean: ChartInput = { ...input, title: input.title.trim(), unit: input.unit.trim() };
   if (!clean.title || clean.title.length > 80 || clean.unit.length > 20 || /[\r\n\t]/.test(clean.title + clean.unit) || hasControl(clean.title + clean.unit)) throw new Error('图表标题需要 1–80 字符，单位最多 20 字符，不能包含换行或控制字符。');
-  if (!['bar', 'line', 'pie'].includes(clean.chartType)) throw new Error('请选择柱状图、折线图或饼图。');
+  if (!['bar', 'horizontal_bar', 'line', 'pie'].includes(clean.chartType)) throw new Error('请选择有效的图表类型。');
   const data = parseChartCsv(clean.csv);
   const requestedColumns = clean.valueColumns === undefined ? [clean.valueColumn] : clean.valueColumns;
   if (!Array.isArray(requestedColumns) || requestedColumns.length < 1 || requestedColumns.length > MAX_CHART_SERIES) throw new Error(`请选择 1–${MAX_CHART_SERIES} 个数值系列。`);
@@ -144,7 +144,7 @@ export function renderChartSvg(chart: CheckedChart): string {
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-description">`,
     `<title id="chart-title">${escapeXml(input.title)}</title><desc id="chart-description">${escapeXml(series.map(current => `${current.label}: ${current.points.map(point => `${point.label} ${point.value}`).join('，')}`).join('；'))}</desc>`,
     '<rect width="100%" height="100%" fill="#ffffff"/>', '<g font-family="Microsoft YaHei, Arial, sans-serif" font-size="13" fill="#243449">',
-    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${{ bar: '柱状图', line: '折线图', pie: '饼图' }[input.chartType]}`)];
+    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${{ bar: '柱状图', horizontal_bar: '水平条形图', line: '折线图', pie: '饼图' }[input.chartType]}`)];
   if (input.chartType === 'pie') {
     const width = Math.max(640, Array.from(input.title).length * 14 + 160, Array.from(valueLabels[0]).length * 13 + 160);
     const centerX = Math.min(300, width / 2), centerY = 270, radius = 130;
@@ -171,6 +171,37 @@ export function renderChartSvg(chart: CheckedChart): string {
         `<g><title>${escapeXml(`${point.label}: ${point.value} (${percentage}%)`)}</title>${tag(x + 20, y, `${Array.from(point.label).slice(0, 34).join('')}${Array.from(point.label).length > 34 ? '…' : ''} · ${numberText(point.value)} · ${percentage}%`)}</g>`);
     });
     parts.push('</g></svg>');
+    return parts.join('');
+  }
+  if (input.chartType === 'horizontal_bar') {
+    const labelWidth = Math.min(300, Math.max(140, Math.max(...points.map(point => Array.from(point.label).length)) * 7 + 24));
+    const plotLeft = labelWidth + 24, plotRight = width - 40, plotTop = 112;
+    const rowHeight = 28, plotBottom = plotTop + points.length * rowHeight, chartHeight = plotBottom + 130;
+    const x = (value: number) => plotLeft + (value - low) / (high - low) * (plotRight - plotLeft);
+    parts[0] = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${chartHeight}" viewBox="0 0 ${width} ${chartHeight}" role="img" aria-labelledby="chart-title chart-description">`;
+    for (let tick = 0; tick <= 4; tick++) {
+      const value = low + (high - low) * tick / 4, xx = x(value);
+      parts.push(`<line x1="${xx}" x2="${xx}" y1="${plotTop - 8}" y2="${plotBottom}" stroke="#e2e8f0"/>`, tag(xx, plotBottom + 20, numberText(value), 'text-anchor="middle"'));
+    }
+    parts.push(`<line x1="${x(0)}" x2="${x(0)}" y1="${plotTop - 8}" y2="${plotBottom}" stroke="#64748b" stroke-width="1.5"/>`);
+    series.forEach((current, seriesIndex) => current.points.forEach((point, index) => {
+      const groupHeight = rowHeight * .78, barHeight = groupHeight / series.length * .82;
+      const yy = plotTop + index * rowHeight - groupHeight / 2 + seriesIndex * groupHeight / series.length + (groupHeight / series.length - barHeight) / 2;
+      const zero = x(0), valueX = x(point.value);
+      parts.push(`<rect data-series="${escapeXml(current.label)}" data-category="${escapeXml(point.label)}" x="${Math.min(zero, valueX)}" y="${yy}" width="${Math.abs(valueX - zero)}" height="${barHeight}" fill="${colors[seriesIndex % colors.length]}"><title>${escapeXml(`${current.label} · ${point.label}: ${point.value}`)}</title></rect>`);
+      if (series.length === 1) parts.push(tag(point.value < 0 ? valueX - 6 : valueX + 6, yy + barHeight / 2 + 4, numberText(point.value), `text-anchor="${point.value < 0 ? 'end' : 'start'}" font-size="11"`));
+    }));
+    points.forEach((point, index) => {
+      const yy = plotTop + index * rowHeight + 4, chars = Array.from(point.label);
+      const label = chars.length > 36 ? `${chars.slice(0, 35).join('')}…` : point.label;
+      parts.push(`<g><title>${escapeXml(point.label)}</title>${tag(plotLeft - 10, yy, label, 'text-anchor="end"')}</g>`);
+    });
+    series.forEach((current, index) => {
+      const legendX = plotLeft + (index % 3) * 220, legendY = plotBottom + 78 + Math.floor(index / 3) * 26;
+      parts.push(`<rect x="${legendX}" y="${legendY - 11}" width="12" height="12" fill="${colors[index % colors.length]}"/>`,
+        `<g><title>${escapeXml(current.label)}</title>${tag(legendX + 20, legendY, Array.from(current.label).length > 22 ? `${Array.from(current.label).slice(0, 21).join('')}…` : current.label)}</g>`);
+    });
+    parts.push(tag(plotLeft, chartHeight - 18, '按输入顺序绘制 · 完整数值见数据表或条目标题'), '</g></svg>');
     return parts.join('');
   }
   for (let tick = 0; tick <= 4; tick++) {
