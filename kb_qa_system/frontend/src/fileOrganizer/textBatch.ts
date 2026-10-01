@@ -5,6 +5,8 @@ export const MAX_BATCH_FILES = 20;
 export const MAX_BATCH_RULES = 5;
 export interface TextBatchRule { find: string; replacement: string; newline: 'keep' | Exclude<Newline, 'mixed'>; caseSensitive?: boolean }
 export type TextBatchRules = TextBatchRule[];
+export interface TextBatchConfig { defaultRules: TextBatchRules; perFileRules?: Record<string, TextBatchRules> }
+export type TextBatchInput = TextBatchRule | TextBatchRules | TextBatchConfig | null;
 export interface TextBatchRow { id: string; name: string; matches: number; draft?: FileEditDraft; after?: TextSnapshot; error?: string }
 export interface TextBatchPreview { id: string; directoryName: string; mode: 'replace' | 'restore'; rows: TextBatchRow[] }
 export interface TextBatchPlan extends TextBatchPreview { baseline: string }
@@ -66,14 +68,32 @@ function normalizeRules(rule: TextBatchRule | TextBatchRules | null): TextBatchR
   if (newlines.size > 1) throw new Error('同一批次的多条规则必须使用相同的输出换行格式。');
   return rules.map(item => ({ ...item }));
 }
-export async function prepareTextBatch(directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | TextBatchRules | null, versions: FileEditVersion[], acknowledged: boolean, guard: () => void, restoreBatchId?: string): Promise<TextBatchPlan> {
+function normalizeConfig(input: TextBatchInput, names: string[]): { defaults: TextBatchRules; perFile: Record<string, TextBatchRules> } | null {
+  if (!input) return null;
+  if (Array.isArray(input) || Object.prototype.hasOwnProperty.call(input, 'find')) {
+    const defaults = normalizeRules(input as TextBatchRule | TextBatchRules)!;
+    return { defaults, perFile: {} };
+  }
+  if (typeof input !== 'object' || Object.getPrototypeOf(input) !== Object.prototype) throw new Error('批量编辑规则配置无效。');
+  const config = input as TextBatchConfig;
+  if (Object.keys(config).some(key => !['defaultRules', 'perFileRules'].includes(key)) || !Array.isArray(config.defaultRules)) throw new Error('批量编辑规则配置无效。');
+  const defaults = normalizeRules(config.defaultRules)!;
+  const perFileInput = config.perFileRules ?? {};
+  if (typeof perFileInput !== 'object' || perFileInput === null || Array.isArray(perFileInput) || Object.getPrototypeOf(perFileInput) !== Object.prototype) throw new Error('逐文件规则配置无效。');
+  const keys = Object.keys(perFileInput);
+  if (keys.length > MAX_BATCH_FILES || keys.some(name => !names.includes(name))) throw new Error('逐文件规则只能应用于本批已选择的文件。');
+  const perFile = Object.create(null) as Record<string, TextBatchRules>;
+  for (const name of keys) perFile[name] = normalizeRules(perFileInput[name])!;
+  return { defaults, perFile };
+}
+export async function prepareTextBatch(directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchInput, versions: FileEditVersion[], acknowledged: boolean, guard: () => void, restoreBatchId?: string): Promise<TextBatchPlan> {
   const restoring = restoreBatchId ? versions.filter(v => v.batch?.id === restoreBatchId) : [];
   if (restoreBatchId && !restoring.length) throw new Error('批次记录不存在。');
   const targets = restoreBatchId ? restoring.map(v => v.name) : names;
   if (!targets.length || targets.length > MAX_BATCH_FILES || new Set(targets.map(n => n.toLowerCase())).size !== targets.length) throw new Error('每批请选择 1–20 个不同的 MD/TXT 文件。');
   targets.forEach(validateTextName);
-  const rules = restoreBatchId ? null : normalizeRules(rule);
-  if (!restoreBatchId && !rules) throw new Error('缺少替换规则。');
+  const config = restoreBatchId ? null : normalizeConfig(rule, targets);
+  if (!restoreBatchId && !config) throw new Error('缺少替换规则。');
   const rows: TextBatchRow[] = [], id = crypto.randomUUID(), baseline = JSON.stringify(versions);
   await withTextBatch(async access => {
     for (const name of targets) {
@@ -88,6 +108,7 @@ export async function prepareTextBatch(directory: OrganizerDirectoryHandle, name
         }
         const format = textFormat(before.text);
         // Literal matching avoids regex backtracking and replacement-token expansion.
+        const rules = config?.perFile[name] ?? config?.defaults;
         const replacement = rules ? applyTextBatchRules(format.content, rules) : { content: format.content, matches: 1 };
         row.matches = replacement.matches;
         if (rules && !row.matches) { rows.push(row); continue; }

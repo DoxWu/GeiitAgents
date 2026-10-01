@@ -1,4 +1,4 @@
-import type { TextBatchPlan, TextBatchPreview, TextBatchRule, TextBatchRules } from '@/fileOrganizer/textBatch';
+import type { TextBatchInput, TextBatchPlan, TextBatchPreview } from '@/fileOrganizer/textBatch';
 import { artifactSeries } from '@/officeTasks/artifactSeries';
 import { create } from "zustand";
 import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
@@ -65,7 +65,7 @@ function clearWorkflowDraftTimer() { clearTimeout(workflowDraftTimer); workflowD
 
 interface WorkbenchState {
   textBatchPreview: TextBatchPreview | null;
-  prepareFileEditBatch: (directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | TextBatchRules | null, acknowledged: boolean, restoreBatchId?: string) => Promise<void>;
+  prepareFileEditBatch: (directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchInput, acknowledged: boolean, restoreBatchId?: string) => Promise<void>;
   commitFileEditBatch: (directory: OrganizerDirectoryHandle, id: string, selected: string[], acknowledged: boolean) => Promise<void>;
   cancelFileEditBatch: () => void;
   personalImportBusy: boolean;

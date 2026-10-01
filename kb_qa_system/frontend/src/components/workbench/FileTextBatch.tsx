@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
-import { MAX_BATCH_RULES, type TextBatchRule, type TextBatchRow, type TextBatchRules } from '@/fileOrganizer/textBatch';
+import { MAX_BATCH_RULES, type TextBatchConfig, type TextBatchRule, type TextBatchRow, type TextBatchRules } from '@/fileOrganizer/textBatch';
 import { textBytes, type FileEditVersion } from '@/fileOrganizer/textEdit';
 import { compareArtifactText } from '@/officeTasks/artifactDiff';
 import { useWorkbenchStore } from '@/store/workbenchStore';
@@ -27,6 +27,7 @@ export function FileTextBatch() {
   const store = useWorkbenchStore(), preview = store.textBatchPreview;
   const [directory, setDirectory] = useState<OrganizerDirectoryHandle | null>(null), [names, setNames] = useState<string[]>([]), [files, setFiles] = useState<string[]>([]);
   const [rules, setRules] = useState<TextBatchRules>([{ find: '', replacement: '', newline: 'keep' }]);
+  const [perFileRules, setPerFileRules] = useState<Record<string, TextBatchRules>>({}), [ruleFile, setRuleFile] = useState('');
   const [ack, setAck] = useState(false), [confirmed, setConfirmed] = useState(false), [selected, setSelected] = useState<string[]>([]), [view, setView] = useState('');
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const mounted = useRef(false), working = useRef(false), handles = useRef(new Set<OrganizerDirectoryHandle>());
@@ -44,26 +45,47 @@ export function FileTextBatch() {
     try {
       const list: string[] = []; for await (const e of d.values()) if (e.kind === 'file' && !e.name.startsWith('.') && /\.(md|txt)$/i.test(e.name)) { list.push(e.name); if (list.length > 500) throw new Error('目录超过 500 个可见文本文件，请先拆分。'); }
       if (!mounted.current) return;
-      if (directory && handles.current.delete(directory)) directory.release?.(); setDirectory(d); setNames(list.sort((a, b) => a.localeCompare(b))); setFiles([]); setAck(false);
+      if (directory && handles.current.delete(directory)) directory.release?.(); setDirectory(d); setNames(list.sort((a, b) => a.localeCompare(b))); setFiles([]); setPerFileRules({}); setRuleFile(''); setAck(false);
     } catch (e) { if (handles.current.delete(d)) d.release?.(); throw e; }
   }
-  function changeRule(index: number, next: TextBatchRule) { store.cancelFileEditBatch(); setRules(current => current.map((rule, i) => i === index ? next : rule)); }
-  function addRule() { if (rules.length >= MAX_BATCH_RULES) return; store.cancelFileEditBatch(); setRules(current => [...current, { find: '', replacement: '', newline: current[0].newline }]); }
-  function removeRule(index: number) { if (rules.length <= 1) return; store.cancelFileEditBatch(); setRules(current => current.filter((_, i) => i !== index)); }
+  const editingRules = ruleFile && perFileRules[ruleFile] ? perFileRules[ruleFile] : rules;
+  const ruleLabel = ruleFile && perFileRules[ruleFile] ? '文件' : '批量';
+  function setEditingRules(update: (current: TextBatchRules) => TextBatchRules) {
+    store.cancelFileEditBatch();
+    if (ruleFile && perFileRules[ruleFile]) setPerFileRules(current => ({ ...current, [ruleFile]: update(current[ruleFile]) }));
+    else setRules(update);
+  }
+  function changeRule(index: number, next: TextBatchRule) { setEditingRules(current => current.map((rule, i) => i === index ? next : rule)); }
+  function addRule() { if (editingRules.length >= MAX_BATCH_RULES) return; setEditingRules(current => [...current, { find: '', replacement: '', newline: current[0].newline }]); }
+  function removeRule(index: number) { if (editingRules.length <= 1) return; setEditingRules(current => current.filter((_, i) => i !== index)); }
+  function toggleFileRules(enabled: boolean) {
+    if (!ruleFile) return;
+    store.cancelFileEditBatch();
+    setPerFileRules(current => {
+      if (enabled) return { ...current, [ruleFile]: rules.map(rule => ({ ...rule })) };
+      const next = { ...current }; delete next[ruleFile]; return next;
+    });
+  }
+  function changeFiles(next: string[]) {
+    store.cancelFileEditBatch(); setFiles(next);
+    setPerFileRules(current => Object.fromEntries(Object.entries(current).filter(([name]) => next.includes(name))));
+    if (!next.includes(ruleFile)) setRuleFile(next[0] ?? '');
+  }
   return <section className="min-h-0 flex-1 overflow-auto p-4 sm:p-6" aria-label="批量文本编辑"><div className="mx-auto max-w-5xl space-y-4">
-    <h2 className="font-semibold">批量查找与替换</h2><p className="text-sm text-ink-secondary">在已选目录中逐个选择最多 20 个 UTF-8 MD/TXT 文件，每个最多 256 KiB。最多 5 条规则按顺序进行字面替换，每条可选择是否区分大小写，后续规则会处理前一条的结果。先预览，确认后保存全部前后版本，再逐个写入。中途停止或失败会保留已完成文件，不自动回滚整批。</p>
+    <h2 className="font-semibold">批量查找与替换</h2><p className="text-sm text-ink-secondary">在已选目录中逐个选择最多 20 个 UTF-8 MD/TXT 文件，每个最多 256 KiB。最多 5 条规则按顺序进行字面替换，每条可选择是否区分大小写，后续规则会处理前一条的结果。可为单个文件覆盖默认规则。先预览，确认后保存全部前后版本，再逐个写入。中途停止或失败会保留已完成文件，不自动回滚整批。</p>
     <fieldset disabled={busy} className="space-y-3">
       <button className="work-command" onClick={() => void act(pick)}>选择批量编辑目录</button><p className="break-all text-sm">批量目录：{directory?.name || '尚未选择'}</p>
       {directory && !directory.identity && <label className="flex gap-2 text-sm"><input type="checkbox" checked={ack} onChange={e => { setAck(e.target.checked); setConfirmed(false); }} />我确认批量编辑与恢复使用的是正确目录。浏览器无法持久验证目录身份。</label>}
-      {names.length > 0 && <div className="max-h-48 overflow-auto rounded border border-line p-3" aria-label="批量文件选择">{names.map(name => <label key={name} className="flex items-start gap-2 break-all text-sm"><input type="checkbox" aria-label={'批量选择文件：' + name} checked={files.includes(name)} disabled={!files.includes(name) && files.length >= 20} onChange={e => { store.cancelFileEditBatch(); setFiles(old => e.target.checked ? [...old, name] : old.filter(n => n !== name)); }} />{name}</label>)}</div>}
-      <div className="space-y-3" aria-label="批量替换规则">{rules.map((rule, index) => <div className="grid gap-3 border border-line p-3 md:grid-cols-2" key={index}>
-        <label className="work-label">{index ? `批量查找内容 ${index + 1}` : '批量查找内容'}<textarea aria-label={index ? `批量查找内容 ${index + 1}` : '批量查找内容'} className="work-input h-24" maxLength={10000} value={rule.find} onChange={e => changeRule(index, { ...rule, find: e.target.value })} /></label>
-        <label className="work-label">{index ? `批量替换内容（可为空） ${index + 1}` : '批量替换内容（可为空）'}<textarea aria-label={index ? `批量替换内容（可为空） ${index + 1}` : '批量替换内容（可为空）'} className="work-input h-24" maxLength={10000} value={rule.replacement} onChange={e => changeRule(index, { ...rule, replacement: e.target.value })} /></label>
+      {names.length > 0 && <div className="max-h-48 overflow-auto rounded border border-line p-3" aria-label="批量文件选择">{names.map(name => <label key={name} className="flex items-start gap-2 break-all text-sm"><input type="checkbox" aria-label={'批量选择文件：' + name} checked={files.includes(name)} disabled={!files.includes(name) && files.length >= 20} onChange={e => changeFiles(e.target.checked ? [...files, name] : files.filter(n => n !== name))} />{name}{perFileRules[name] && <span className="text-ink-secondary">（独立规则）</span>}</label>)}</div>}
+      {files.length > 0 && <div className="grid gap-3 sm:grid-cols-2"><label className="work-label">编辑规则所应用的文件<select aria-label="编辑规则所应用的文件" className="work-input" value={ruleFile} onChange={e => setRuleFile(e.target.value)}>{files.map(name => <option key={name} value={name}>{name}</option>)}</select></label><label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" aria-label="为此文件单独设置规则" checked={Boolean(ruleFile && perFileRules[ruleFile])} onChange={e => toggleFileRules(e.target.checked)} />为此文件单独设置规则</label></div>}
+      <div className="space-y-3" aria-label="批量替换规则">{editingRules.map((rule, index) => <div className="grid gap-3 border border-line p-3 md:grid-cols-2" key={index}>
+        <label className="work-label">{index ? `${ruleLabel}查找内容 ${index + 1}` : `${ruleLabel}查找内容`}<textarea aria-label={index ? `${ruleLabel}查找内容 ${index + 1}` : `${ruleLabel}查找内容`} className="work-input h-24" maxLength={10000} value={rule.find} onChange={e => changeRule(index, { ...rule, find: e.target.value })} /></label>
+        <label className="work-label">{index ? `${ruleLabel}替换内容（可为空） ${index + 1}` : `${ruleLabel}替换内容（可为空）`}<textarea aria-label={index ? `${ruleLabel}替换内容（可为空） ${index + 1}` : `${ruleLabel}替换内容（可为空）`} className="work-input h-24" maxLength={10000} value={rule.replacement} onChange={e => changeRule(index, { ...rule, replacement: e.target.value })} /></label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={index ? `区分大小写 ${index + 1}` : '区分大小写'} checked={rule.caseSensitive !== false} onChange={e => changeRule(index, { ...rule, caseSensitive: e.target.checked })} />区分大小写</label>
         {index > 0 && <button type="button" className="work-command justify-self-start" onClick={() => removeRule(index)}>移除规则 {index + 1}</button>}
       </div>)}</div>
-      <div className="flex flex-wrap items-end gap-2"><label className="work-label min-w-[14rem]">批量写入换行<select aria-label="批量写入换行" className="work-input" value={rules[0].newline} onChange={e => { const newline = e.target.value as TextBatchRule['newline']; setRules(current => current.map(rule => ({ ...rule, newline }))); store.cancelFileEditBatch(); }}><option value="keep">保留各文件格式（混合换行需另选）</option><option value="lf">LF</option><option value="crlf">CRLF</option><option value="cr">CR</option></select></label><button type="button" className="work-command" disabled={rules.length >= MAX_BATCH_RULES} onClick={addRule}>增加替换规则（{rules.length}/{MAX_BATCH_RULES}）</button></div>
-      <button className="work-command" disabled={!directory || !files.length || rules.some(rule => !rule.find) || !!store.fileEditDraft || !!store.storageError} onClick={() => directory && void act(() => store.prepareFileEditBatch(directory, files, rules, ack))}>读取并预览批次</button>
+      <div className="flex flex-wrap items-end gap-2"><label className="work-label min-w-[14rem]">{ruleFile && perFileRules[ruleFile] ? '此文件写入换行' : '批量写入换行'}<select aria-label={ruleFile && perFileRules[ruleFile] ? '此文件写入换行' : '批量写入换行'} className="work-input" value={editingRules[0].newline} onChange={e => { const newline = e.target.value as TextBatchRule['newline']; setEditingRules(current => current.map(rule => ({ ...rule, newline }))); }}><option value="keep">保留各文件格式（混合换行需另选）</option><option value="lf">LF</option><option value="crlf">CRLF</option><option value="cr">CR</option></select></label><button type="button" className="work-command" disabled={editingRules.length >= MAX_BATCH_RULES} onClick={addRule}>增加替换规则（{editingRules.length}/{MAX_BATCH_RULES}）</button></div>
+      <button className="work-command" disabled={!directory || !files.length || rules.some(rule => !rule.find) || Object.values(perFileRules).some(fileRules => fileRules.some(rule => !rule.find)) || !!store.fileEditDraft || !!store.storageError} onClick={() => directory && void act(() => store.prepareFileEditBatch(directory, files, { defaultRules: rules, perFileRules } satisfies TextBatchConfig, ack))}>读取并预览批次</button>
       {!!store.fileEditDraft && <p className="text-sm">请先在“文本内容编辑”完成或丢弃单文件草稿。</p>}
     </fieldset>
     {busy && <button className="work-command" onClick={() => { store.cancelFileEditBatch(); setNotice('已请求停止，正在等待当前文件操作结束；请核对批次历史。'); }}>停止批次操作</button>}

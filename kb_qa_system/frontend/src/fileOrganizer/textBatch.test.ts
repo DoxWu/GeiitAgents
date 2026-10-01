@@ -21,6 +21,17 @@ it('supports bounded case-insensitive literal replacement without regex expansio
   const invalid = await prepareTextBatch(d, ['a.md'], { find: 'İ', replacement: 'x', newline: 'keep', caseSensitive: false }, [], true, () => {});
   expect(invalid.rows[0].error).toContain('大小写折叠');
 });
+it('applies selected per-file rules while other files inherit the batch default', async () => {
+  const d = new MemoryDirectory({ 'a.md': 'old', 'b.txt': 'old' });
+  const plan = await prepareTextBatch(d, ['a.md', 'b.txt'], {
+    defaultRules: [{ find: 'old', replacement: 'shared', newline: 'keep' }],
+    perFileRules: { 'b.txt': [{ find: 'old', replacement: 'private', newline: 'lf' }] },
+  }, [], true, () => {});
+  expect(plan.rows.map(row => [row.name, row.after?.text])).toEqual([['a.md', 'shared'], ['b.txt', 'private']]);
+  await expect(prepareTextBatch(d, ['a.md'], {
+    defaultRules: [rule], perFileRules: { 'b.txt': [rule] },
+  }, [], true, () => {})).rejects.toThrow('本批已选择');
+});
 it('applies a bounded ordered rule pipeline and preserves literal replacement text', () => {
   const result = applyTextBatchRules('Draft: old\nOwner: Alice', [
     { find: 'old', replacement: 'review', newline: 'keep' },
