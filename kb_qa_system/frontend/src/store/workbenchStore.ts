@@ -9,7 +9,7 @@ import { discoverModels, type ModelCatalog, type ModelEndpoint } from '@/service
 import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConversation, WorkMessage } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
-import { buildKnowledgeMessages } from '@/localKnowledge/answer';
+import { buildKnowledgeMessages, type KnowledgeTurn } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { buildDocumentMessages, documentExportContent, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import { generationPreview, type GenerationPreview } from '@/services/generationPreview';
@@ -163,7 +163,7 @@ interface WorkbenchState {
   restoreArtifactVersion: (sourceId: string, expectedLatestId: string) => Promise<string>;
   exportArtifactDocx: (sourceId: string, style?: DocxStyle) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
   retryStorage: () => Promise<void>;
-  answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal, onPreview?: (value: GenerationPreview | null) => void) => Promise<{ content: string; model: string; finishReason: FinishReason }>;
+  answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal, onPreview?: (value: GenerationPreview | null) => void, history?: KnowledgeTurn[]) => Promise<{ content: string; model: string; finishReason: FinishReason }>;
 }
 
 function publicProfiles(): ModelProfile[] {
@@ -1394,9 +1394,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       artifacts: state.artifacts.filter(artifact => artifact.taskId !== id) }));
     await persist(true);
   },
-  answerKnowledge: async (profileId, question, sources, allowCloud, signal, onPreview) => {
+  answerKnowledge: async (profileId, question, sources, allowCloud, signal, onPreview, history = []) => {
     if (!get().unlocked) throw new Error('请先解锁本机密钥库。');
-    const messages = buildKnowledgeMessages(question, sources);
+    const messages = buildKnowledgeMessages(question, sources, history);
     const profile = get().profiles.find(item => item.id === profileId);
     const secret = secrets.find(item => item.id === profileId);
     const account = profileId === ACCOUNT_MODEL_ID;

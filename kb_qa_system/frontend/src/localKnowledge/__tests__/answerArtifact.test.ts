@@ -1,6 +1,19 @@
 import { expect, it } from 'vitest';
 import { answerMarkdown, createAnswerArtifact } from '../answerArtifact';
 
+it('archives an independent full thread with model and stop reason for each completed turn', () => {
+  const history = [{ question: 'initial', content: 'first [1]', model: 'initial-model', finishReason: 'length' as const }];
+  const answer = createAnswerArtifact('follow-up', { content: 'second [1]', model: 'follow-up-model' }, [
+    { documentId: 'd', name: 'policy.md', start: 0, end: 4, text: '测试资料', vector: [1], score: 1 },
+  ], history);
+  history[0].content = 'changed';
+  expect(answer.history?.[0].content).toBe('first [1]');
+  const markdown = answerMarkdown(answer);
+  expect(markdown).toContain('initial-model'); expect(markdown).toContain('first [1]');
+  expect(markdown).toContain('follow-up-model'); expect(markdown).toContain('second [1]');
+  expect(markdown).toContain('回答可能不完整');
+});
+
 it('captures an independent source snapshot without vectors or provider credentials', () => {
   const source = { documentId: 'private-id', name: 'policy.md', start: 3, end: 7, text: '测试资料', vector: [1], score: 1 };
   const answer = createAnswerArtifact('问题', { content: '回答 [1]', model: 'model' }, [source]);

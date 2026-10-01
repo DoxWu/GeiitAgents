@@ -18,7 +18,9 @@ const service = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
   try {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString()), input = JSON.parse(body.messages.at(-1).content), name = input.title || input.question;
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    let input; try { input = JSON.parse(body.messages.at(-1).content); } catch { input = { question: body.messages.at(-1).content }; }
+    const name = input.title || input.question;
     if (request.headers.authorization !== 'Bearer native-stream-fixture-key' || body.stream !== true || request.url !== '/v1/chat/completions' || 'max_tokens' in body) throw new Error('Unexpected synthetic request');
     calls.push({ name, body }); response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' }); response.flushHeaders();
     const stream = { response, closed: false }; streams.set(name, stream); response.on('close', () => { stream.closed = true; });
@@ -126,11 +128,26 @@ try {
   await finish('Knowledge filter', 'content_filter'); await expect(page.getByLabel('回答生成状态')).toContainText('输出受到模型服务限制');
   expect((await download('导出回答 Markdown', 'answer.md')).toString()).toMatch(/输出受到模型服务限制[\s\S]*来源快照[\s\S]*合成资料/);
   await button('保存为独立对话记录').click(); await expect(button('已保存到工作台')).toBeDisabled();
+  await field('本地知识库追问').fill('Knowledge follow-up');
+  if (['relay', 'account'].includes(mode)) { await expect(button('发送追问')).toBeDisabled(); await page.getByLabel(/我允许本次将所选本地片段/).check(); }
+  await button('发送追问').click(); await expect(page.getByLabel('本地知识库回答生成中的预览')).toContainText('Knowledge follow-up');
+  await expect(button('导出回答 Markdown')).toBeDisabled(); await finish('Knowledge follow-up', 'stop');
+  expect(calls.at(-1).body.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user']);
+  expect(JSON.parse(calls.at(-1).body.messages[1].content).question).toBe('Knowledge filter');
+  expect(calls.at(-1).body.messages[2].content).toContain('Knowledge filter');
+  expect(calls.at(-1).body.messages[3].content).toBe('Knowledge follow-up');
+  expect((await download('导出回答 Markdown', 'answer-follow-up.md')).toString()).toMatch(/前序问答[\s\S]*Knowledge filter[\s\S]*Knowledge follow-up[\s\S]*来源快照/);
+  await button('保存为独立对话记录').click(); await expect(button('已保存到工作台')).toBeDisabled();
+  await field('本地知识库追问').fill('Knowledge follow-up stopped');
+  if (['relay', 'account'].includes(mode)) { await expect(button('发送追问')).toBeDisabled(); await page.getByLabel(/我允许本次将所选本地片段/).check(); }
+  await button('发送追问').click(); await expect(page.getByLabel('本地知识库回答生成中的预览')).toContainText('Knowledge follow-up stopped');
+  await button('停止生成').click(); await expect.poll(() => streams.get('Knowledge follow-up stopped').closed).toBe(true);
+  await expect(field('本地知识库追问')).toHaveValue('Knowledge follow-up stopped'); await expect(button('已保存到工作台')).toBeDisabled();
   await knowledge('Knowledge truncated'); streams.get('Knowledge truncated').response.end(); await expect(page.getByRole('alert')).toContainText('中断'); await expect(button('导出回答 Markdown')).toHaveCount(0);
   await knowledge('Knowledge stopped'); await button('停止生成').click(); await expect.poll(() => streams.get('Knowledge stopped').closed).toBe(true); await expect(page.getByLabel('本地知识库回答生成中的预览')).toHaveCount(0);
   await knowledge('Knowledge unmounted'); await page.getByRole('link', { name: '工作台', exact: true }).click(); await expect.poll(() => streams.get('Knowledge unmounted').closed).toBe(true);
   await page.reload(); await unlock(); await expect(page.locator('main article')).toContainText('输出受到模型服务限制');
-  expect(calls).toHaveLength(8); expect(calls.filter(c => c.name.startsWith('Knowledge')).every(c => JSON.parse(c.body.messages[1].content).sources.length === 1)).toBe(true);
+  expect(calls).toHaveLength(10); expect(calls.filter(c => c.name.startsWith('Knowledge')).every(c => JSON.parse(c.body.messages[1].content).sources.length === 1)).toBe(true);
   expect(errors).toEqual([]); expect(requests.filter(url => /huggingface|\.onnx(?:\?|$)/.test(url))).toEqual([]);
   if (mode === 'native') expect(requests.filter(url => url.startsWith(upstream))).toEqual([]);
   await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, embedding: 'deterministic worker and seeded index; no E5 inference', docx: 'download bytes and XML annotation only; no page rendering', checks: ['incremental document and knowledge answer', 'strict EOF failure', 'stop, vault lock, view unmount close upstream', 'per-request cloud consent', 'metadata in downloads, encrypted save and reload', 'local/cloud index separation', 'zero auto model downloads'], errors }, null, 2));

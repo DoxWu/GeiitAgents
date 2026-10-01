@@ -314,6 +314,29 @@ it("clears account availability and ignores late cloud replies on logout", async
 });
 
 const source: SearchHit = { documentId: 'fixture', name: 'policy.txt', start: 0, end: 4, text: '测试资料', vector: [1], score: 1 };
+it('validates and authorizes every follow-up and restores the complete archive and backup without a model call', async () => {
+  const cloud = { ...profile, id: 'follow-up-cloud', mode: 'relay' as const, baseUrl: 'https://provider.example/v1' };
+  await store.getState().saveProfile(cloud, 'synthetic-key');
+  const history = [{ question: 'initial question', answer: 'initial answer [1]' }];
+  await expect(store.getState().answerKnowledge(cloud.id, 'follow-up', [source], false, new AbortController().signal, undefined, history)).rejects.toThrow('授权');
+  expect(completeModel).not.toHaveBeenCalled();
+  vi.mocked(completeModel).mockResolvedValue('follow-up answer [1]');
+  await store.getState().answerKnowledge(cloud.id, 'follow-up', [source], true, new AbortController().signal, undefined, history);
+  expect(vi.mocked(completeModel).mock.calls[0][2].map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user']);
+  expect(vi.mocked(completeModel).mock.calls[0][2].at(-1)?.content).toBe('follow-up');
+  expect(store.getState().conversations).toEqual([]);
+  const artifact = createAnswerArtifact('follow-up', { content: 'follow-up answer [1]', model: 'test' }, [source], [{ question: history[0].question, content: history[0].answer, model: 'test', finishReason: 'length' }]);
+  await store.getState().saveKnowledgeAnswer(artifact);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/initial answer|follow-up answer/);
+  await store.getState().lock(); await store.getState().unlock(password);
+  const archive = store.getState().conversations[0];
+  expect(archive.kind).toBe('knowledge-answer');
+  expect(archive.messages[0].content).toContain('initial answer [1]');
+  expect(archive.messages[0].content).toContain('follow-up answer [1]');
+  expect(archive.messages[0].content).toContain('回答可能不完整');
+  expect((await validateVaultBackup({ profiles: [], conversations: [archive] })).conversations).toEqual([archive]);
+  expect(completeModel).toHaveBeenCalledTimes(1); expect(completeAccountModel).not.toHaveBeenCalled();
+});
 it('requires explicit consent for cloud knowledge answers and never falls back', async () => {
   const cloud = { ...profile, id: 'cloud', mode: 'relay' as const, baseUrl: 'https://provider.example/v1' };
   await store.getState().saveProfile(cloud, 'test-only-key');
