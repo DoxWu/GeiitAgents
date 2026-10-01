@@ -4,13 +4,15 @@ import type { WorkArtifact } from '@/types/workbench';
 import { PrivateMarkdown } from './LocalMarkdown';
 import { documentExportContent } from '@/officeTasks/document';
 import { finishLabel } from '@/services/modelStream';
+import { DocumentArtifact } from './DocumentArtifact';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function ToolArtifact({ artifact, running }: { artifact: WorkArtifact; running: boolean }) {
+export function ToolArtifact({ artifact, versions, running }: { artifact: WorkArtifact; versions?: WorkArtifact[]; running: boolean }) {
   const [url, setUrl] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [manageVersions, setManageVersions] = useState(false);
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -30,8 +32,9 @@ export function ToolArtifact({ artifact, running }: { artifact: WorkArtifact; ru
     <h3 className="break-all font-medium">{artifact.name}</h3>
     {artifact.finishReason && <p className="mt-2 text-sm text-ink-secondary">{finishLabel(artifact.finishReason)}</p>}
     <div className="my-3 flex flex-wrap gap-2"><button className="work-command" onClick={() => download(new Blob([artifact.kind === 'markdown' ? documentExportContent(artifact) : artifact.content], { type: artifact.mimeType }), artifact.name)}>下载成果</button>
-      {artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} onClick={() => void docx()}>{busy ? '正在导出…' : '导出 Word'}</button>}</div>
+      {artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} onClick={() => void docx()}>{busy ? '正在导出…' : '导出 Word'}</button>}
+      {versions && artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} aria-expanded={manageVersions} onClick={() => setManageVersions(current => !current)}>{manageVersions ? '关闭版本管理' : '编辑与版本管理'}</button>}</div>
     {error && <p role="status" className="text-sm">{error}</p>}
-    {artifact.kind === 'markdown' ? <PrivateMarkdown content={artifact.content} /> : <div className="overflow-x-auto bg-white">{url && <img src={url} alt={artifact.name} className="max-w-none" />}</div>}
+    {manageVersions && versions && !running ? <DocumentArtifact versions={versions} /> : artifact.kind === 'markdown' ? <PrivateMarkdown content={artifact.content} /> : <div className="overflow-x-auto bg-white">{url && <img src={url} alt={artifact.name} className="max-w-none" />}</div>}
   </section>;
 }

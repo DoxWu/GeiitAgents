@@ -100,7 +100,13 @@ try {
     await page.getByRole('textbox', { name: '办公目标', exact: true }).fill('读取 CSV，创建销售趋势图和 Markdown 报告。');
     await page.getByRole('button', { name: '开始多步骤任务', exact: true }).click();
   }
-  await page.getByLabel('导入任务 CSV（最多 400 KB）').setInputFiles({ name: 'sales.csv', mimeType: 'text/csv', buffer: Buffer.from('月份,甲,乙\n一月,10,8\n二月,20,12\n三月,30,18') });
+  const workbook = new JSZip();
+  workbook.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="销售" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  workbook.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  const cells = [['月份', '甲', '乙'], ['一月', 10, 8], ['二月', 20, 12], ['三月', 30, 18]];
+  workbook.file('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + cells.map((row, i) => `<row r="${i + 1}">` + row.map((value, j) => typeof value === 'number' ? `<c r="${'ABC'[j]}${i + 1}"><v>${value}</v></c>` : `<c r="${'ABC'[j]}${i + 1}" t="inlineStr"><is><t>${value}</t></is></c>`).join('') + '</row>').join('') + '</sheetData></worksheet>');
+  await page.getByLabel('导入任务 CSV / XLSX（CSV 400 KB，XLSX 2 MB）').setInputFiles({ name: 'sales.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: await workbook.generateAsync({ type: 'nodebuffer' }) });
+  await expect(page.getByText('工作表：销售', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: '任务 CSV（可选）', exact: true })).toHaveValue(/三月,30,18/);
   await start('销售分析');
   const details = page.getByRole('region', { name: '多步骤任务详情', exact: true });
@@ -119,9 +125,26 @@ try {
   }
   const svg = await download('下载成果', 'chart.svg'); expect(svg.toString()).toContain('<svg');
   await page.getByLabel('选择成果').selectOption({ label: '季度报告.md' });
-  const md = await download('下载成果', 'report.md'); expect(md.toString()).toContain('甲产品由 10 件增长到 30 件');
   const docx = await download('导出 Word', 'report.docx');
   expect(await (await JSZip.loadAsync(docx)).file('word/document.xml').async('string')).toContain('季度报告');
+  const md = await download('下载成果', 'report.md'); expect(md.toString()).toContain('甲产品由 10 件增长到 30 件');
+  await page.getByRole('button', { name: '编辑与版本管理', exact: true }).click();
+  await page.getByRole('button', { name: '编辑新版本', exact: true }).click();
+  await page.getByLabel('编辑 Markdown', { exact: true }).fill('# 手动修订报告\n\n已核查第二版。');
+  await page.getByRole('button', { name: '保存新版本', exact: true }).click();
+  await expect(page.getByLabel('成果版本')).toContainText('版本 2');
+  expect((await download('下载 Markdown', 'report-v2.md')).toString()).toContain('已核查第二版');
+  await page.getByRole('button', { name: '对比版本', exact: true }).click();
+  await expect(page.getByText('手动修订报告', { exact: false }).first()).toBeVisible();
+  await page.getByLabel('成果版本').selectOption({ label: '版本 1 · 模型生成' });
+  await page.getByRole('button', { name: '恢复为新版本', exact: true }).click();
+  await page.getByRole('button', { name: '确认恢复', exact: true }).click();
+  await expect(page.getByLabel('成果版本')).toContainText('版本 3 · 恢复自版本 1');
+  expect((await download('下载 Markdown', 'report-v3.md')).toString()).toContain('甲产品由 10 件增长到 30 件');
+  await expect(page.getByLabel('选择成果').locator('option')).toHaveCount(2);
+  await page.getByLabel('选择成果').selectOption({ label: '季度销量.svg' });
+  expect(await download('下载成果', 'chart-after-edit.svg')).toEqual(svg);
+  expect(calls).toHaveLength(3);
   expect(calls).toHaveLength(3);
   await page.screenshot({ path: path.join(output, 'completed.png'), fullPage: true });
 
@@ -160,7 +183,7 @@ try {
   } else expect(browserModelRequests).toEqual([]);
   expect(errors).toEqual([]); expect(protocolErrors).toEqual([]);
   const result = { passed: true, mode: native ? 'packaged WebView2 / Rust / HTTP fixture' : 'Chromium / real loopback HTTP fixture', requests: calls.length,
-    checks: ['CSV result transcript', 'three model rounds', 'SVG and Markdown artifacts', 'DOCX export', 'encrypted checkpoints', 'cancel closes HTTP', 'lock/reload preserves partial artifacts', 'no replay', 'unknown tool rejected', 'reuse as new task', ...(native ? [] : ['390px'])] };
+    checks: ['XLSX sheet imported locally into CSV result transcript', 'three model rounds', 'SVG and Markdown artifacts', 'DOCX export', 'document version edit/compare/restore without model calls or changing original chart', 'encrypted checkpoints', 'cancel closes HTTP', 'lock/reload preserves partial artifacts', 'no replay', 'unknown tool rejected', 'reuse as new task', ...(native ? [] : ['390px'])] };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); throw error;

@@ -1,4 +1,5 @@
 import type { TextBatchPlan, TextBatchPreview, TextBatchRule, TextBatchRules } from '@/fileOrganizer/textBatch';
+import { artifactSeries } from '@/officeTasks/artifactSeries';
 import { create } from "zustand";
 import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
 import type { VaultBackupSummary } from '@/services/vaultBackup';
@@ -250,18 +251,20 @@ async function appendArtifactVersion(sourceId: string, change: { kind: 'edit'; c
   if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
   const source = get().artifacts.find(item => item.id === sourceId);
   const task = get().taskRuns.find(item => item.id === source?.taskId);
-  if (!source || !task || task.status !== 'succeeded') throw new Error('源成果不存在或任务尚未完成。');
-  if (source.kind !== 'markdown' || task.type !== 'document.generate-markdown') throw new Error('仅 Markdown 文档支持版本编辑和恢复。');
+  if (!source || !task || (task.type === 'office.tools' ? task.status === 'running' : task.status !== 'succeeded')) throw new Error('源成果不存在或任务尚未完成。');
+  if (source.kind !== 'markdown' || !['document.generate-markdown', 'office.tools'].includes(task.type)) throw new Error('仅 Markdown 文档支持版本编辑和恢复。');
   if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
   const content = change.kind === 'edit' ? change.content : source.content;
   if (!content.trim() || content.length > 1_000_000 || content.includes('\0')) throw new Error('成果需要非空文本，最多 1000000 个字符。');
-  const latest = get().artifacts.filter(item => item.taskId === task.id).sort((a, b) => b.version - a.version)[0];
+  const latest = task.type === 'document.generate-markdown'
+    ? get().artifacts.filter(item => item.taskId === task.id).sort((a, b) => b.version - a.version)[0]
+    : artifactSeries(source, get().artifacts)[0];
   const expectedId = change.kind === 'edit' ? source.id : change.expectedLatestId;
   const retry = latest?.parentArtifactId === expectedId && latest.content === content
     && (change.kind === 'restore' ? latest.restoredFromArtifactId === source.id : !latest.restoredFromArtifactId);
   if (latest?.id !== expectedId && !retry) throw new Error('已有更新版本，请重新查看最新版本后再操作。');
   const unchanged = content === latest.content || retry;
-  if (!unchanged && task.artifactIds.length >= 50) throw new Error('每个任务最多保留 50 个版本，请新建任务。');
+  if (!unchanged && task.artifactIds.length >= 50) throw new Error('每个任务最多保留 50 个版本或成果，请新建任务。');
   const controller = new AbortController(), epoch = generation;
   artifactOperations.set(task.id, controller);
   try {

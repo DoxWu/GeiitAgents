@@ -12,6 +12,7 @@ import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { documentExportContent } from '@/officeTasks/document';
 import { exportDocx } from '@/officeTasks/docxClient';
 import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart';
+import { validateVaultBackup } from '@/services/vaultBackupSchema';
 
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 vi.mock('@/services/modelDiscovery', () => ({ discoverModels: vi.fn() }));
@@ -701,6 +702,42 @@ it('rejects duplicate in-flight chart tasks and cancels loading on lock', async 
 
 const officeInput = { title: '工具报告', instruction: '写报告', sourceContent: '仅限本次任务的参考材料' };
 const documentToolReply = { content: null, tool_calls: [{ id: 'doc-call', type: 'function' as const, function: { name: 'create_document' as const, arguments: JSON.stringify({ title: '结果', markdown: '# 结果\n\n正文。' }) } }] };
+it('keeps independent document version chains even when tool outputs have identical names', async () => {
+  vi.mocked(completeToolModel).mockResolvedValueOnce({ ...documentToolReply, tool_calls: [
+    documentToolReply.tool_calls[0], { ...documentToolReply.tool_calls[0], id: 'second-document', function: { name: 'create_document', arguments: JSON.stringify({ title: '结果', markdown: '# 第二份文档' }) } },
+  ] }).mockResolvedValueOnce({ content: '已完成。', tool_calls: [] });
+  const taskId = await store.getState().startOfficeToolTask(profile.id, officeInput, false);
+  const [a, b] = store.getState().artifacts;
+  expect(a.name).toBe(b.name);
+  const editedA = await store.getState().saveArtifactVersion(a.id, '# 第一份修改');
+  const editedB = await store.getState().saveArtifactVersion(b.id, '# 第二份修改');
+  expect(store.getState().artifacts.find(item => item.id === editedA)).toMatchObject({ version: 2, parentArtifactId: a.id });
+  expect(store.getState().artifacts.find(item => item.id === editedB)).toMatchObject({ version: 2, parentArtifactId: b.id });
+  await expect(store.getState().restoreArtifactVersion(a.id, editedB)).rejects.toThrow('更新版本');
+  const restoredA = await store.getState().restoreArtifactVersion(a.id, editedA);
+  expect(store.getState().artifacts.find(item => item.id === restoredA)).toMatchObject({ version: 3, parentArtifactId: editedA, restoredFromArtifactId: a.id, content: a.content });
+  const checkpoint = store.getState().toolRuns.find(tool => tool.tool === 'office.create_document' && tool.outputArtifactId === a.id)!;
+  expect(checkpoint.outputSha256).toBe(a.sha256);
+  const data = { profiles: [], conversations: [], taskRuns: store.getState().taskRuns, toolRuns: store.getState().toolRuns, artifacts: store.getState().artifacts };
+  await expect(validateVaultBackup(data)).resolves.toMatchObject({ artifacts: expect.arrayContaining([expect.objectContaining({ id: restoredA })]) });
+  const invalid = structuredClone(data); invalid.artifacts.find(item => item.id === restoredA)!.restoredFromArtifactId = b.id;
+  await expect(validateVaultBackup(invalid)).rejects.toThrow('备份内容无效');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().artifacts).toHaveLength(5); expect(completeToolModel).toHaveBeenCalledTimes(2);
+  await store.getState().removeTask(taskId); expect(store.getState().artifacts).toEqual([]);
+});
+it('edits preserved partial documents without replaying failed tool tasks and retries persistence only', async () => {
+  vi.mocked(completeToolModel).mockResolvedValueOnce(documentToolReply).mockRejectedValueOnce(new Error('offline'));
+  await expect(store.getState().startOfficeToolTask(profile.id, officeInput, false)).rejects.toThrow('offline');
+  const source = store.getState().artifacts[0];
+  const write = vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  await expect(store.getState().saveArtifactVersion(source.id, '# 修订')).rejects.toThrow('保存失败');
+  write.mockRestore(); const id = await store.getState().saveArtifactVersion(source.id, '# 修订');
+  expect(store.getState().artifacts).toHaveLength(2); expect(store.getState().taskRuns[0].status).toBe('failed');
+  expect(store.getState().artifacts.find(a => a.id === id)?.version).toBe(2); expect(completeToolModel).toHaveBeenCalledTimes(2);
+  store.setState({ taskRuns: store.getState().taskRuns.map(task => ({ ...task, status: 'running' })) });
+  await expect(store.getState().saveArtifactVersion(id, '# running edit')).rejects.toThrow('任务尚未完成');
+});
 it('persists multi-step artifacts and tool records encrypted, then restores without rerunning the model', async () => {
   vi.mocked(completeToolModel).mockResolvedValueOnce(documentToolReply).mockResolvedValueOnce({ content: '已完成。', tool_calls: [] });
   const id = await store.getState().startOfficeToolTask(profile.id, officeInput, false);

@@ -1,4 +1,5 @@
 import type { VaultData } from '@/types/workbench';
+import { artifactRoot } from '@/officeTasks/artifactSeries';
 import { validateProfile } from './workbenchModel';
 import { sha256Text } from '@/officeTasks/document';
 import { validatePersonalInput } from '@/personal/items';
@@ -137,9 +138,22 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
         if (reference && artifacts.get(reference)?.taskId !== t.taskId) fail();
       }
     }
+    const seriesVersions = new Set<string>(), parentChildren = new Set<string>();
+    const taskArtifacts = new Map<string, typeof data.artifacts>();
+    for (const a of artifacts.values()) taskArtifacts.set(a.taskId, [...(taskArtifacts.get(a.taskId) ?? []), a]);
     for (const a of artifacts.values()) {
       if (!tasks.get(a.taskId)?.artifactIds.includes(a.id) || a.mimeType !== (a.kind === 'svg' ? 'image/svg+xml' : 'text/markdown') || await sha256Text(a.content) !== a.sha256) fail();
       for (const parentId of [a.parentArtifactId, a.restoredFromArtifactId]) if (parentId && (artifacts.get(parentId)?.taskId !== a.taskId || artifacts.get(parentId)!.version >= a.version)) fail();
+      if (tasks.get(a.taskId)?.type === 'office.tools') {
+        const members = taskArtifacts.get(a.taskId)!, root = artifactRoot(a, members), key = `${root}:${a.version}`;
+        if (seriesVersions.has(key)) fail(); seriesVersions.add(key);
+        if (a.parentArtifactId) {
+          const parent = artifacts.get(a.parentArtifactId)!;
+          if (a.kind !== 'markdown' || a.version !== parent.version + 1 || a.name !== parent.name || parentChildren.has(parent.id)) fail();
+          parentChildren.add(parent.id);
+        } else if (a.version !== 1) fail();
+        if (a.restoredFromArtifactId && (!a.parentArtifactId || artifactRoot(artifacts.get(a.restoredFromArtifactId)!, members) !== root)) fail();
+      }
       if (a.kind === 'svg') safeSvg(a.content);
     }
     const checkSnapshot = async (s: { text: string; sha256: string }) => { textBytes(s.text); if (await sha256Text(s.text) !== s.sha256) fail(); };

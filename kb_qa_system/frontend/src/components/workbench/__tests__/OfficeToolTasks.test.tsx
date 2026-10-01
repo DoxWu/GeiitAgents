@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { OfficeToolTasks } from '../OfficeToolTasks';
 import { useWorkbenchStore as store } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
+import { parseFirstXlsxSheet } from '@/officeTasks/xlsx';
+vi.mock('@/officeTasks/xlsx', () => ({ parseFirstXlsxSheet: vi.fn() }));
 
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
@@ -20,6 +22,19 @@ beforeEach(() => {
   vi.mocked(store.getState().startOfficeToolTask).mockResolvedValue('new-task');
 });
 afterEach(cleanup);
+it('imports the first XLSX sheet locally, clears consent and preserves input on failure', async () => {
+  vi.mocked(parseFirstXlsxSheet).mockResolvedValue({ csv: '月份,销量\n一月,12', sheetName: '销量' });
+  const file = new File(['fixture'], 'sales.xlsx'); Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(7) });
+  render(<OfficeToolTasks />); fireEvent.click(screen.getByRole('checkbox'));
+  const picker = screen.getByLabelText('导入任务 CSV / XLSX（CSV 400 KB，XLSX 2 MB）');
+  await act(async () => fireEvent.change(picker, { target: { files: [file] } }));
+  expect(screen.getByLabelText('任务 CSV（可选）')).toHaveValue('月份,销量\n一月,12'); expect(screen.getByText('工作表：销量')).toBeVisible();
+  expect(screen.getByRole('checkbox')).not.toBeChecked();
+  vi.mocked(parseFirstXlsxSheet).mockRejectedValue(new Error('公式不支持'));
+  await act(async () => fireEvent.change(picker, { target: { files: [file] } }));
+  expect(screen.getByRole('alert')).toHaveTextContent('公式不支持'); expect(screen.getByLabelText('任务 CSV（可选）')).toHaveValue('月份,销量\n一月,12');
+  expect(store.getState().startOfficeToolTask).not.toHaveBeenCalled();
+});
 
 it('requires fresh cloud consent after input or account changes and consumes it once', async () => {
   render(<OfficeToolTasks />);
