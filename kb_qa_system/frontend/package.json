@@ -13,7 +13,7 @@
     "test:watch": "vitest --configLoader runner",
     "test:coverage": "vitest run --coverage --configLoader runner",
     "benchmark:local-knowledge": "node scripts/benchmark-local-knowledge.mjs",
-    "desktop:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "desktop:dev": "node scripts/dev-desktop.mjs",
     "desktop:build": "node scripts/build-desktop.mjs dev",
     "desktop:build:release": "node scripts/build-desktop.mjs release",
     "desktop:check": "node scripts/cargo-check.mjs",

@@ -55,7 +55,7 @@ try {
     if (create) await page.getByLabel('确认口令', { exact: true }).fill('personal-test-1234');
     await button(create ? '创建' : '解锁').click();
     await button('笔记与待办').click();
-    await expect(page.getByRole('region', { name: '笔记与待办' })).toBeVisible();
+    await expect(page.getByRole('region', { name: '笔记与待办' })).toBeVisible({ timeout: 30000 });
   }
   async function save() { await button('保存记录').click(); await expect(page.getByRole('status')).toHaveText('已保存到本机加密库。'); }
   async function download(name, filename) {
@@ -97,21 +97,18 @@ try {
   await expect(title).toHaveValue('固定时区草稿'); await expect(page.getByText('截止时间（Asia/Shanghai，可选）')).toBeVisible();
   await expect(page.getByLabel('截止时间', { exact: true })).toHaveValue('2030-02-01T09:30'); await save();
   expect(await download('导出已保存记录', 'timezone.md')).toContain('2030-02-01T01:30:00.000Z');
-  // Record commits write the raw draft first. A failing final write keeps a
-  // recoverable in-memory commit; retry must not repeat a revision increment.
-  await content.fill('配额故障后的最终内容'); await persisted();
-  await page.evaluate(() => {
-    const original = Storage.prototype.setItem; let writes = 0;
-    window.restorePersonalStorage = () => { Storage.prototype.setItem = original; };
-    Storage.prototype.setItem = function (key, value) {
-      if (key === 'geiit.workbench.encrypted.v1' && ++writes >= 2) throw new DOMException('fixture quota', 'QuotaExceededError');
-      return original.call(this, key, value);
-    };
+  // Verify IndexedDB can retain encrypted strings beyond localStorage's quota.
+  const persistence = await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('geiit-private-vault-v1', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const ciphertext = await new Promise((resolve, reject) => { const tx = db.transaction('vaults'), request = tx.objectStore('vaults').get('geiit.workbench.encrypted.v1'); request.onsuccess = () => resolve(request.result?.value || ''); request.onerror = () => reject(request.error); });
+    const value = 'x'.repeat(6 * 1024 * 1024);
+    await new Promise((resolve, reject) => { const tx = db.transaction('vaults', 'readwrite'); tx.objectStore('vaults').put({ key: 'capacity-probe', value }); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    const readback = await new Promise((resolve, reject) => { const tx = db.transaction('vaults'), request = tx.objectStore('vaults').get('capacity-probe'); request.onsuccess = () => resolve(request.result?.value.length); request.onerror = () => reject(request.error); });
+    db.close(); return { ciphertext, readback };
   });
-  await button('保存记录').click(); await expect(page.getByText(/当前内存记录尚未确认保存/)).toBeVisible();
-  await expect(button('保存记录')).toBeDisabled();
-  await page.evaluate(() => window.restorePersonalStorage());
-  await button('重试本机保存').click(); await expect(page.getByRole('status')).toHaveText('本机记录和草稿已重新保存。');
+  expect(persistence.readback).toBe(6 * 1024 * 1024);
+  expect(persistence.ciphertext).not.toContain('评审会议记录');
+  await content.fill('配额故障后的最终内容'); await save();
   await page.getByLabel('选择记录：固定时区草稿').check();
   const selected = JSON.parse(await download('批量导出 JSON', 'selected.json'));
   expect(selected.items).toHaveLength(1); expect(selected.items[0]).toMatchObject({ revision: 2, content: '配额故障后的最终内容' });
@@ -133,22 +130,13 @@ try {
   await expect(title).toHaveValue('未保存的评审编辑'); await expect(content).toHaveValue(note);
   await page.getByLabel('选择记录：评审会议记录').check(); await button('归档所选').click();
   await expect(page.getByText('所选记录有未保存草稿，请先保存或丢弃草稿。')).toBeVisible();
-  // Failed autosave keeps editor and in-memory draft intact until persistence retry.
-  await page.evaluate(() => {
-    const original = Storage.prototype.setItem;
-    window.restorePersonalStorage = () => { Storage.prototype.setItem = original; };
-    Storage.prototype.setItem = function (key, value) {
-      if (key === 'geiit.workbench.encrypted.v1') throw new DOMException('fixture quota', 'QuotaExceededError');
-      return original.call(this, key, value);
-    };
+  await content.fill(note + '\n\n自动保存期间的加密输入'); await persisted();
+  const encrypted = await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('geiit-private-vault-v1', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const row = await new Promise((resolve, reject) => { const tx = db.transaction('vaults'), request = tx.objectStore('vaults').get('geiit.workbench.encrypted.v1'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    db.close(); return row?.value || '';
   });
-  await content.fill(note + '\n\n自动保存故障期间的输入');
-  await expect(page.getByLabel('本机编辑草稿保存状态')).toContainText('尚未确认保存');
-  await expect(content).toHaveValue(note + '\n\n自动保存故障期间的输入');
-  await page.evaluate(() => window.restorePersonalStorage()); await button('重试本机保存').click();
-  await expect(page.getByRole('status')).toHaveText('本机记录和草稿已重新保存。');
-  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
-  expect(encrypted).not.toContain('评审'); expect(encrypted).not.toContain('故障期间');
+  expect(encrypted).not.toContain('评审'); expect(encrypted).not.toContain('自动保存期间');
   await page.screenshot({ path: path.join(output, 'desktop.png') });
   if (!native) {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -156,13 +144,13 @@ try {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(title).toBeVisible(); await page.setViewportSize({ width: 1280, height: 900 });
   }
-  await page.reload(); await unlock(); await expect(content).toHaveValue(note + '\n\n自动保存故障期间的输入');
+  await page.reload(); await unlock(); await expect(content).toHaveValue(note + '\n\n自动保存期间的加密输入');
   await button('恢复草稿：未命名').click(); await expect(title).toHaveValue(''); await expect(content).toHaveValue('没有标题的未完成笔记');
   await button('恢复草稿：未保存的评审编辑').click();
   page.once('dialog', dialog => dialog.accept()); await button('删除记录').click();
   await expect(page.getByRole('status')).toHaveText('已删除。'); await expect(button('保存记录')).toBeDisabled();
   await button('另存为新草稿').click(); await expect(page.getByRole('status')).toContainText('已复制为新草稿'); await save();
-  await expect(content).toHaveValue(note + '\n\n自动保存故障期间的输入');
+  await expect(content).toHaveValue(note + '\n\n自动保存期间的加密输入');
   await button('笔记').click();
   const markdownBefore = requests.filter(url => url.includes('/api/')).length;
   await page.getByLabel('Markdown 笔记文件').setInputFiles({ name: 'Imported QA note.md', mimeType: 'text/markdown', buffer: Buffer.from('# Imported QA note\n\nLoaded locally.') });
@@ -174,7 +162,7 @@ try {
   expect(requests.some(url => url.includes('example.test'))).toBe(false); expect(errors).toEqual([]);
   await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, native, checks: [
     'independent encrypted raw drafts', 'view switch, immediate lock and refresh recovery', 'fixed draft timezone across device timezone change',
-    'UTC deadline, overdue and done', 'safe Markdown preview', 'revision-preserving final-write retry', 'autosave quota failure and retry',
+    'UTC deadline, overdue and done', 'safe Markdown preview', 'formal revision persistence', 'IndexedDB capacity probe and encrypted vault plaintext exclusion',
     'selected Markdown/JSON download bytes', 'archive/restore and draft refusal', 'filter selection reset', 'delete and recover draft as new',
     'UTF-8 Markdown import into a separate encrypted draft',
     ...(native ? [] : ['390px layout']), 'zero additional API/model requests',

@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Browser integration for encrypted office TaskRun/ToolRun/Artifact. Uses only synthetic fixtures and mocked generation.
 import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
@@ -74,7 +75,7 @@ try {
   expect(firstPayload).toEqual({ title: '项目周报', instruction: '整理为包含进展、风险和下周计划的周报。',
     source: { file: '粘贴材料.txt', content: '登录模块已完成，等待安全评审。' } });
   expect(JSON.stringify(sent[0])).not.toMatch(/synthetic-task-session|task-test-1234|api.?key/i);
-  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const encrypted = await readVaultCiphertext(page);
   expect(encrypted).not.toContain('登录模块'); expect(encrypted).not.toContain('项目周报');
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: '下载 Markdown' }).click();
@@ -112,7 +113,7 @@ try {
   await expect(page.getByRole('status')).toContainText('未下载或嵌入图片');
   expect(requests.some(url => url.includes('example.test/never-fetch'))).toBe(false);
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
-  const newEncrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const newEncrypted = await readVaultCiphertext(page);
   expect(newEncrypted).not.toContain('安全评审已通过');
   await page.getByLabel('成果版本').selectOption({ label: '版本 1 · 模型生成' });
   await expect(page.getByRole('button', { name: '编辑新版本' })).toBeDisabled();
@@ -203,7 +204,7 @@ try {
   await writeFile(path.join(output, 'chart-line.png'), png);
   expect(sent.length).toBe(beforeCharts);
   expect(requests.filter(url => url.includes('/api/v1/')).length).toBe(chartApiRequests);
-  const chartEncrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const chartEncrypted = await readVaultCiphertext(page);
   expect(chartEncrypted).not.toContain('季度营收'); expect(chartEncrypted).not.toContain('第一季度'); expect(chartEncrypted).not.toContain('<svg');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('region', { name: '图表任务详情' }).locator('img').scrollIntoViewIfNeeded();

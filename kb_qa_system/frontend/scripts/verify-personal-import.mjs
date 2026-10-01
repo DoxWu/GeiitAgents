@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID, webcrypto } from 'node:crypto';
 import path from 'node:path';
+import { readVaultCiphertext, setVaultWriteFailure } from './vault-qa.mjs';
 
 const native = process.argv.includes('--native'), output = path.resolve('../../.tools/personal-import-qa', native ? 'native' : 'web');
 await mkdir(output, { recursive: true });
@@ -59,7 +60,7 @@ try {
     await file.saveAs(path.join(output, filename)); return readFile(path.join(output, filename), 'utf8');
   }
   async function savedData() {
-    const encoded = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+    const encoded = await readVaultCiphertext(page);
     expect(encoded).not.toContain('导入'); const envelope = JSON.parse(encoded);
     const material = await webcrypto.subtle.importKey('raw', Buffer.from(password), 'PBKDF2', false, ['deriveKey']);
     const key = await webcrypto.subtle.deriveKey({ name: 'PBKDF2', salt: Buffer.from(envelope.salt, 'base64'), iterations: 600000, hash: 'SHA-256' }, material, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
@@ -81,13 +82,10 @@ try {
   let saved = await savedData(); expect(saved.personalItems).toHaveLength(2); expect(new Set(saved.personalItems.map(i => i.id)).size).toBe(2);
   const changed = structuredClone(exported); changed.items[0].content = '文件替换正文';
   await upload(changed); await page.getByLabel('导入处理方式 1', { exact: true }).selectOption('replace');
-  await page.evaluate(() => {
-    const original = Storage.prototype.setItem; window.restoreImportStorage = () => { Storage.prototype.setItem = original; };
-    Storage.prototype.setItem = function (key, value) { if (key === 'geiit.workbench.encrypted.v1') throw new DOMException('fixture quota', 'QuotaExceededError'); return original.call(this, key, value); };
-  });
+  await setVaultWriteFailure(page, true);
   await commit(false); await expect(button('重试保存导入结果')).toBeEnabled(); await expect(page.getByLabel('笔记待办导入文件')).toBeDisabled();
   expect((await savedData()).personalItems.find(i => i.id === exported.items[0].id).content).toBe(exported.items[0].content);
-  await page.evaluate(() => window.restoreImportStorage()); await button('重试保存导入结果').click(); await expect(page.getByText('导入已加密保存', { exact: true })).toBeVisible();
+  await setVaultWriteFailure(page, false); await button('重试保存导入结果').click(); await expect(page.getByText('导入已加密保存', { exact: true })).toBeVisible();
   saved = await savedData(); expect(saved.personalItems).toHaveLength(2); expect(saved.personalItems.find(i => i.id === exported.items[0].id)).toMatchObject({ revision: 2, content: '文件替换正文' });
   const merged = structuredClone(exported); merged.items[0].title = '字段合并标题'; merged.items[0].content = '字段合并正文'; merged.items[0].tags = ['文件标签'];
   await upload(merged); await page.getByLabel('导入处理方式 1', { exact: true }).selectOption('merge');

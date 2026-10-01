@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Production browser -> real FastAPI personal routes -> isolated SQLite memory.
 // No real user tokens, production DB connections, Celery tasks, or email delivery.
 // Start `vite preview --port 1425` first; backend test dependencies must be installed.
@@ -180,7 +181,7 @@ try {
   await page.getByRole('button', { name: '将当前内容保存为模板' }).click();
   await expect(page.getByLabel('选择提醒模板')).toContainText('草稿验收模板');
   await expect(page.getByLabel('提醒草稿保存状态')).toContainText('草稿已加密');
-  const saved = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const saved = await readVaultCiphertext(page);
   expect(saved).not.toContain('跨刷新提醒草稿'); expect(saved).not.toContain('草稿验收模板');
   async function reload() {
     await page.reload();

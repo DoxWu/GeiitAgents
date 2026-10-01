@@ -2,6 +2,7 @@ import type { TextBatchPlan, TextBatchPreview, TextBatchRule, TextBatchRules } f
 import { artifactSeries } from '@/officeTasks/artifactSeries';
 import { create } from "zustand";
 import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
+import { createVaultStorage, VAULT_CHANGE_CHANNEL, VAULT_WINDOW_ID } from '@/services/privateVaultStorage';
 import type { VaultBackupSummary } from '@/services/vaultBackup';
 import { completeModel, completeAccountModel, getAccountModel, validateProfile, validateModelEndpoint } from "@/services/workbenchModel";
 import { discoverModels, type ModelCatalog, type ModelEndpoint } from '@/services/modelDiscovery';
@@ -312,28 +313,34 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
   prepareWorkbenchRestore: async (file, backupPassword, localPassword) => {
     if (get().unlocked || vault || organizerInFlight || get().vaultTransferBusy) throw new Error('请先锁定工作台并等待文件操作结束，再预检查恢复。');
-    const epoch = generation, token = ++transferGeneration, expected = localStorage.getItem(VAULT_STORAGE_KEY);
+    const epoch = generation, token = ++transferGeneration, storage = createVaultStorage();
     preparedRestore = null; set({ vaultTransferBusy: true, vaultRestorePreview: null });
     const guard = () => { if (epoch !== generation || token !== transferGeneration || get().unlocked || vault || organizerInFlight) throw new Error('恢复预检查已取消或工作台状态已改变。'); };
     try {
+      const expected = await storage.getItem(VAULT_STORAGE_KEY); guard();
       const { prepareVaultReplacement } = await import('@/services/vaultBackup'); guard();
       const result = await prepareVaultReplacement(file, backupPassword, localPassword); guard();
-      if (localStorage.getItem(VAULT_STORAGE_KEY) !== expected) throw new Error('预检查期间本机密钥库已改变，请重新预检查。');
+      const current = await storage.getItem(VAULT_STORAGE_KEY); guard();
+      if (current !== expected) throw new Error('预检查期间本机密钥库已改变，请重新预检查。');
       const id = crypto.randomUUID(); preparedRestore = { id, expected, serialized: result.serialized };
       set({ vaultRestorePreview: { id, replacing: expected !== null, summary: result.summary } });
-    } finally { if (token === transferGeneration) set({ vaultTransferBusy: false }); }
+    } finally { storage.close?.(); if (token === transferGeneration) set({ vaultTransferBusy: false }); }
   },
   commitWorkbenchRestore: async id => {
     if (get().unlocked || vault || organizerInFlight || get().vaultTransferBusy || !preparedRestore || preparedRestore.id !== id) throw new Error('请先锁定工作台并重新预检查备份。');
     const prepared = preparedRestore, epoch = generation, token = transferGeneration;
     set({ vaultTransferBusy: true });
     try {
-      await withVaultWriteLock(VAULT_STORAGE_KEY, () => {
+      const storage = createVaultStorage();
+      try { await withVaultWriteLock(VAULT_STORAGE_KEY, async () => {
         if (epoch !== generation || token !== transferGeneration || get().unlocked || vault || organizerInFlight || preparedRestore !== prepared) throw new Error('恢复已取消或状态已改变，请重新预检查。');
-        if (localStorage.getItem(VAULT_STORAGE_KEY) !== prepared.expected) throw new Error('本机密钥库已在其他窗口改变，请重新预检查，未覆盖新数据。');
-        try { localStorage.setItem(VAULT_STORAGE_KEY, prepared.serialized); }
+        if (await storage.getItem(VAULT_STORAGE_KEY) !== prepared.expected) throw new Error('本机密钥库已在其他窗口改变，请重新预检查，未覆盖新数据。');
+        if (epoch !== generation || token !== transferGeneration || get().unlocked || vault || preparedRestore !== prepared) throw new Error('恢复已取消或状态已改变，请重新预检查。');
+        try { await storage.setItem(VAULT_STORAGE_KEY, prepared.serialized, prepared.expected, () => {
+          if (epoch !== generation || token !== transferGeneration || get().unlocked || vault || preparedRestore !== prepared) throw new Error('恢复已取消或状态已改变，请重新预检查。');
+        }); }
         catch { throw new Error('本机空间不足或存储写入失败，原密钥库未更改。可释放空间后重试。'); }
-      });
+      }); } finally { storage.close?.(); }
       // Replacing ciphertext neither unlocks the vault nor replays any task.
       eraseMemory(); set({ storageError: null });
     } finally { if (token === transferGeneration) set({ vaultTransferBusy: false }); }
@@ -761,8 +768,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (get().vaultTransferBusy) throw new Error('备份或恢复处理中，请先等待或取消。');
     get().cancelVaultTransfer();
     const epoch = ++generation;
-    const candidate = new PrivateVault(window.localStorage, VAULT_STORAGE_KEY);
-    const data = await candidate.unlock(password);
+    const candidate = new PrivateVault(createVaultStorage(), VAULT_STORAGE_KEY);
+    let data;
+    try { data = await candidate.unlock(password); }
+    catch (error) { candidate.lock(); throw error; }
     if (epoch !== generation) { candidate.lock(); return; }
     vault = candidate;
     secrets = data.profiles;
@@ -1420,6 +1429,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
 window.addEventListener("storage", (event) => {
   if ((!event.key || event.key === VAULT_STORAGE_KEY) && useWorkbenchStore.getState().unlocked) eraseMemory();
 });
+if (typeof BroadcastChannel !== 'undefined') {
+  const vaultChanges = new BroadcastChannel(VAULT_CHANGE_CHANNEL);
+  vaultChanges.addEventListener('message', event => {
+    if (event.data?.key === VAULT_STORAGE_KEY && event.data?.source !== VAULT_WINDOW_ID && useWorkbenchStore.getState().unlocked) eraseMemory();
+  });
+}
 window.addEventListener("pagehide", eraseMemory);
 
 useAuthStore.subscribe((state, previous) => {

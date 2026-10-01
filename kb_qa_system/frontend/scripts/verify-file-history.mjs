@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Isolated encrypted synthetic histories in the production Web / dev executable.
 // This checks history navigation, lazy DOM and actual exports; it grants no directory access.
 import { chromium, expect } from '@playwright/test';
@@ -61,7 +62,7 @@ try {
   const button = name => page.getByRole('button', { name, exact: true });
   const region = name => page.getByRole('region', { name, exact: true });
   const pager = (label, name) => page.getByRole('navigation', { name: label + '分页', exact: true }).getByRole('button', { name, exact: true });
-  const stored = () => page.evaluate(key => localStorage.getItem(key), storageKey);
+  const stored = () => readVaultCiphertext(page, storageKey);
   async function unlock() { await page.getByLabel('解锁口令', { exact: true }).fill(password); await button('解锁').click(); await button('文件整理').click(); }
   async function exported(target, name) {
     const event = page.waitForEvent('download'); await target.click(); const file = await event; const filename = path.join(run, name); await file.saveAs(filename); return readFile(filename, 'utf8');

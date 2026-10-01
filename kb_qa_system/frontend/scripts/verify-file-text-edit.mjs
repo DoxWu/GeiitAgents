@@ -1,3 +1,4 @@
+import { readVaultCiphertext, setVaultWriteFailure } from './vault-qa.mjs';
 // Production Chromium OPFS (--web), or packaged WebView2/Rust with real picker.
 // The native folder dialogs use the path printed in phase.json; select them with
 // Computer Use/manual interaction. No injected native grants or absolute-path IPC.
@@ -25,10 +26,9 @@ async function external(text) {
   else await page.evaluate(async text => { const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('text-fixture'); const writer = await (await dir.getFileHandle('a.md')).createWritable(); await writer.write(text); await writer.close(); }, text);
 }
 async function installFixtureHooks() {
+  await setVaultWriteFailure(page, false);
   await page.evaluate(async ({ native }) => {
     window.__qaWriteCount = 0; window.__qaFault = ''; window.__qaFailVault = false;
-    const save = Storage.prototype.setItem;
-    Storage.prototype.setItem = function (key, value) { if (key === 'geiit.workbench.encrypted.v1' && window.__qaFailVault) throw new DOMException('Synthetic quota', 'QuotaExceededError'); return save.call(this, key, value); };
     if (native) {
       const fetchOriginal = window.fetch.bind(window);
       window.fetch = async (url, options) => {
@@ -109,7 +109,7 @@ try {
   const writes = await page.evaluate(() => window.__qaWriteCount); expect(writes).toBe(3);
   await page.evaluate(() => { window.__qaFault = ''; window.__qaFailVault = false; }); await page.getByRole('button', { name: '重试本机保存' }).click();
   await expect(page.getByRole('button', { name: '重试本机保存' })).toHaveCount(0); expect(await page.evaluate(() => window.__qaWriteCount)).toBe(writes);
-  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1')); expect(encrypted).not.toMatch(/Synthetic|Durable|text-fixture|a\.md/);
+  const encrypted = await readVaultCiphertext(page); expect(encrypted).not.toMatch(/Synthetic|Durable|text-fixture|a\.md/);
   await page.reload(); await page.getByLabel('解锁口令', { exact: true }).fill('text-edit-fixture-pass'); await page.getByRole('button', { name: '解锁', exact: true }).click();
   await page.getByRole('button', { name: '文件整理', exact: true }).click(); await page.getByRole('tab', { name: '文本内容编辑' }).click();
   await expect(page.locator('details')).toHaveCount(3); await expect(page.getByLabel('文本编辑内容')).toHaveCount(0);

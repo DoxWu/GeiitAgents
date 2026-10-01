@@ -1,13 +1,13 @@
 import type { VaultData } from "@/types/workbench";
+import type { VaultStorage } from './privateVaultStorage';
 
 const ITERATIONS = 600_000;
 export const MAX_VAULT_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 const encoder = new TextEncoder();
 const context = encoder.encode("geiit-private-workbench-v1");
 
-// All current-client localStorage writers share this short critical section.
-// Encryption happens outside it. Old clients and other storage APIs do not
-// participate, so still compare the exact expected ciphertext immediately.
+// Current clients share this short critical section. Encryption happens outside
+// it; IndexedDB also compares the expected ciphertext inside its transaction.
 export async function withVaultWriteLock<T>(storageKey: string, operation: () => T): Promise<T> {
   if (typeof navigator !== 'undefined' && navigator.locks) return navigator.locks.request('geiit-private-vault:' + storageKey, operation);
   return operation();
@@ -47,13 +47,13 @@ export class PrivateVault {
   private epoch = 0;
   private pending: Promise<void> = Promise.resolve();
 
-  constructor(private storage: Storage, readonly storageKey: string) {}
+  constructor(private storage: VaultStorage, readonly storageKey: string) {}
 
-  exists(): boolean { return this.storage.getItem(this.storageKey) !== null; }
+  async exists(): Promise<boolean> { return (await this.storage.getItem(this.storageKey)) !== null; }
 
   async unlock(password: string): Promise<VaultData> {
     const epoch = ++this.epoch;
-    const stored = this.storage.getItem(this.storageKey);
+    const stored = await this.storage.getItem(this.storageKey);
     let salt: Uint8Array;
     let key: CryptoKey;
     let data: VaultData;
@@ -118,13 +118,16 @@ export class PrivateVault {
         { name: "AES-GCM", iv, additionalData: context }, key, encoder.encode(snapshot),
       );
       const serialized = JSON.stringify({ version: 1, salt: encode(salt), iv: encode(iv), ciphertext: encode(new Uint8Array(ciphertext)) });
-      await withVaultWriteLock(this.storageKey, () => {
+      await withVaultWriteLock(this.storageKey, async () => {
         if (epoch !== this.epoch) throw new Error("密钥库已锁定。");
-        if (this.storage.getItem(this.storageKey) !== this.lastWritten) {
+        if (await this.storage.getItem(this.storageKey) !== this.lastWritten) {
           this.lock();
           throw new Error("密钥库已在另一窗口更新，请重新解锁。");
         }
-        this.storage.setItem(this.storageKey, serialized);
+        if (epoch !== this.epoch) throw new Error("密钥库已锁定。");
+        await this.storage.setItem(this.storageKey, serialized, this.lastWritten, () => {
+          if (epoch !== this.epoch) throw new Error("密钥库已锁定。");
+        });
         this.lastWritten = serialized;
       });
     });
@@ -139,5 +142,6 @@ export class PrivateVault {
     this.key = null;
     this.salt = null;
     this.lastWritten = null;
+    this.storage.close?.();
   }
 }

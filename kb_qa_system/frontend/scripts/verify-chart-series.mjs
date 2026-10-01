@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Production-browser QA with synthetic CSV only. Start `vite preview --port 1425` first.
 import { chromium, expect } from '@playwright/test';
 import JSZip from 'jszip';
@@ -52,7 +53,7 @@ try {
   await svgDownload.saveAs(path.join(output, 'series-bar.svg'));
   const pngDownload = await download('下载 PNG'); await pngDownload.saveAs(path.join(output, 'series-bar.png'));
   expect((await readFile(await pngDownload.path())).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
-  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const encrypted = await readVaultCiphertext(page);
   expect(encrypted).not.toMatch(/季度收入|第一季度|<svg|成本/);
   await page.getByRole('region', { name: '图表任务详情' }).locator('img').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'desktop.png') });

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BookOpen, Plus, LockKeyhole, Settings2, FileText, MessageSquare, Send, Square, Download, Trash2, Menu, X, Loader2, ClipboardList } from "lucide-react";
 import { useWorkbenchStore, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from "@/store/workbenchStore";
+import { hasStoredVault } from '@/services/privateVaultStorage';
 import { useAuthStore } from "@/store/authStore";
 import { LocalMarkdown, PrivateMarkdown } from "@/components/workbench/LocalMarkdown";
 import { ModelConnections } from "@/components/workbench/ModelConnections";
@@ -24,12 +25,12 @@ export default function WorkbenchPage() {
   const [confirmation, setConfirmation] = useState("");
   const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState("");
+  const [hasVault, setHasVault] = useState<boolean | null>(null);
   const [text, setText] = useState("");
   const [sidebar, setSidebar] = useState(false);
   const [document, setDocument] = useState<LocalDocument | null>(null);
   const [attach, setAttach] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-  const hasVault = localStorage.getItem(VAULT_STORAGE_KEY) !== null;
   const conversation = state.conversations.find((c) => c.id === state.currentId);
   const running = conversation ? state.running[conversation.id] : false;
   const archive = conversation?.kind === 'knowledge-answer';
@@ -37,6 +38,13 @@ export default function WorkbenchPage() {
   const selectedProfile = conversation?.profileId || (!state.profiles.length && state.accountModel ? ACCOUNT_MODEL_ID : "");
 
   useEffect(() => { void useWorkbenchStore.getState().refreshAccountModel(); }, [userId, authenticated]);
+
+  useEffect(() => {
+    let current = true;
+    void hasStoredVault(VAULT_STORAGE_KEY).then(value => { if (current) setHasVault(value); })
+      .catch(() => { if (current) { setHasVault(true); setError('无法访问本机加密存储，请检查浏览器存储权限。'); } });
+    return () => { current = false; };
+  }, [state.vaultTransferBusy, state.unlocked]);
 
   useEffect(() => {
     if (!state.unlocked) { setText(""); setPassword(""); setConfirmation(""); setDocument(null); setAttach(false); return; }
@@ -49,7 +57,7 @@ export default function WorkbenchPage() {
     if (!hasVault && password !== confirmation) { setError("两次口令不一致。"); return; }
     setUnlocking(true);
     try {
-      await state.unlock(password); setPassword(""); setConfirmation("");
+      await state.unlock(password); setHasVault(true); setPassword(""); setConfirmation("");
       if (!useWorkbenchStore.getState().profiles.length && !useWorkbenchStore.getState().conversations.length && !authenticated) setTab(current => current === 'chat' ? 'models' : current);
     }
     catch (e) { setError(e instanceof Error ? e.message : "无法解锁。"); }
@@ -107,7 +115,8 @@ export default function WorkbenchPage() {
         <span className="hidden text-xs text-ink-tertiary sm:inline">{state.unlocked ? "本机密钥库已解锁" : "本机密钥库已锁定"}</span>
       </header>
       {state.storageError && <p role="alert" className="border-b border-line p-3 text-sm text-danger">{state.storageError}</p>}
-      {tab === 'backup' ? <Suspense fallback={<p className="p-6">正在加载备份与恢复…</p>}><WorkbenchBackup onUnlock={() => setTab('chat')} /></Suspense> : tab === "preview" ? <LocalMarkdown document={document} onChange={(doc) => { setDocument(doc); setAttach(false); }} /> : !state.unlocked ?
+      {tab === 'backup' ? <Suspense fallback={<p className="p-6">正在加载备份与恢复…</p>}><WorkbenchBackup onUnlock={() => setTab('chat')} /></Suspense> : tab === "preview" ? <LocalMarkdown document={document} onChange={(doc) => { setDocument(doc); setAttach(false); }} /> : !state.unlocked ? hasVault === null ?
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6"><p className="text-sm text-ink-secondary">正在检查本机密钥库…</p></div> :
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6"><form onSubmit={unlock} className="grid w-full max-w-sm gap-5">
           <LockKeyhole className="text-brand" size={28} /><h1 className="text-xl font-semibold">{hasVault ? "解锁工作台" : "创建本机密钥库"}</h1>
           <label className="work-label">解锁口令<input autoFocus className="work-input" type="password" required minLength={hasVault ? 1 : 4} autoComplete={hasVault ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} /></label>

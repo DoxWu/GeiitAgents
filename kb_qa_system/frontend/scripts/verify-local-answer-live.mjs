@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Explicitly authorized synthetic test only. Provider credentials stay in a Python subprocess.
 import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
@@ -111,7 +112,7 @@ try {
   expect(markdown).not.toMatch(/vector|apiKey|synthetic-test-session/);
   await answer.getByRole('button', { name: '保存为独立对话记录' }).click();
   await expect(answer.getByRole('button', { name: '已保存到工作台' })).toBeDisabled();
-  expect(await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'))).not.toContain('主管审批记录');
+  expect(await readVaultCiphertext(page)).not.toContain('主管审批记录');
   await page.screenshot({ path: path.join(output, mockOnly ? 'mock-answer-saved.png' : 'live-answer.png'), fullPage: true });
   await answer.getByRole('link', { name: '打开已保存记录' }).click();
   await expect(page.getByText(/此记录不能继续发送给模型/)).toBeVisible();

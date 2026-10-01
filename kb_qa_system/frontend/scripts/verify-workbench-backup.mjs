@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { readVaultCiphertext, writeVaultCiphertext, removeVaultCiphertext, setVaultWriteFailure } from './vault-qa.mjs';
 
 const native = process.argv.includes('--native'), key = 'geiit.workbench.encrypted.v1';
 const output = path.resolve('../../.tools/workbench-backup-qa', native ? 'native' : 'web');
@@ -57,7 +58,7 @@ try {
   await observe();
   const button = name => page.getByRole('button', { name, exact: true });
   const field = name => page.getByLabel(name, { exact: true });
-  const stored = () => page.evaluate(k => localStorage.getItem(k), key);
+  const stored = () => readVaultCiphertext(page, key);
   async function unlock(password, create = false) {
     await field('解锁口令').fill(password); if (create) await field('确认口令').fill(password);
     await button(create ? '创建' : '解锁').click(); await expect(page.getByText('本机密钥库已解锁', { exact: true })).toBeVisible();
@@ -102,20 +103,16 @@ try {
   expect(await stored()).toBe(original); await expect(button('确认恢复工作台')).toBeDisabled(); await expect(field('此备份的口令')).toHaveValue('');
   await button('取消备份或恢复预检查').click(); await expect(button('确认恢复工作台')).toHaveCount(0); expect(await stored()).toBe(original);
   await prepare(without.filename); await expect(button('确认恢复工作台')).toBeVisible();
-  // Genuine other-window storage event, preserving valid ciphertext with JSON whitespace.
-  if (native) await page.evaluate(([k, value]) => localStorage.setItem(k, value), [key, original + ' ']);
+  // Genuine other-window IndexedDB write and notification, preserving valid ciphertext.
+  if (native) await writeVaultCiphertext(page, original + ' ', key);
   else {
     const other = await context.newPage(); await other.goto(page.url());
-    await other.evaluate(([k, value]) => localStorage.setItem(k, value), [key, original + ' ']); await other.close();
+    await writeVaultCiphertext(other, original + ' ', key); await other.close();
   }
   await field('我已核对备份内容并确认整体恢复到本机工作台').check(); await button('确认恢复工作台').click();
   await expect(page.getByRole('alert')).toContainText('未覆盖新数据'); expect(await stored()).toBe(original + ' ');
   await prepare(without.filename); await expect(button('确认恢复工作台')).toBeVisible();
-  await page.evaluate(k => {
-    const original = Storage.prototype.setItem;
-    window.restoreBackupStorage = () => { Storage.prototype.setItem = original; };
-    Storage.prototype.setItem = function (name, value) { if (name === k) throw new DOMException('synthetic quota', 'QuotaExceededError'); return original.call(this, name, value); };
-  }, key);
+  await setVaultWriteFailure(page, true);
   await field('我已核对备份内容并确认整体恢复到本机工作台').check(); await button('确认恢复工作台').click();
   await expect(page.getByRole('alert')).toContainText('原密钥库未更改'); expect(await stored()).toBe(original + ' ');
   await page.screenshot({ path: path.join(output, 'preview-quota.png') });
@@ -124,7 +121,7 @@ try {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: path.join(output, 'mobile.png') }); await page.setViewportSize({ width: 1280, height: 900 });
   }
-  await page.evaluate(() => window.restoreBackupStorage()); await button('确认恢复工作台').click();
+  await setVaultWriteFailure(page, false); await button('确认恢复工作台').click();
   await expect(page.getByText('恢复已完成。请使用刚设置的新解锁口令打开工作台。')).toBeVisible();
   expect(decrypt(await stored(), 'new-pass-5678', false)).toEqual(plain.data);
   expect(await page.evaluate(() => localStorage.getItem('backup-qa-unrelated'))).toBe('untouched');
@@ -137,7 +134,7 @@ try {
   // but removes only this test's vault; Web uses a genuinely new browser context.
   const url = page.url();
   if (!native) { await context.close(); context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1280, height: 900 } }); page = await context.newPage(); await observe(); await page.goto(url); }
-  else { await button('锁定本机密钥库').click(); await page.evaluate(k => localStorage.removeItem(k), key); await page.reload(); }
+  else { await button('锁定本机密钥库').click(); await removeVaultCiphertext(page, key); await page.reload(); }
   await button('工作台备份').click(); await prepare(withKeys.filename); await expect(page.getByText(/本机尚无密钥库，将从备份创建/)).toBeVisible();
   await field('我已核对备份内容并确认整体恢复到本机工作台').check(); await button('确认恢复工作台').click();
   await expect(page.getByText('恢复已完成。请使用刚设置的新解锁口令打开工作台。')).toBeVisible();
@@ -151,7 +148,7 @@ try {
     'real UI note, draft, conversation, chart and model configuration', 'independent decryption of actual downloads', 'default key omission and explicit opt-in',
     'wrong password unchanged storage', 'preview without writes and explicit acknowledgement', 'cancel and ciphertext conflict',
     'quota-safe replacement retry', 'new local password and exact restored data', 'unrelated storage untouched', 'refresh and empty-vault restore',
-    'no model requests or emails', ...(native ? ['same-page injected storage conflict'] : ['390px layout', 'fresh browser context', 'real other-window storage event']),
+    'no model requests or emails', ...(native ? ['same-page injected IndexedDB conflict'] : ['390px layout', 'fresh browser context', 'real other-window IndexedDB write']),
   ] }, null, 2));
   console.log(`Workbench backup ${native ? 'native' : 'web'} QA passed: ${output}`);
 } catch (error) {

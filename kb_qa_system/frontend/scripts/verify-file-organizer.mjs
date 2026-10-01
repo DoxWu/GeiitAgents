@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Production UI with real Chromium OPFS handles; no user files or native picker automation.
 // Start `vite preview --port 1425` first. All fault injection uses synthetic files.
 import { chromium, expect } from '@playwright/test';
@@ -77,7 +78,7 @@ try {
   const download = await pendingDownload, record = JSON.parse(await readFile(await download.path(), 'utf8'));
   expect(record.changes).toHaveLength(2); expect(record.changes.every(item => /^[a-f0-9]{64}$/.test(item.sha256))).toBe(true);
   await download.saveAs(path.join(output, 'rename-record.json'));
-  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const encrypted = await readVaultCiphertext(page);
   expect(encrypted).not.toMatch(/organizer-qa-fixture|a\.txt|synthetic A|geiit-stage/);
   await page.screenshot({ path: path.join(output, 'desktop.png') });
   await openOrganizer(true);

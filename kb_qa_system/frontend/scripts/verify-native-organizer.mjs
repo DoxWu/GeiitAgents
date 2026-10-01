@@ -1,3 +1,4 @@
+import { readVaultCiphertext } from './vault-qa.mjs';
 // Packaged WebView2 + Rust + real Windows directories. The six native picker
 // dialogs must be completed with the paths printed below (Computer Use/manual).
 // No grant/path bypass or replacement picker. All files are synthetic in .tools.
@@ -61,7 +62,7 @@ try {
   await selectBoth(); await apply();
   await expect(page.getByRole('status')).toContainText('整理已完成', { timeout: 15000 });
   expect(await files(source)).toEqual({}); expect(await files(target)).toEqual({ ...original, 'keep.txt': 'untouched target' });
-  const encrypted = await page.evaluate(() => localStorage.getItem('geiit.workbench.encrypted.v1'));
+  const encrypted = await readVaultCiphertext(page);
   expect(encrypted).not.toMatch(/a\.txt|b\.md|source|geiit-stage/);
   await page.screenshot({ path: path.join(run, 'native-moved.png') });
   await reopen();
