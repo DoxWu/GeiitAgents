@@ -12,6 +12,15 @@ it('previews exact literal replacements preserving BOM and per-file newline with
   expect(plan.rows.map(r => r.matches)).toEqual([2, 1, 0]); expect(plan.rows[0].after!.text).toBe('\ufeff$& 新🙂\r\n$& 新🙂\r\n');
   expect(plan.rows[1].after!.text).toBe('Old\n$& 新🙂'); expect(plan.rows[2].after).toBeUndefined(); expect(d.closes).toBe(0);
 });
+
+it('supports bounded case-insensitive literal replacement without regex expansion', async () => {
+  const d = new MemoryDirectory({ 'a.md': 'Alpha ALPHA $&' });
+  const preview = await prepareTextBatch(d, ['a.md'], { find: 'alpha', replacement: 'X$&', newline: 'keep', caseSensitive: false }, [], true, () => {});
+  expect(preview.rows[0].matches).toBe(2);
+  expect(preview.rows[0].draft?.content).toBe('X$& X$& $&');
+  const invalid = await prepareTextBatch(d, ['a.md'], { find: 'İ', replacement: 'x', newline: 'keep', caseSensitive: false }, [], true, () => {});
+  expect(invalid.rows[0].error).toContain('大小写折叠');
+});
 it('isolates invalid UTF-8, mixed newline and excessive expansion while allowing explicit newline conversion', async () => {
   const d = new MemoryDirectory({ 'a.md': 'old\r\nold\n', 'b.txt': 'x'.repeat(MAX_TEXT_BYTES) });
   d.files.set('bad.txt', new File([new Uint8Array([0xff])], 'bad.txt'));
