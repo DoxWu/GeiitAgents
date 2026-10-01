@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileUp } from 'lucide-react';
+import { Download, FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { NODE_LABELS, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
 import { WorkflowCanvas } from './WorkflowCanvas';
@@ -7,6 +7,7 @@ import { ToolArtifact } from './ToolArtifact';
 import { GenerationPreview } from './GenerationPreview';
 import { finishLabel } from '@/services/modelStream';
 import type { TaskStatus } from '@/types/workbench';
+import { exportWorkflowDefinition, importWorkflowDefinition, MAX_WORKFLOW_FILE_BYTES } from '@/workflows/portable';
 
 const statuses: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -24,6 +25,7 @@ export function Workflows() {
   const [resumeConsent, setResumeConsent] = useState(false);
   const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
   const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false), inputGeneration = useRef(0), inputFile = useRef<HTMLInputElement>(null);
+  const workflowFile = useRef<HTMLInputElement>(null);
   dirtyRef.current = dirty && (draftPending || store.workflowDraftSaving || Boolean(store.storageError));
   useEffect(() => {
     mounted.current = true;
@@ -75,6 +77,24 @@ export function Workflows() {
       if (mounted.current && epoch === inputGeneration.current) setInputError(e instanceof Error ? e.message : '无法读取 CSV 或 XLSX 文件。');
     }
   }
+  async function importDefinition(file?: File) {
+    if (!file) return;
+    try {
+      if (!file.size || file.size > MAX_WORKFLOW_FILE_BYTES) throw new Error('工作流文件须为非空 JSON，且不能超过 512 KiB。');
+      const imported = importWorkflowDefinition(await file.text());
+      if (!mounted.current) return;
+      if (dirty && !window.confirm('放弃当前未保存的工作流修改并载入文件？')) return;
+      change(imported); setSelected(imported.nodes[0]?.id || ''); setFrom(''); setTo(''); setEdgeWhen(''); setNotice('定义已校验并载入本机草稿。节点模型连接已清除；保存后才能运行。'); setError('');
+    } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '无法导入工作流定义。'); }
+  }
+  function exportDefinition() {
+    try {
+      if (!draft.revision) throw new Error('请先保存工作流定义再导出。');
+      const text = exportWorkflowDefinition(draft), url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = `geiit-workflow-${draft.name.replace(/[^\p{L}\p{N}._-]+/gu, '-').slice(0, 64) || 'definition'}.json`; anchor.click(); URL.revokeObjectURL(url);
+      setNotice('工作流定义已导出；节点模型连接不会写入文件。'); setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : '无法导出工作流定义。'); }
+  }
   function load(definition: WorkflowDefinition) {
     if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
     if (store.workflowDraft) void clearDraft().catch(e => { if (mounted.current) setError(e instanceof Error ? e.message : '无法清除工作流草稿。'); });
@@ -124,6 +144,9 @@ export function Workflows() {
     <div className="flex flex-wrap items-end gap-3">
       <label className="work-label min-w-0 flex-1">已保存工作流<select aria-label="已保存工作流" className="work-input" value={store.workflows.some(d => d.id === draft.id) ? draft.id : ''} disabled={busy} onChange={e => { const saved = store.workflows.find(d => d.id === e.target.value); if (saved) load(saved); }}><option value="">未保存</option>{store.workflows.map(d => <option key={d.id} value={d.id}>{d.name} · 修订 {d.revision}</option>)}</select></label>
       <button className="work-command" disabled={busy} onClick={() => load(newWorkflow())}>新建工作流</button>
+      <button className="work-command" disabled={busy} onClick={() => workflowFile.current?.click()}><FileUp size={16} />导入定义</button>
+      <input ref={workflowFile} hidden type="file" accept=".json,application/json" aria-label="选择工作流定义 JSON" onChange={e => { void importDefinition(e.target.files?.[0]); e.target.value = ''; }} />
+      <button className="work-command" disabled={busy || !draft.revision} onClick={exportDefinition}><Download size={16} />导出定义</button>
       <button className="work-command" disabled={busy || !draft.revision} onClick={() => { if (window.confirm('删除此工作流定义？已运行任务与成果会保留。')) { setBusy(true); void store.removeWorkflow(draft.id, draft.revision).then(() => { if (mounted.current) { setDraft(newWorkflow()); setDirty(false); } }).catch(e => { if (mounted.current) setError(String(e.message)); }).finally(() => { if (mounted.current) setBusy(false); }); } }}>删除定义</button>
     </div>
     <fieldset disabled={busy} className="min-w-0 space-y-4">

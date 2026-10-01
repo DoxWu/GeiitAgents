@@ -85,6 +85,16 @@ try {
   const box = await handle.boundingBox(); await page.mouse.move(box.x + 30, box.y + 6); await page.mouse.down(); await page.mouse.move(box.x + 70, box.y + 146, { steps: 5 }); await page.mouse.up();
   await handle.press('ArrowRight'); await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 1');
   const workflowId = await field('已保存工作流').inputValue();
+  const portableEvent = page.waitForEvent('download'); await button('导出定义').click();
+  const portableDownload = await portableEvent, portablePath = path.join(output, 'workflow-definition.json'); await portableDownload.saveAs(portablePath);
+  const portableText = await readFile(portablePath, 'utf8'), portable = JSON.parse(portableText);
+  expect(portable.format).toBe('geiit-workflow-definition'); expect(portable.version).toBe(1); expect(portable.workflow.nodes).toHaveLength(3);
+  expect(portableText).not.toMatch(/profileId|API Key|合成输入/);
+  await field('选择工作流定义 JSON').setInputFiles(portablePath);
+  await expect(page.getByText('定义已校验并载入本机草稿', { exact: false })).toBeVisible();
+  await expect(button('手动运行工作流')).toBeDisabled(); expect(await field('已保存工作流').inputValue()).toBe('');
+  page.once('dialog', dialog => dialog.accept()); await field('已保存工作流').selectOption(workflowId);
+  expect(await field('已保存工作流').inputValue()).toBe(workflowId);
   const xlsx = new JSZip();
   xlsx.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="销量" sheetId="1" r:id="rId1"/></sheets></workbook>');
   xlsx.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
@@ -207,7 +217,7 @@ try {
   expect(calls).toHaveLength(8); expect(errors).toEqual([]);
   expect(requests.filter(url => /huggingface|\.onnx(?:\?|$)/.test(url))).toEqual([]);
   if (mode === 'native') expect(requests.filter(url => url.startsWith(upstream))).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'repeated continuation failure then retry without prefix execution', 'partial-node retry using older revision after definition changes', 'original history and isolated continuation artifacts', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore including continuation without replay', 'true/false branch joins with inactive output excluded and reload without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'portable JSON download/import with no implicit save', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'repeated continuation failure then retry without prefix execution', 'partial-node retry using older revision after definition changes', 'original history and isolated continuation artifacts', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore including continuation without replay', 'true/false branch joins with inactive output excluded and reload without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
   console.log(`Workflow ${mode} QA passed: ${output}`);
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); await writeFile(path.join(output, 'failure.json'), JSON.stringify({ message: String(error), errors }, null, 2)); throw error;

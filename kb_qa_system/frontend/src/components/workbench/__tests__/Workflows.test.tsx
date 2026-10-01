@@ -156,3 +156,28 @@ it('keeps the previous workflow CSV when an unsupported upload fails', async () 
   expect(await screen.findByRole('alert')).toBeVisible();
   expect(screen.getByLabelText('工作流 CSV')).toHaveValue('月份,数量\n一月,12');
 });
+
+it('imports a validated portable definition as an unsaved draft and exports only the saved revision', async () => {
+  const source = { ...newWorkflow(), revision: 3, name: '便携报告', nodes: [newWorkflowNode('generate_document', 0)], edges: [] };
+  source.nodes[0].profileId = 'machine-only-model';
+  store.setState({ workflows: [source] });
+  const user = userEvent.setup(), view = render(<Workflows />);
+  await user.selectOptions(screen.getByLabelText('已保存工作流'), source.id);
+  let exportedBlob: Blob | undefined;
+  const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { if (blob instanceof Blob) exportedBlob = blob; return 'blob:workflow-test'; });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  await user.click(screen.getByRole('button', { name: '导出定义' }));
+  const exported = await exportedBlob!.text();
+  expect(exported).not.toContain('machine-only-model');
+  await user.upload(screen.getByLabelText('选择工作流定义 JSON'), new File([exported], 'workflow.json', { type: 'application/json' }));
+  expect(await screen.findByRole('status')).toHaveTextContent('定义已校验并载入本机草稿');
+  expect(screen.getByLabelText('工作流名称')).toHaveValue('便携报告');
+  expect(screen.getByRole('button', { name: '手动运行工作流' })).toBeDisabled();
+  expect(store.getState().saveWorkflow).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: '保存工作流' }));
+  await waitFor(() => expect(store.getState().saveWorkflow).toHaveBeenCalled());
+  const imported = vi.mocked(store.getState().saveWorkflow).mock.calls[0][0];
+  expect(imported.id).not.toBe(source.id); expect(imported.revision).toBe(0); expect(imported.nodes[0].profileId).toBeUndefined();
+  createObjectUrl.mockRestore(); click.mockRestore();
+  view.unmount();
+});
