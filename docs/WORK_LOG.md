@@ -437,3 +437,14 @@
 - 未完成/风险：这是文本参考材料抽取，不是 PPTX/DOCX 版式转换或可视预览；嵌入图表数据和图片内容无法审阅，受保护/加密或宏型格式不支持。PDF 输入/转换、图表 OCR/图像理解、Word/LibreOffice 分页、原生 WebView2、低配性能与文件系统断电测试仍未完成。没有访问真实模型、邮件或生产服务。
 - Git：功能与工作记录待提交到本地 `develop/geiit-agents`，未推送远程。
 - 下一步：扩展图表图像检查或 PDF 文本导入（验证没有合适轻量依赖前不会伪称 OCR 可用），继续文件历史归档/恢复授权、工作流触发与性能/原生故障验收；整体目标和发布前审查完成后才推送 `agents`。
+
+### 2026-10-02：Cargo 工具链复核、PDF 本机文本导入与 dev.59 重建
+
+- Cargo 环境：普通 PowerShell 仍没有全局 `cargo`/`rustc`，但项目工具链入口成功直接调用仓库内 Cargo 1.98.1 与 Rust 1.98.1；`desktop:toolchain:test`、`desktop:check` 和 release/NSIS 构建均通过。本批没有安装全局 Rust、修改 PATH、HOME 或目录 ACL。
+- 实现：办公任务参考材料新增 PDF。用户选择后才懒加载 PDF.js 与 Worker，在本机逐页提取可选中文本；PDF 二进制不上传或持久化。限制为 10 MB、100 页、50,000 字符；密码保护、损坏和无可提取文本的扫描件明确失败；部分扫描页会提示未提取，OCR、版式、图片、表单和批注不支持。后续云端任务仍须重新确认出站授权。
+- 依赖与性能：锁定 `pdfjs-dist@4.10.38`。生产 Web/PDF 分包中主解析模块约 364 KB、Worker 约 1.38 MB（均未压缩），初始应用不加载；桌面安装包需携带资源。没有全局 npm 缓存权限时使用工作区临时缓存完成依赖安装，已清理临时缓存。
+- 验证：PDF 解析边界/错误映射与办公任务授权 UI 定向 **2 文件 / 10 项通过**；全量 Vitest **122 文件 / 1184 项通过**。`npm run check`、`npm run lint`、生产 `npm run build`、`desktop:toolchain:test`、`desktop:check` 和 `git diff --check` 通过。PDF UI/解析适配器已覆盖，但本批未对原生 WebView2 做真实 PDF 文件端到端验收。
+- 构建产物：开发通道升至 `0.1.0-dev.59`，release/NSIS 重建成功；未签名包 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.59_x64-setup.exe`，**9,147,949 字节**，SHA-256 `A390AEA8AFF3948F20A74D687C8B5A30DE2D1275CDE375081500CB5BBE5C502E`。本轮先按用户要求重建了 dev.58，随后加入 PDF 功能并以包含最终源码的 dev.59 替代；未安装、签名、部署或推送。
+- 未完成/风险：扫描件无 OCR；PDF.js 资源增加安装包体积，虽然用户不用 PDF 时不会加载解析器。PDF 实际浏览器/原生端样例文件解析验收、DOCX 分页、图像理解、工作流循环/触发、低配与强杀/断电、原生 WebView2 及签名升级仍未完成。未调用真实模型或邮件，未访问生产服务。
+- Git：本批改动待提交至本地 `develop/geiit-agents`；未推送 `agents`。
+- 下一步：为 PDF 导入增加真实浏览器样例验收，再继续图像审阅、文件归档/恢复授权、工作流循环/触发与低配/原生故障验收；整体目标及远程发布前检查完成前不推送。
