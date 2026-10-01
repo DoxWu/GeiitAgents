@@ -4,13 +4,13 @@ import { validatePersonalDraft, type PersonalDraft } from './itemDraft';
 export const MAX_PERSONAL_IMPORT_BYTES = 16 * 1024 * 1024;
 export type PersonalImportAction = 'skip' | 'add' | 'copy' | 'replace' | 'merge';
 export type PersonalImportMergeField = 'title' | 'content' | 'tags' | 'todo' | 'archivedAt';
-export type PersonalImportData = { kind: 'records'; exportedAt: string; items: PersonalItem[] } | { kind: 'draft'; draft: PersonalDraft };
+export type PersonalImportData = { kind: 'records'; exportedAt: string; items: PersonalItem[] } | { kind: 'draft'; draft: PersonalDraft } | { kind: 'drafts'; exportedAt: string; drafts: PersonalDraft[] };
 export interface PersonalImportRow {
   id: string; title: string; kind: 'note' | 'todo'; status: 'new' | 'duplicate' | 'similar' | 'conflict' | 'draft-conflict' | 'kind-conflict';
   source: PersonalItem | PersonalDraft; current?: PersonalItem; matchedTitle?: string;
   actions: PersonalImportAction[]; defaultAction: PersonalImportAction;
 }
-export interface PersonalImportPreview { id: string; name: string; kind: 'records' | 'draft'; exportedAt?: string; rows: PersonalImportRow[] }
+export interface PersonalImportPreview { id: string; name: string; kind: 'records' | 'draft' | 'drafts'; exportedAt?: string; rows: PersonalImportRow[] }
 export interface PersonalImportChoice { id: string; action: PersonalImportAction; mergeFields?: PersonalImportMergeField[] }
 export interface PersonalImportResult { added: number; replaced: number; merged: number; drafts: number; skipped: number }
 export interface PersonalImportPlan { data: PersonalImportData; rows: PersonalImportRow[]; baseline: string }
@@ -77,9 +77,17 @@ export async function readPersonalImport(file: Blob): Promise<PersonalImportData
   try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
   catch { return fail('文件不是有效的 UTF-8 JSON。'); }
   if (parsed && typeof parsed === 'object' && 'format' in parsed) {
-    const root = object(parsed, ['format', 'version', 'exportedAt', 'items']);
-    if (root.format !== 'geiit.personal-records' || root.version !== 1) fail('仅支持本机笔记/待办 v1 JSON；整库加密文件请使用工作台备份入口。');
+    const root = object(parsed, ['format', 'version', 'exportedAt', 'items', 'drafts']);
+    if (root.version !== 1) fail('仅支持本机笔记/待办 v1 JSON；整库加密文件请使用工作台备份入口。');
     date(root.exportedAt);
+    if (root.format === 'geiit.personal-drafts') {
+      if ('items' in root) fail('草稿包不能包含正式记录字段。');
+      if (!Array.isArray(root.drafts) || !root.drafts.length || root.drafts.length > 100) fail('草稿文件需要包含 1–100 条草稿。');
+      const drafts = root.drafts.map(draft);
+      if (new Set(drafts.map(d => d.id)).size !== drafts.length) fail('草稿文件内存在重复标识，整批未导入。');
+      return { kind: 'drafts', exportedAt: root.exportedAt as string, drafts };
+    }
+    if (root.format !== 'geiit.personal-records' || 'drafts' in root) fail('JSON 格式或字段无效。');
     if (!Array.isArray(root.items) || !root.items.length || root.items.length > 500) fail('文件需要包含 1–500 条正式记录。');
     const items = root.items.map(record);
     if (new Set(items.map(i => i.id)).size !== items.length) fail('文件内存在重复记录标识，整批未导入。');
@@ -98,10 +106,15 @@ export function personalImportBaseline(items: PersonalItem[], drafts: PersonalDr
 }
 export function planPersonalImport(data: PersonalImportData, items: PersonalItem[], drafts: PersonalDraft[]): PersonalImportPlan {
   const baseline = personalImportBaseline(items, drafts);
-  if (data.kind === 'draft') {
-    const duplicate = drafts.find(d => draftKey(d) === draftKey(data.draft));
-    return { data, baseline, rows: [{ id: data.draft.id, title: data.draft.input.title, kind: data.draft.input.kind, source: data.draft,
-      status: duplicate ? 'duplicate' : 'new', actions: ['skip', 'copy'], defaultAction: duplicate ? 'skip' : 'copy' }] };
+  if (data.kind === 'draft' || data.kind === 'drafts') {
+    const sources = data.kind === 'draft' ? [data.draft] : data.drafts;
+    const seen = new Set(drafts.map(draftKey));
+    const rows = sources.map(source => {
+      const key = draftKey(source), duplicate = seen.has(key); seen.add(key);
+      return { id: source.id, title: source.input.title, kind: source.input.kind, source,
+        status: duplicate ? 'duplicate' as const : 'new' as const, actions: ['skip', 'copy'] as PersonalImportAction[], defaultAction: duplicate ? 'skip' as const : 'copy' as const };
+    });
+    return { data, baseline, rows };
   }
   const byId = new Map(items.map(i => [i.id, i])), byContent = new Map(items.map(i => [contentKey(i), i]));
   const occupiedDraftIds = new Set(drafts.map(d => d.id));
@@ -137,8 +150,8 @@ export function applyPersonalImport(plan: PersonalImportPlan, choices: PersonalI
   for (const row of plan.rows) {
     const action = actions.get(row.id)!;
     if (action === 'skip') { result.skipped++; continue; }
-    if (plan.data.kind === 'draft') {
-      const source = plan.data.draft;
+    if (plan.data.kind === 'draft' || plan.data.kind === 'drafts') {
+      const source = row.source as PersonalDraft;
       // A foreign base revision is never evidence that overwriting a local edit
       // is safe. Preserve raw input/timezone as a separate, new unsaved record.
       nextDrafts = [{ ...structuredClone(source), id: crypto.randomUUID(), editId: crypto.randomUUID(), baseRevision: 0,

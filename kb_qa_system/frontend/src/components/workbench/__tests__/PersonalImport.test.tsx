@@ -59,6 +59,23 @@ it('shows raw draft time zone and incomplete values, and cancels on unmount', as
   expect(screen.getByLabelText('导入处理方式 1')).toHaveValue('copy');
   view.unmount(); expect(store.getState().personalImportPreview).toBeNull(); expect(store.getState().personalDrafts).toEqual([]);
 });
+it('previews a batch draft package, defaults duplicates to skip, then stores selected copies only as drafts', async () => {
+  const existing = personalDraft(); existing.input.title = '已有草稿'; existing.input.content = 'same body';
+  const duplicate = { ...existing, id: crypto.randomUUID(), editId: crypto.randomUUID() };
+  const fresh = personalDraft(); fresh.input.title = '待恢复草稿'; fresh.input.content = 'new body';
+  store.setState({ personalDrafts: [existing], personalItems: [note()] });
+  render(<PersonalImport onBack={vi.fn()} />);
+  await upload(JSON.stringify({ format: 'geiit.personal-drafts', version: 1, exportedAt: now, drafts: [duplicate, fresh] }));
+  expect(screen.getByText(/2 条批量编辑草稿/)).toBeInTheDocument();
+  expect(screen.getByLabelText('导入处理方式 1')).toHaveValue('skip');
+  expect(screen.getByLabelText('导入处理方式 2')).toHaveValue('copy');
+  acknowledge(); click('确认导入所选条目'); await screen.findByText('导入已加密保存');
+  expect(store.getState().personalItems).toHaveLength(1);
+  expect(store.getState().personalDrafts).toHaveLength(2);
+  expect(store.getState().personalDrafts[0]).toMatchObject({ baseRevision: 0, input: fresh.input });
+  expect(store.getState().personalDrafts[0].id).not.toBe(fresh.id);
+  expect(store.getState().personalDrafts[1]).toEqual(existing);
+});
 it('opens the import screen from the actual personal items page without dropping an unfinished editor', async () => {
   render(<PersonalItems />); fireEvent.change(screen.getByLabelText('标题'), { target: { value: '未保存的编辑' } });
   click('导入 JSON'); await screen.findByRole('region', { name: '导入笔记与待办 JSON' });

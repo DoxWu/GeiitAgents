@@ -628,7 +628,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       if (!active()) return;
       const plan = planPersonalImport(data, get().personalItems, get().personalDrafts), id = crypto.randomUUID();
       personalImportPlan = { id, plan };
-      set({ personalImportPreview: { id, name: name.slice(0, 255), kind: data.kind, ...(data.kind === 'records' ? { exportedAt: data.exportedAt } : {}), rows: structuredClone(plan.rows) } });
+      set({ personalImportPreview: { id, name: name.slice(0, 255), kind: data.kind, ...(data.kind !== 'draft' ? { exportedAt: data.exportedAt } : {}), rows: structuredClone(plan.rows) } });
     } finally { if (active()) set({ personalImportBusy: false }); }
   },
   cancelPersonalImport: () => {

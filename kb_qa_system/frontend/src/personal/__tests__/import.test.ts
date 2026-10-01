@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { applyPersonalImport, MAX_PERSONAL_IMPORT_BYTES, planPersonalImport, readPersonalImport, type PersonalImportData } from '../import';
 import { exportPersonalItems, type PersonalItem } from '../items';
-import { personalDraft } from '../itemDraft';
+import { exportPersonalDrafts, personalDraft } from '../itemDraft';
 
 const now = '2026-09-29T10:00:00.000Z';
 function note(extra: Partial<PersonalItem> = {}): PersonalItem { return { kind: 'note', title: '会议记录', content: '原始正文', tags: ['工作'], id: crypto.randomUUID(), revision: 1, createdAt: now, updatedAt: now, completedAt: null, ...extra } as PersonalItem; }
@@ -26,6 +26,40 @@ it('restores incomplete raw draft exports as separate drafts, stripping embedded
   expect(applied.drafts[0]).toMatchObject({ baseRevision: 0, input: { title: '' }, tagsText: value.tagsText, dueText: 'unfinished', timezone: 'Asia/Shanghai' });
   expect(applied.drafts[0].id).not.toBe(value.id); expect(applied.drafts[0].editId).not.toBe(value.editId);
   expect(applied.drafts[0].input).not.toHaveProperty('revision'); expect(applied.drafts[1]).toEqual(value);
+});
+it('roundtrips a batch draft package, skips duplicate content, and restores copies with fresh identity', async () => {
+  const first = personalDraft(note()), second = personalDraft();
+  second.input.title = '另一条草稿'; second.input.content = '尚未保存';
+  const packed = exportPersonalDrafts([first, second]);
+  const parsed = await readPersonalImport(file(JSON.parse(packed)));
+  expect(parsed).toMatchObject({ kind: 'drafts', drafts: [first, second] });
+  const existing = { ...first, id: crypto.randomUUID(), editId: crypto.randomUUID() }, formal = note();
+  const plan = planPersonalImport(parsed, [formal], [existing]);
+  expect(plan.rows.map(row => [row.status, row.defaultAction])).toEqual([['duplicate', 'skip'], ['new', 'copy']]);
+  const result = applyPersonalImport(plan, plan.rows.map(row => ({ id: row.id, action: row.defaultAction })), [formal], [existing], now);
+  expect(result.result).toMatchObject({ drafts: 1, skipped: 1 });
+  expect(result.items).toHaveLength(1);
+  expect(result.drafts).toHaveLength(2);
+  expect(result.drafts[0]).toMatchObject({ baseRevision: 0, input: second.input });
+  expect(result.drafts[0].id).not.toBe(second.id);
+  expect(result.drafts[0].editId).not.toBe(second.editId);
+  expect(result.drafts[1]).toEqual(existing);
+  const fullVault = Array.from({ length: 100 }, () => personalDraft());
+  const overflowPlan = planPersonalImport(parsed, [formal], fullVault);
+  expect(() => applyPersonalImport(overflowPlan, overflowPlan.rows.map(row => ({ id: row.id, action: row.defaultAction })), [formal], fullVault, now)).toThrow('100');
+  expect(fullVault).toHaveLength(100);
+});
+it('rejects malformed draft packages including wrong envelope fields, duplicate IDs and over-capacity', async () => {
+  const one = personalDraft(), two = personalDraft();
+  const base = JSON.parse(exportPersonalDrafts([one, two]));
+  const invalid = [
+    { ...base, items: [] },
+    { ...base, drafts: [one, one] },
+    { ...base, drafts: Array.from({ length: 101 }, (_, i) => ({ ...one, id: crypto.randomUUID(), editId: crypto.randomUUID(), input: { ...one.input, title: String(i) } })) },
+  ];
+  for (const value of invalid) await expect(readPersonalImport(file(value))).rejects.toThrow();
+  expect(() => exportPersonalDrafts([])).toThrow('1–100');
+  expect(() => exportPersonalDrafts([one, one])).toThrow('不同');
 });
 it.each([
   ['unknown field', (v: Record<string, unknown>) => { v.key = 'not accepted'; }],

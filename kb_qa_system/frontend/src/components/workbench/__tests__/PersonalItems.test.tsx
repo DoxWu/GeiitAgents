@@ -123,3 +123,19 @@ it('keeps the active draft untouched when a Markdown file is rejected', async ()
   await screen.findByText('请选择 .md 或 .markdown 文件。');
   expect(title()).toHaveValue(''); expect(store.getState().personalDrafts).toHaveLength(0);
 });
+it('selects and exports only checked drafts as a plaintext batch package', async () => {
+  const first = personalDraft(undefined, 'note'); first.input.title = '草稿一';
+  const second = personalDraft(undefined, 'note'); second.input.title = '草稿二';
+  store.setState({ personalDrafts: [first, second] });
+  const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture');
+  const clickLink = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  render(<PersonalItems />); click('笔记');
+  fireEvent.click(screen.getByLabelText('选择草稿：草稿一'));
+  click('批量导出草稿 JSON（明文）');
+  const blob = create.mock.calls[0][0] as Blob;
+  const value = JSON.parse(await blob.text());
+  expect(value).toMatchObject({ format: 'geiit.personal-drafts', version: 1, drafts: [first] });
+  expect(clickLink).toHaveBeenCalledOnce();
+  expect(store.getState().personalDrafts).toEqual([first, second]);
+  expect(store.getState().personalItems).toEqual([]);
+});

@@ -42,7 +42,7 @@ export function PersonalImport({ onBack }: { onBack: () => void }) {
   }
   return <section aria-label="导入笔记与待办 JSON" className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-4xl space-y-5">
     <div className="flex flex-wrap items-center gap-3"><button className="work-command" disabled={store.personalImportBusy} onClick={onBack}>返回本机记录</button><h1 className="text-xl font-semibold">导入笔记与待办 JSON</h1></div>
-    <p className="text-sm text-ink-secondary">选择本应用导出的正式记录 JSON 或“当前草稿”JSON。文件只在本机读取，不上传、不调用模型、不创建邮件提醒。读取和预检查不会修改记录；整库加密文件请到工作台备份恢复。</p>
+    <p className="text-sm text-ink-secondary">选择本应用导出的正式记录 JSON、单条草稿 JSON 或批量草稿包。文件只在本机读取，不上传、不调用模型、不创建邮件提醒。读取和预检查不会修改记录；整库加密文件请到工作台备份恢复。</p>
     <label className="work-label">笔记/待办 JSON 文件（最多 16 MiB）<input aria-label="笔记待办导入文件" type="file" accept=".json,application/json" disabled={store.personalImportBusy || Boolean(result && !result.saved)} onChange={e => {
       const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
       void perform(() => store.preparePersonalImport(file, file.name));
@@ -50,18 +50,18 @@ export function PersonalImport({ onBack }: { onBack: () => void }) {
     {store.personalImportBusy && <p role="status">正在读取、预检查或加密保存…</p>}
     {store.personalImportBusy && !preview && !result && <button className="work-command" onClick={() => { request.current++; store.cancelPersonalImport(); setError(''); }}>取消读取文件</button>}
     {preview && <section aria-label="笔记待办导入预检查" className="space-y-4 rounded border border-line p-4">
-      <h2 className="break-all font-semibold">{preview.name} · {preview.kind === 'draft' ? '原始编辑草稿' : `${preview.rows.length} 条正式记录`}</h2>
+      <h2 className="break-all font-semibold">{preview.name} · {preview.kind === 'records' ? `${preview.rows.length} 条正式记录` : `${preview.rows.length} 条${preview.kind === 'drafts' ? '批量' : '原始'}编辑草稿`}</h2>
       {preview.exportedAt && <p className="text-xs text-ink-secondary">文件声明的导出时间：{preview.exportedAt}，不是可信的版本优先级依据。</p>}
       <p className="text-sm">已选 {selected} 条，其中替换 {replaces} 条、字段合并 {merges} 条。本机现有 {store.personalItems.length}/500 条正式记录、{store.personalDrafts.length}/100 条草稿。</p>
-      <p className="text-xs text-ink-secondary">一致/冲突记录默认跳过；不同标识的相同内容也提示重复。有草稿或类型不同的同标识记录只能跳过或另存。替换与字段合并均保留本机标识/创建时间并增加本机修订；时间与归档状态以预览及字段选择为准，不比较两台设备的修订大小。</p>
-      {preview.kind === 'draft' && <p className="text-sm">草稿将使用新标识、保留原始输入和时区，作为独立未保存记录；不覆盖旧草稿、不自动变为正式记录。标题为空或截止输入未完成仍可恢复。</p>}
+      {preview.kind === 'records' && <p className="text-xs text-ink-secondary">一致/冲突记录默认跳过；不同标识的相同内容也提示重复。有草稿或类型不同的同标识记录只能跳过或另存。替换与字段合并均保留本机标识/创建时间并增加本机修订；时间与归档状态以预览及字段选择为准，不比较两台设备的修订大小。</p>}
+      {preview.kind !== 'records' && <p className="text-sm">重复草稿默认跳过。确认恢复的草稿将使用新标识，保留原始输入和时区，作为独立未保存记录；不覆盖本机草稿、不自动变为正式记录。标题为空或截止输入未完成仍可恢复。</p>}
       <fieldset disabled={store.personalImportBusy} className="space-y-3">
         <div className="flex flex-wrap gap-2"><button className="work-command" onClick={() => { setChoices(Object.fromEntries(preview.rows.map(row => [row.id, row.defaultAction]))); setAcknowledged(false); }}>恢复默认选择</button>
           <button className="work-command" onClick={() => { setChoices(Object.fromEntries(preview.rows.map(row => [row.id, 'skip']))); setAcknowledged(false); }}>全部跳过</button></div>
         {preview.rows.slice(page * 20, (page + 1) * 20).map((row, i) => <article key={row.id} className="space-y-3 rounded border border-line p-3" aria-label={`导入条目 ${page * 20 + i + 1}`}>
           <h3 className="break-words font-medium">{page * 20 + i + 1}. {row.title || '（未命名草稿）'} · {statusLabels[row.status]}</h3>
           {row.matchedTitle && row.status === 'similar' && <p className="text-xs">已有相同内容：{row.matchedTitle}</p>}
-          <label className="work-label">处理方式<select aria-label={`导入处理方式 ${page * 20 + i + 1}`} className="work-input" value={choices[row.id] || 'skip'} onChange={e => setChoice(row.id, e.target.value as PersonalImportAction)}>{row.actions.map(action => <option key={action} value={action}>{preview.kind === 'draft' && action === 'copy' ? '恢复为独立新草稿' : actionLabels[action]}</option>)}</select></label>
+          <label className="work-label">处理方式<select aria-label={`导入处理方式 ${page * 20 + i + 1}`} className="work-input" value={choices[row.id] || 'skip'} onChange={e => setChoice(row.id, e.target.value as PersonalImportAction)}>{row.actions.map(action => <option key={action} value={action}>{preview.kind !== 'records' && action === 'copy' ? '恢复为独立新草稿' : actionLabels[action]}</option>)}</select></label>
           {preview.kind === 'records' && choices[row.id] === 'merge' && <fieldset className="grid gap-2 rounded border border-line p-3"><legend className="px-1 text-sm font-medium">选择采用文件中的字段</legend><p className="text-xs text-ink-secondary">未勾选的字段保留本机值；至少选择一项。待办相关字段作为一组，归档状态单独选择。</p>
             {(row.kind === 'todo' ? ['title', 'content', 'tags', 'todo', 'archivedAt'] as const : ['title', 'content', 'tags', 'archivedAt'] as const).map(field => <label key={field} className="flex items-start gap-2 text-sm"><input type="checkbox" checked={mergeFields[row.id]?.includes(field) ?? false} onChange={e => setMergeField(row.id, field, e.target.checked)} /><span>采用文件中的{mergeLabels[field]}</span></label>)}
           </fieldset>}

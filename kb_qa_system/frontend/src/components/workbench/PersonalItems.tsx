@@ -3,7 +3,7 @@ import { Bell, FileUp, Plus } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { PrivateMarkdown } from './LocalMarkdown';
 import { exportPersonalItems, isOverdue, personalMarkdown, selectedPersonalItems, type PersonalInput, type PersonalItem, type PersonalSelection, type Priority, type TodoStatus } from '@/personal/items';
-import { personalDraft, type PersonalDraft } from '@/personal/itemDraft';
+import { exportPersonalDrafts, personalDraft, type PersonalDraft } from '@/personal/itemDraft';
 import { readMarkdownNote } from '@/personal/markdownImport';
 import { ServerReminders } from './ServerReminders';
 const PersonalImport = lazy(() => import('./PersonalImport').then(module => ({ default: module.PersonalImport })));
@@ -26,6 +26,7 @@ function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders
   const [kind, setKind] = useState<'note' | 'todo'>(draft.input.kind);
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all'), [archiveView, setArchiveView] = useState('active');
   const [selection, setSelection] = useState<PersonalSelection[]>([]);
+  const [draftSelection, setDraftSelection] = useState<string[]>([]);
   const [unstaged, setUnstaged] = useState(false), unstagedRef = useRef(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [now, setNow] = useState(Date.now);
   const mounted = useRef(false), markdownInput = useRef<HTMLInputElement>(null);
@@ -49,7 +50,7 @@ function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders
   function mayLeave() { return !unstaged || window.confirm('当前编辑尚未写入草稿，请先导出。仍要放弃当前编辑并切换？'); }
   function display(value: PersonalDraft) { setDraft(structuredClone(value)); setKind(value.input.kind); setUnstaged(false); unstagedRef.current = false; setError(''); setNotice(''); }
   function select(item?: PersonalItem, targetKind = kind) { if (!mayLeave()) return; if (targetKind !== kind) setSelection([]); display(item ? store.personalDrafts.find(draft => draft.id === item.id) ?? personalDraft(item) : personalDraft(undefined, targetKind)); }
-  function tab(targetKind: 'note' | 'todo') { if (!mayLeave()) return; setSelection([]); display(store.personalDrafts.find(draft => draft.input.kind === targetKind) ?? personalDraft(undefined, targetKind)); }
+  function tab(targetKind: 'note' | 'todo') { if (!mayLeave()) return; setSelection([]); setDraftSelection([]); display(store.personalDrafts.find(draft => draft.input.kind === targetKind) ?? personalDraft(undefined, targetKind)); }
   function edit(patch: Partial<PersonalInput> = {}, fields: Partial<Pick<PersonalDraft, 'tagsText' | 'dueText'>> = {}) {
     const next = { ...draft, ...fields, input: { ...input, ...patch } as PersonalInput, editId: crypto.randomUUID(), updatedAt: new Date().toISOString() };
     setDraft(next); setNotice(''); setError('');
@@ -108,6 +109,10 @@ function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders
     setError(''); try { const chosen = selectedPersonalItems(store.personalItems, selection); download(exportPersonalItems(chosen, format), '笔记待办-' + new Date().toISOString().slice(0, 10) + (format === 'json' ? '.json' : '.md'), format === 'json' ? 'application/json;charset=utf-8' : undefined); }
     catch (e) { setError(e instanceof Error ? e.message : '导出失败。'); }
   }
+  function exportSelectedDrafts() {
+    setError(''); try { const chosen = drafts.filter(value => draftSelection.includes(value.id)); download(exportPersonalDrafts(chosen), '笔记待办草稿-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json;charset=utf-8'); }
+    catch (e) { setError(e instanceof Error ? e.message : '草稿导出失败。'); }
+  }
   async function importMarkdown(file: File) {
     if (!mayLeave()) return;
     setBusy(true); setError(''); setNotice('');
@@ -134,7 +139,9 @@ function LocalPersonalItems({ onOpenReminders, onOpenImport }: { onOpenReminders
         <input aria-label="搜索笔记和待办" className="work-input" placeholder="搜索标题、内容或标签" value={query} onChange={event => { setQuery(event.target.value); setSelection([]); }} />
         <select aria-label="归档筛选" className="work-input mt-2" value={archiveView} onChange={event => { setArchiveView(event.target.value); setSelection([]); }}><option value="active">未归档</option><option value="archived">已归档</option><option value="all">全部记录</option></select>
         {kind === 'todo' && <select aria-label="待办筛选" className="work-input mt-2" value={filter} onChange={event => { setFilter(event.target.value); setSelection([]); }}><option value="all">全部状态</option><option value="open">待完成</option><option value="overdue">已逾期</option><option value="done">已完成</option><option value="cancelled">已取消</option></select>}
-        {!!drafts.length && <section aria-label="本机编辑草稿" className="my-3 border-b border-line pb-3"><h2 className="text-sm font-medium">编辑草稿（{drafts.length}）</h2>{drafts.map(value => <button key={value.id} className="work-command mt-2 w-full text-left" disabled={busy} onClick={() => { if (mayLeave()) display(value); }} aria-label={'恢复草稿：' + (value.input.title || '未命名')}><span className="truncate">{value.input.title || '未命名草稿'}</span></button>)}</section>}
+        {!!drafts.length && <section aria-label="本机编辑草稿" className="my-3 border-b border-line pb-3"><h2 className="text-sm font-medium">编辑草稿（{drafts.length}）</h2>
+          <div className="my-2 flex flex-wrap gap-2"><button className="work-command" disabled={busy} onClick={() => setDraftSelection(drafts.map(value => value.id))}>选中所有草稿</button><button className="work-command" disabled={busy || !draftSelection.length} onClick={() => setDraftSelection([])}>清空草稿选择</button><button className="work-command" disabled={busy || !draftSelection.length} onClick={exportSelectedDrafts}>批量导出草稿 JSON（明文）</button></div>
+          {drafts.map(value => <div key={value.id} className="mt-2 flex items-center gap-2"><input type="checkbox" aria-label={'选择草稿：' + (value.input.title || '未命名')} disabled={busy} checked={draftSelection.includes(value.id)} onChange={event => setDraftSelection(current => event.target.checked ? [...current, value.id] : current.filter(id => id !== value.id))} /><button className="work-command min-w-0 flex-1 text-left" disabled={busy} onClick={() => { if (mayLeave()) display(value); }} aria-label={'恢复草稿：' + (value.input.title || '未命名')}><span className="truncate">{value.input.title || '未命名草稿'}</span></button></div>)}</section>}
         <p className="my-3 text-xs text-ink-secondary">{items.length} 条记录 · 已选 {selection.length} 条</p>
         <fieldset disabled={busy} className="mb-3 flex flex-wrap gap-2">
           <button className="work-command" disabled={!items.length} onClick={() => setSelection(items.map(({ id, revision }) => ({ id, revision })))}>选中筛选结果</button><button className="work-command" disabled={!selection.length} onClick={() => setSelection([])}>清空选择</button>
