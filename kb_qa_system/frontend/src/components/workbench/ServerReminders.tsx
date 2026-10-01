@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, ChevronDown, ChevronUp, Download, Pause, Play, RefreshCw, Square } from 'lucide-react';
+import { Archive, Bell, ChevronDown, ChevronUp, Download, Pause, Play, RefreshCw, Square, Undo2 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import {
-  createServerReminder, dismissReminderDelivery, exportServerReminders, getPersonalCapabilities, getServerReminder, listReminderDeliveries, listServerReminders,
-  retryReminderDelivery, updateServerReminder, type DeliveryStatus, type PersonalCapabilities,
+  archiveServerReminder, createServerReminder, dismissReminderDelivery, exportServerReminders, getPersonalCapabilities, getServerReminder, listReminderDeliveries, listServerReminders,
+  retryReminderDelivery, unarchiveServerReminder, updateServerReminder, type DeliveryStatus, type PersonalCapabilities,
   getReminderByRequest, type ReminderFilters, type PersonalPage, type ReminderDelivery, type ReminderRecurrence, type ServerReminder,
 } from '@/api/personal';
 import { ReminderEditor, type ReminderEdit, type ReminderFields } from './ReminderEditor';
@@ -28,6 +28,8 @@ function messageFor(error: unknown) {
     rule_change_requires_schedule: '修改重复规则或时区时，请同时选择下一次提醒时间。',
     revision_conflict: '记录已被其他窗口或调度器修改，请载入最新版本后重试。',
     reminder_closed: '提醒已结束；如需再次提醒，请新建记录。',
+    reminder_must_be_closed: '只有已取消或已结束的提醒可以归档。',
+    reminder_archived: '此提醒已归档，请先恢复到列表后再操作。',
     delivery_in_flight_or_unknown: '存在发送中或结果不明的投递。请查看投递记录；发送中需等待结果，结果不明可确认风险后重试或人工结束本次尝试。',
     duplicate_risk_acknowledgement_required: '投递结果不明，确认可能重复发送后才能重试。',
     delivery_not_retryable: '此投递当前不能重试，请刷新查看最新状态。',
@@ -256,6 +258,17 @@ function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
       if (live()) { replace(updated); setNotice(status === 'paused' ? '提醒已暂停。已经开始发送的邮件无法撤回。' : status === 'cancelled' ? '提醒已取消。已经开始发送的邮件无法撤回。' : '提醒已恢复。'); }
     });
   }
+  async function archive(item: ServerReminder, restore = false) {
+    if (!restore && !window.confirm('归档后会从未归档列表隐藏，但保留提醒和投递历史；之后可在“已归档”筛选中恢复。')) return;
+    await perform(async live => {
+      const updated = restore ? await unarchiveServerReminder(item.id, item.revision) : await archiveServerReminder(item.id, item.revision);
+      if (!live()) return;
+      replace(updated);
+      setNotice(restore ? '提醒已恢复到未归档列表。' : '提醒已归档；记录和投递历史仍保留。');
+      try { firstPage(await listServerReminders(undefined, undefined, filters)); }
+      catch { if (live()) setError('归档状态已保存，但列表刷新失败。请刷新查看。'); }
+    });
+  }
   async function showDeliveries(item: ServerReminder) {
     if (expanded === item.id) { setExpanded(null); return; }
     await perform(async live => {
@@ -298,19 +311,22 @@ function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
         <form className="mt-3 grid gap-2" onSubmit={event => { event.preventDefault(); void perform(async live => { const page = await listServerReminders(undefined, undefined, filterInput); if (live()) { firstPage(page); setFilters({ ...filterInput }); } }); }}><fieldset disabled={busy} className="grid min-w-0 gap-2">
           <label className="work-label">搜索提醒<input className="work-input" maxLength={200} placeholder="搜索主题或正文" value={filterInput.q || ''} onChange={event => setFilterInput({ ...filterInput, q: event.target.value })} /></label>
           <div className="grid grid-cols-2 gap-2"><label className="work-label">筛选状态<select className="work-input" value={filterInput.status || ''} onChange={event => setFilterInput({ ...filterInput, status: event.target.value as ReminderFilters['status'] || undefined })}><option value="">全部状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="work-label">筛选重复规则<select className="work-input" value={filterInput.recurrence || ''} onChange={event => setFilterInput({ ...filterInput, recurrence: event.target.value as ReminderFilters['recurrence'] || undefined })}><option value="">全部规则</option>{Object.entries(recurrenceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={filterInput.archived === true} onChange={event => setFilterInput({ ...filterInput, archived: event.target.checked || undefined })} />只查看已归档提醒</label>
           <div className="flex flex-wrap gap-2"><button className="work-command" type="submit">搜索 / 筛选</button><button className="work-command" type="button" disabled={busy} onClick={() => void exportReminders()}><Download size={15} />导出当前筛选</button></div>
         </fieldset></form>
-        {(filters.q || filters.status || filters.recurrence) && <p className="mt-2 text-xs">当前结果：{filters.q || '全部主题'} · {filters.status ? statusLabels[filters.status] : '全部状态'} · {filters.recurrence ? recurrenceLabels[filters.recurrence] : '全部规则'}</p>}
+        {(filters.q || filters.status || filters.recurrence || filters.archived) && <p className="mt-2 text-xs">当前结果：{filters.q || '全部主题'} · {filters.status ? statusLabels[filters.status] : '全部状态'} · {filters.recurrence ? recurrenceLabels[filters.recurrence] : '全部规则'} · {filters.archived ? '已归档' : '未归档'}</p>}
         {reminderPage && <Pager name="提醒" depth={reminderCursors.length} count={reminders.length} next={reminderPage.next_cursor} busy={busy} onPage={direction => void turnReminders(direction)} />}
         {!reminders.length && <p className="mt-4 text-sm text-ink-secondary">{busy ? '正在读取提醒…' : reminderCursors.length > 1 ? '本页已无记录，可返回上一页或刷新。' : '还没有服务端提醒。'}</p>}
         <div className="mt-3 grid gap-3">{reminders.map(item => <article aria-label={'提醒：' + item.subject} key={item.id} className="min-w-0 border border-line p-4">
           <div className="flex flex-wrap items-start gap-2"><div className="min-w-0 flex-1"><h3 className="break-words font-medium">{item.subject}</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink-secondary">{item.body.slice(0, 500)}</p>{item.body.length > 500 && <details className="mt-2 text-sm"><summary className="cursor-pointer">展开其余内容</summary><p className="mt-2 whitespace-pre-wrap break-words">{item.body.slice(500)}</p></details>}</div><span className="shrink-0 text-xs text-ink-secondary">{statusLabels[item.status]}</span></div>
           <div className="mt-3 grid gap-1 break-words text-xs text-ink-secondary"><span>{recurrenceLabels[item.recurrence]} · {formatReminderDate(item.next_run_at, item.timezone)}</span><span>时区：{item.timezone}</span><span>收件人：{item.recipient}</span></div>
           <div className="mt-3 flex flex-wrap gap-2">
-            {(item.status === 'active' || item.status === 'paused') && <button className="work-command" disabled={busy} onClick={() => { if (draftDirty && !window.confirm('放弃当前未保存的提醒草稿，编辑所选提醒？')) return; edit(item); }}>编辑 / 改期</button>}
+            {(item.status === 'active' || item.status === 'paused') && !item.archived_at && <button className="work-command" disabled={busy} onClick={() => { if (draftDirty && !window.confirm('放弃当前未保存的提醒草稿，编辑所选提醒？')) return; edit(item); }}>编辑 / 改期</button>}
             {item.status === 'active' && <button className="work-command" disabled={busy || !!editing} onClick={() => void change(item, 'paused')}><Pause size={15} />暂停</button>}
             {item.status === 'paused' && <button className="work-command" disabled={busy || !!editing} onClick={() => void change(item, 'active')}><Play size={15} />恢复</button>}
             {(item.status === 'active' || item.status === 'paused') && <button className="work-command" disabled={busy || !!editing} onClick={() => void change(item, 'cancelled')}><Square size={15} />取消</button>}
+            {!item.archived_at && (item.status === 'cancelled' || item.status === 'completed') && <button className="work-command" disabled={busy} onClick={() => void archive(item)}><Archive size={15} />归档</button>}
+            {item.archived_at && <button className="work-command" disabled={busy} onClick={() => void archive(item, true)}><Undo2 size={15} />恢复</button>}
             <button className="work-command" disabled={busy} onClick={() => void showDeliveries(item)}>{expanded === item.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />}投递记录</button>
           </div>
           {expanded === item.id && <div className="mt-3"><p className="text-xs text-ink-secondary">按投递记录创建顺序从新到旧；重新打开可查看新记录。</p>{deliveryPage && <Pager name="投递" depth={deliveryCursors.length} count={(deliveries[item.id] || []).length} next={deliveryPage.next_cursor} busy={busy} onPage={direction => void turnDeliveries(item, direction)} />}<ul aria-label={'投递记录：' + item.subject} className="mt-3">{(deliveries[item.id] || []).length ? deliveries[item.id].map(delivery => <DeliveryRow key={delivery.id} delivery={delivery} item={item} disabled={busy || !!editing} onAction={(row, action) => void deliveryAction(item, row, action)} />) : <li className="border-t border-line pt-3 text-sm text-ink-secondary">暂无投递记录。</li>}</ul></div>}

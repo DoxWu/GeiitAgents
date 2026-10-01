@@ -451,6 +451,33 @@ def test_reminder_export_rejects_invalid_filters_and_size_limits(fixture, monkey
     assert c.get("/personal/reminders/export").status_code == 401
 
 
+def test_reminder_archive_is_terminal_only_reversible_versioned_and_account_owned(fixture):
+    active = seeded(fixture.factory)
+    completed = seeded(fixture.factory)
+    with fixture.factory() as db:
+        item = db.get(Reminder, completed)
+        item.status = "completed"
+        item.next_run_at = None
+        db.commit()
+    c = fixture.client
+    assert [row["id"] for row in c.get("/personal/reminders/page").json()["items"]] == [completed, active]
+    assert c.post(f"/personal/reminders/{active}/archive", json={"revision": 1}).status_code == 409
+    archived = c.post(f"/personal/reminders/{completed}/archive", json={"revision": 1})
+    assert archived.status_code == 200
+    assert archived.json()["archived_at"] and archived.json()["revision"] == 2
+    assert c.post(f"/personal/reminders/{completed}/archive", json={"revision": 1}).json()["revision"] == 2
+    assert [row["id"] for row in c.get("/personal/reminders/page").json()["items"]] == [active]
+    assert [row["id"] for row in c.get("/personal/reminders/page", params={"archived": True}).json()["items"]] == [completed]
+    assert [row["id"] for row in c.get("/personal/reminders/export", params={"archived": True}).json()["reminders"]] == [completed]
+    assert c.post(f"/personal/reminders/{completed}/unarchive", json={"revision": 1}).status_code == 409
+    fixture.state["id"] = 2
+    assert c.post(f"/personal/reminders/{completed}/unarchive", json={"revision": 2}).status_code == 404
+    fixture.state["id"] = 1
+    restored = c.post(f"/personal/reminders/{completed}/unarchive", json={"revision": 2})
+    assert restored.status_code == 200 and restored.json()["archived_at"] is None and restored.json()["revision"] == 3
+    assert [row["id"] for row in c.get("/personal/reminders/page").json()["items"]] == [completed, active]
+
+
 def test_page_cursor_is_not_a_permission_and_does_not_require_the_boundary_row_to_exist(fixture):
     ids = [seeded(fixture.factory) for _ in range(4)]
     c = fixture.client

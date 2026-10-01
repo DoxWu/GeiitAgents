@@ -14,7 +14,7 @@ export async function vaultBackupFixture(): Promise<VaultData> {
   const item = { id: uuid(), kind: 'todo' as const, title: '工作报告', content: '附件核查', tags: ['工作'], status: 'open' as const, priority: 'high' as const, dueAt: '2030-01-01T00:00:00.000Z', revision: 2, createdAt: now, updatedAt: now, completedAt: null, archivedAt: now };
   const draft = personalDraft(item); draft.input.title = ''; draft.tagsText = '未完成，'; draft.dueText = '2030-';
   const before = await snapshotText('\uFEFF# 原文\r\n', 'a'.repeat(64)), after = await snapshotText('\uFEFF# 修改后\r\n', 'a'.repeat(64));
-  const original = { id: 1, request_id: uuid(), revision: 1, todo_id: null, recipient: 'synthetic@example.test', subject: '检查报告', body: '检查附件', timezone: 'Asia/Shanghai', recurrence: 'weekly' as const, next_run_at: '2030-01-01T00:00:00.000Z', last_run_at: null, status: 'active' as const, created_at: now, updated_at: now };
+  const original = { id: 1, request_id: uuid(), revision: 1, todo_id: null, recipient: 'synthetic@example.test', subject: '检查报告', body: '检查附件', timezone: 'Asia/Shanghai', recurrence: 'weekly' as const, next_run_at: '2030-01-01T00:00:00.000Z', last_run_at: null, status: 'active' as const, archived_at: null, created_at: now, updated_at: now };
   return {
     profiles: [{ id: 'local', mode: 'local', name: '合成连接', baseUrl: 'http://127.0.0.1:11434/v1', model: 'synthetic-model', apiKey: 'synthetic-backup-key' }],
     conversations: [{ id: uuid(), profileId: 'deleted-profile', title: '测试对话', updatedAt: now, messages: [{ id: uuid(), role: 'assistant', content: '尚未完成的回答', createdAt: now, finishReason: 'length' }] }],

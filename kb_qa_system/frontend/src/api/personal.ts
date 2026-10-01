@@ -23,6 +23,7 @@ export interface ServerReminder {
   next_run_at: string | null;
   status: ReminderStatus;
   last_run_at: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -52,12 +53,13 @@ function pageQuery(cursor?: number, snapshotId?: number) {
   if (snapshotId !== undefined) query.set('snapshot_id', String(snapshotId));
   return query.toString();
 }
-export interface ReminderFilters { q?: string; status?: ReminderStatus; recurrence?: ReminderRecurrence }
+export interface ReminderFilters { q?: string; status?: ReminderStatus; recurrence?: ReminderRecurrence; archived?: boolean }
 export function listServerReminders(cursor?: number, snapshotId?: number, filters: ReminderFilters = {}) {
   const query = new URLSearchParams(pageQuery(cursor, snapshotId));
   if (filters.q?.trim()) query.set('q', filters.q.trim());
   if (filters.status) query.set('status', filters.status);
   if (filters.recurrence) query.set('recurrence', filters.recurrence);
+  if (filters.archived) query.set('archived', 'true');
   return apiClient.get<PersonalPage<ServerReminder>>('/personal/reminders/page?' + query, { cache: 'no-store' });
 }
 
@@ -66,6 +68,7 @@ export function exportServerReminders(filters: ReminderFilters = {}, signal?: Ab
   if (filters.q?.trim()) query.set('q', filters.q.trim());
   if (filters.status) query.set('status', filters.status);
   if (filters.recurrence) query.set('recurrence', filters.recurrence);
+  if (filters.archived) query.set('archived', 'true');
   return apiClient.getBlob('/personal/reminders/export?' + query, { cache: 'no-store', signal });
 }
 
@@ -102,6 +105,14 @@ export function updateServerReminder(id: number, input: {
 
 export function cancelServerReminder(id: number) {
   return apiClient.delete<void>(`/personal/reminders/${id}`, { cache: "no-store" });
+}
+
+export function archiveServerReminder(id: number, revision: number) {
+  return apiClient.post<ServerReminder>(`/personal/reminders/${id}/archive`, { revision }, { cache: 'no-store' });
+}
+
+export function unarchiveServerReminder(id: number, revision: number) {
+  return apiClient.post<ServerReminder>(`/personal/reminders/${id}/unarchive`, { revision }, { cache: 'no-store' });
 }
 
 export function listReminderDeliveries(id: number, cursor?: number, snapshotId?: number) {

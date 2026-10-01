@@ -1,12 +1,12 @@
 # 项目工作记录
 
-最后更新：2026-10-02，第二版。本文件是当前状态入口，每次完成工作后更新状态并追加记录。历史测试仅代表对应日期的本地结果，不代表线上验证；不在此保存任何真实凭据。完整第一版记录已归档至 [WORK_LOG_V1_2026-10-01.md](WORK_LOG_V1_2026-10-01.md)。
+最后更新：2026-10-01，第二版。本文件是当前状态入口，每次完成工作后更新状态并追加记录。历史测试仅代表对应日期的本地结果，不代表线上验证；不在此保存任何真实凭据。完整第一版记录已归档至 [WORK_LOG_V1_2026-10-01.md](WORK_LOG_V1_2026-10-01.md)。
 
 ## 当前阶段
 
-本阶段状态更新（2026-10-02）：工作流画布定义现会自动加密暂存并在解锁后恢复；运行输入不进入草稿，正式保存前不能运行。dev.37 桌面 NSIS 已重建，8,353,306 字节，SHA-256 `6195E452049A5B746A58075AF1D338EA5BB2B441D1EAA20C8EA9DACF9443B70D`。前端全量 **111 文件 / 1094 项通过**，TypeScript、ESLint、Web 生产构建、Cargo 检查和工具链回退测试通过。Rustup 仍因受限宿主 HOME 的 ACL 输出非致命 canonicalize 警告；完整桌面包构建成功。未安装、未推送或部署，原生 WebView2 未验收。
+本阶段状态更新（2026-10-01）：提醒归档/恢复已完成服务端字段、迁移、API、筛选/导出和 UI；只有 cancelled/completed 提醒允许归档。开发版已升至 dev.38 并重建 NSIS，8,354,831 字节，SHA-256 `CF6C6A37978804B74C7916DF2CC289F4D7A01EF11E5DD68DDC7CD0F663F568B9`。前端全量 **111 文件 / 1095 项通过**，TypeScript、ESLint、Cargo 检查及工具链回退测试通过。项目脚本使用仓库 `.tools` Cargo/Rustup，不依赖系统 PATH；Rustup 对宿主 HOME 的 canonicalize 警告仍受 ACL 影响且不阻塞检查/打包。未安装、未推送或部署，原生 WebView2 未验收。
 
-**处于应用改造阶段，完整目标未完成。** 本批补齐可视化工作流的加密画布草稿自动保存与恢复；只有正式保存的定义可运行，本次运行输入不保存在定义草稿。备份仍严格校验结构，旧密钥库兼容。前端全量 **111 文件 / 1094 项通过**，定向 115 项、TypeScript、ESLint、Web 生产构建、Cargo 检查和工具链回退检查通过；未签名桌面 dev.37 已重建。Cargo/Rustup 在该隔离用户配置下仍有非致命 HOME canonicalize 警告，但完整打包通过。原生 WebView2 未验收；未安装、未调用真实模型/邮件、未推送或部署。DOCX 分页、更多办公格式、容量/强杀、工作流其他能力及历史基线审计仍未完成。
+**处于应用改造阶段，完整目标未完成。** 最近两批完成可视化工作流定义的加密自动暂存/恢复，以及提醒归档和恢复；归档不删除记录或投递历史，也不隐藏仍会调度的活跃提醒。备份仍严格校验结构并兼容旧密钥库。前端全量 **111 文件 / 1095 项通过**，本批提醒归档定向测试、TypeScript、ESLint、Cargo 检查和工具链回退检查通过；未签名桌面 dev.38 已重建。Rustup HOME canonicalize 警告未消除但不阻塞检查/打包；本批离线迁移复核因隔离 Python 包目录 ACL 未重跑，前一执行段已生成过迁移离线 SQL。原生 WebView2 未验收；未安装、未调用真实模型/邮件、未推送或部署。DOCX 分页、更多办公格式、容量/强杀、工作流其他能力及历史基线审计仍未完成。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -256,3 +256,12 @@
 - 原生边界：尝试使用 dev.34 运行 `verify-file-history.mjs --native`，仍因 `Native debugger unavailable` 失败；因此不能记为 Windows WebView2 运行验收通过。桌面包仅代表构建成功。历史 native 通过记录不代表本批重跑。
 - 工作记录：完整旧记录保留为 [WORK_LOG_V1_2026-10-01](WORK_LOG_V1_2026-10-01.md)。本批未解决的 DOCX 分页/复杂办公格式、工作流循环/触发器/自动保存、低配/强杀/断电容量验收、真实供应商/邮件和原生 WebView2 QA 继续列为未完成；部署方案仍按用户指令暂缓。
 - 下一步：在最终发布前继续完善已确认的办公工具、待办笔记、文件整理、模型体验缺口；本批先本地提交；完成发布前检查后再按用户授权检查 `agents` 远程，普通推送 `develop/geiit-agents`，不强推或修改 `main`。
+
+### 2026-10-01：提醒归档收尾、Cargo 工具链复核与 dev.38 重建
+
+- 代码实现：提醒增加 `archived_at` 字段和索引；`20261001_0008` migration 文件名与 revision 对齐。只有 cancelled/completed 提醒允许归档，归档/恢复 API 使用 revision 防止并发覆盖；默认分页与导出只包含未归档记录，`archived=true` 可看/导出归档项。投递记录继续保留，归档不表示撤回已发邮件。工作台增加已归档筛选、归档和恢复操作；密钥库备份 schema 允许旧提醒快照没有 `archived_at`。
+- 文档：更新提醒 API 说明及本工作记录；开发版升至 dev.38。
+- 本地验证：当前重跑 Vitest 全量 **111 文件 / 1095 项通过**，`npm run check`、`npm run lint`、`npm run desktop:toolchain:test`、`npm run desktop:check`、`git diff --check` 通过。提醒 UI/备份定向 28 项通过。前序执行段已报告后端提醒测试 47 项通过、Alembic 离线 SQL 检查通过；本次因隔离 Python 依赖包 ACL 拒绝读取 `.tools/python-ops/alembic/__init__.py`，无法重新生成离线 SQL，未连接数据库。WebView2 原生运行验收未做。
+- Cargo 环境：普通终端没有系统级 `cargo` 命令；项目脚本从仓库 `.tools/cargo` / `.tools/rustup` 选择 Cargo 1.98.1、Rustup 1.29.1 和 Rust 1.98.1，检查及打包成功。Rustup 对 `C:\Users\DOXIA` 输出非致命 canonicalize 警告；尝试临时覆盖用户目录变量仍未消除，未修改宿主权限或全局 Rust 安装。
+- 构建产物：`npm run desktop:build` 成功生成未签名 NSIS `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.38_x64-setup.exe`，8,354,831 字节，SHA-256 `CF6C6A37978804B74C7916DF2CC289F4D7A01EF11E5DD68DDC7CD0F663F568B9`。构建有 Vite dynamic-import 分包提示，不影响成功；安装包未安装或部署。
+- 限制/下一步：当前 Cargo 检查与 Tauri 构建已通过，Rustup 的 HOME 警告和隔离 Python ACL 仍未消除；归档只允许关闭提醒。接下来本地提交本批改动，并继续本机记录/文件的容量与强杀恢复、DOCX 分页/复杂格式、模型协议缺口及历史前端基线审计；完整目标和发布前审计完成之前不推送。

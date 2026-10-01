@@ -17,6 +17,8 @@ const { auth, api } = vi.hoisted(() => ({
     dismissReminderDelivery: vi.fn(),
     getServerReminder: vi.fn(),
     getReminderByRequest: vi.fn(),
+    archiveServerReminder: vi.fn(),
+    unarchiveServerReminder: vi.fn(),
   },
 }));
 
@@ -46,6 +48,7 @@ const reminder = {
   next_run_at: "2099-01-02T01:00:00.000Z",
   status: "active" as const,
   last_run_at: null,
+  archived_at: null,
   created_at: "2099-01-01T00:00:00.000Z",
   updated_at: "2099-01-01T00:00:00.000Z",
 };
@@ -133,6 +136,25 @@ describe("ServerReminders", () => {
     await waitFor(() => expect(api.exportServerReminders).toHaveBeenCalledWith({ status: 'active' }, expect.any(AbortSignal)));
     expect(screen.getByRole('article', { name: '提醒：提交周报' })).toBeInTheDocument();
     createUrl.mockRestore(); revokeUrl.mockRestore();
+  });
+
+  it('archives only a closed reminder and lets the user restore it from the archive filter', async () => {
+    auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
+    const closed = { ...reminder, status: 'completed' as const, next_run_at: null };
+    const archived = { ...closed, revision: 4, archived_at: '2099-01-03T00:00:00.000Z' };
+    api.listServerReminders.mockResolvedValueOnce(page([closed])).mockResolvedValueOnce(page([])).mockResolvedValueOnce(page([archived])).mockResolvedValue(page([]));
+    api.archiveServerReminder.mockResolvedValue(archived);
+    api.unarchiveServerReminder.mockResolvedValue({ ...closed, revision: 5, archived_at: null });
+    render(<ServerReminders />);
+    await screen.findByRole('article', { name: '提醒：提交周报' });
+    fireEvent.click(screen.getByRole('button', { name: /归档/ }));
+    await waitFor(() => expect(api.archiveServerReminder).toHaveBeenCalledWith(closed.id, closed.revision));
+    expect(await screen.findByRole('status')).toHaveTextContent('提醒已归档');
+    fireEvent.click(screen.getByLabelText('只查看已归档提醒'));
+    fireEvent.click(screen.getByRole('button', { name: '搜索 / 筛选' }));
+    await waitFor(() => expect(api.listServerReminders).toHaveBeenLastCalledWith(undefined, undefined, { archived: true }));
+    fireEvent.click(screen.getByRole('button', { name: '恢复' }));
+    await waitFor(() => expect(api.unarchiveServerReminder).toHaveBeenCalledWith(closed.id, 4));
   });
 
   it('reports a truncated export and keeps the current draft on export failure', async () => {

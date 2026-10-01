@@ -99,6 +99,9 @@ class DeliveryRetry(Input):
 class DeliveryDismiss(Input):
     acknowledge_delivery_uncertainty: bool = False
 
+class ReminderArchive(Input):
+    revision: int = Field(ge=1)
+
 class Output(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -135,6 +138,7 @@ class ReminderOut(Output):
     next_run_at: datetime | None
     status: str
     last_run_at: datetime | None
+    archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

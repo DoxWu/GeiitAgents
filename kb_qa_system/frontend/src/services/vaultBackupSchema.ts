@@ -51,7 +51,7 @@ const personalItem = obj({ ...itemInput, ...itemMetadata });
 const personalDraft = obj({ id, editId: id, baseRevision: num(1_000_000), input: obj({ ...itemInput, ...Object.fromEntries(Object.entries(itemMetadata).map(([k, v]) => [k, optional(v)])) }), tagsText: str(250), dueText: str(32), timezone: str(100, 1), updatedAt: date });
 const recurrence = one('once', 'daily', 'weekly');
 const reminderFields = { subject: str(200), body: str(100000), timezone: str(64), recurrence, next_run_at: date };
-const serverReminder = obj({ ...reminderFields, next_run_at: nullable(date), id: num(undefined, 1), request_id: id, revision: num(undefined, 1), todo_id: nullable(num(undefined, 1)), recipient: str(320, 1), status: one('active', 'paused', 'cancelled', 'completed'), last_run_at: nullable(date), created_at: date, updated_at: date });
+const serverReminder = obj({ ...reminderFields, next_run_at: nullable(date), id: num(undefined, 1), request_id: id, revision: num(undefined, 1), todo_id: nullable(num(undefined, 1)), recipient: str(320, 1), status: one('active', 'paused', 'cancelled', 'completed'), last_run_at: nullable(date), archived_at: optional(nullable(date)), created_at: date, updated_at: date });
 const attempt: Check = value => {
   const kind = (value as { kind?: string })?.kind;
   if (kind === 'create') obj({ kind: one('create'), payload: obj({ ...reminderFields, request_id: id }) })(value);

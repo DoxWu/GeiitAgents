@@ -20,7 +20,7 @@ from app.models.email_log import EmailLog
 from app.models.personal import Note, Reminder, ReminderDelivery, Todo
 from app.models.user import User
 from app.schemas.personal import (
-    DeliveryDismiss, DeliveryOut, DeliveryPage, DeliveryRetry, NoteCreate, NoteOut, NoteUpdate,
+    DeliveryDismiss, DeliveryOut, DeliveryPage, DeliveryRetry, NoteCreate, NoteOut, NoteUpdate, ReminderArchive,
     ReminderCreate, ReminderOut, ReminderPage, ReminderUpdate, TodoCreate, TodoOut, TodoUpdate,
 )
 from app.services.personal_reminders import cancel_pending, next_occurrence, utc
@@ -238,8 +238,9 @@ def page_query(query, model, limit, cursor, snapshot_id):
 @router.get("/reminders/page", response_model=ReminderPage)
 def page_reminders(limit: int = Query(20, ge=1, le=100), cursor: int | None = Query(None, ge=1), snapshot_id: int | None = Query(None, ge=0),
                    q: str | None = Query(None, max_length=200), status: Literal["active", "paused", "cancelled", "completed"] | None = None,
-                   recurrence: Literal["once", "daily", "weekly"] | None = None, user=UserDep, db: Session=DbDep):
+                   recurrence: Literal["once", "daily", "weekly"] | None = None, archived: bool = False, user=UserDep, db: Session=DbDep):
     query = db.query(Reminder).filter(Reminder.user_id == user.id)
+    query = query.filter(Reminder.archived_at.is_not(None) if archived else Reminder.archived_at.is_(None))
     if q and q.strip():
         needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         query = query.filter(or_(Reminder.subject.ilike(needle, escape="\\"), Reminder.body.ilike(needle, escape="\\")))
@@ -254,9 +255,11 @@ def page_reminders(limit: int = Query(20, ge=1, le=100), cursor: int | None = Qu
 def export_reminders(limit: int = Query(500, ge=1, le=500), q: str | None = Query(None, max_length=200),
                      status: Literal["active", "paused", "cancelled", "completed"] | None = None,
                      recurrence: Literal["once", "daily", "weekly"] | None = None,
+                     archived: bool = False,
                      user=UserDep, db: Session=DbDep):
     """Export an account-owned reminder snapshot and its delivery history."""
     query = db.query(Reminder).filter(Reminder.user_id == user.id)
+    query = query.filter(Reminder.archived_at.is_not(None) if archived else Reminder.archived_at.is_(None))
     if q and q.strip():
         needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         query = query.filter(or_(Reminder.subject.ilike(needle, escape="\\"), Reminder.body.ilike(needle, escape="\\")))
@@ -339,11 +342,43 @@ def update_reminder(reminder_id: int, body: ReminderUpdate, user=UserDep, db: Se
 @router.delete("/reminders/{reminder_id}", status_code=204)
 def cancel_reminder(reminder_id: int, user=UserDep, db: Session=DbDep):
     item = owned(db, Reminder, reminder_id, user, lock=True)
+    if item.archived_at is not None:
+        raise HTTPException(409, "reminder_archived")
     cancel_pending(db, item)
     item.status, item.next_run_at = "cancelled", None
     item.revision += 1
     db.commit()
     return Response(status_code=204)
+
+
+@router.post("/reminders/{reminder_id}/archive", response_model=ReminderOut)
+def archive_reminder(reminder_id: int, body: ReminderArchive, user=UserDep, db: Session=DbDep):
+    item = owned(db, Reminder, reminder_id, user, lock=True)
+    if item.archived_at is not None:
+        return item
+    if item.revision != body.revision:
+        raise HTTPException(409, "revision_conflict")
+    if item.status not in {"cancelled", "completed"}:
+        raise HTTPException(409, "reminder_must_be_closed")
+    item.archived_at = datetime.now(timezone.utc)
+    item.revision += 1
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.post("/reminders/{reminder_id}/unarchive", response_model=ReminderOut)
+def unarchive_reminder(reminder_id: int, body: ReminderArchive, user=UserDep, db: Session=DbDep):
+    item = owned(db, Reminder, reminder_id, user, lock=True)
+    if item.archived_at is None:
+        return item
+    if item.revision != body.revision:
+        raise HTTPException(409, "revision_conflict")
+    item.archived_at = None
+    item.revision += 1
+    db.commit()
+    db.refresh(item)
+    return item
 
 
 @router.get("/reminders/{reminder_id}/deliveries", response_model=list[DeliveryOut])
