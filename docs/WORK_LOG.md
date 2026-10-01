@@ -388,4 +388,5 @@
 - 验证：DOCX/Worker/UI/store 定向 **4 文件 / 80 项通过**；全量 Vitest **119 文件 / 1158 项通过**；`npm run check`、`npm run lint`、生产 Web 构建、脚本语法检查与 `git diff --check` 通过。生产 Chromium 实际下载 DOCX 并解包验证自定义 A4、Arial、14 pt、1.5 倍行距和 0.75 英寸页边距，同时完成文档版本/恢复、图表输入/渲染/恢复、加密刷新及 390px 检查，结果 `.tools/document-task-qa/result.json` 通过；无真实供应商请求、无页面异常。实测覆盖的是 OOXML 结构，不等同 Word/LibreOffice 分页渲染。
 - 构建：Cargo 回退测试、`desktop:check`、dev.53 release/NSIS 构建通过；未签名包 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.53_x64-setup.exe`，**8,396,545 字节**，SHA-256 `EAB668AC49C4B692DB5CC7516A1893A511900B56C7D6AD4C51993A73F11A46E4`。未安装、签名、部署或推送。Vite 工作流模块静态/动态导入提示不阻断构建。
 - 未完成/风险：字体可用性由用户系统决定；当前不提供任意字号/纸张和复杂页眉页脚、目录、分页控制。实际分页、PDF/PPTX、模板扩展、图像识别/图表 OCR 仍未完成。原生 WebView2 和签名升级未验收。无生产服务访问。
+- Git：本批功能及工作记录已提交至本地 `develop/geiit-agents`，提交 `117e698`（`feat: customize DOCX page and typography`）；提交后工作树干净，未推送。
 - 下一步：继续处理办公分页/格式与图像审阅；文件历史移动关联需先确定可验证的身份与授权规则；随后补工作流触发/循环、模型视觉/协议与低配容量故障验收。整体目标完成并审查远端之前不推送。
