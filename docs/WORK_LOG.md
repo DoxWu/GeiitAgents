@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 工作流现已支持失败/中断/取消后的新任务续跑、单节点重试、检查点和成果隔离，并对历史续跑记录做兼容校验。标准 `npm test` 全量 **111 文件、1065 项通过**，TypeScript、ESLint、生产 Web 构建通过；Web、relay、account 三种生产 Chromium 工作流验收均通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、连续续跑、云端重新授权和加密备份恢复。Cargo 自动发现仓库工具链；dev.30 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。Windows 原生 WebView2 QA 仍未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收。未调用真实模型/邮件，未推送或部署。DOCX 分页、工作流条件/触发器、容量/强杀验收继续未完成；完整目标保持进行中。
+**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 工作流现已支持失败/中断/取消后的新任务续跑、单节点重试、检查点和成果隔离，并对历史续跑记录做兼容校验。标准 `npm test` 全量 **111 文件、1065 项通过**，TypeScript、ESLint、生产 Web 构建通过；Web、relay、account 三种生产 Chromium 工作流验收均通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、连续续跑、云端重新授权和加密备份恢复。Cargo 自动发现仓库工具链，并能从失效系统环境变量回退；dev.31 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。Windows 原生 WebView2 QA 仍未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收。未调用真实模型/邮件，未推送或部署。DOCX 分页、工作流条件/触发器、容量/强杀验收继续未完成；完整目标保持进行中。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -733,3 +733,10 @@
 - 本地验证：续跑/备份/界面定向测试 20 项通过；ChatPage、DocumentsPage、DocumentPreview 历史基线定向测试 49 项通过；全量 Vitest **111 个测试文件 / 1065 项通过**；`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`npm run desktop:check`、`git diff --check` 通过；`node scripts/verify-workflows.mjs` 的 Web、`--relay`、`--account` 三种生产 Chromium 流程验收通过，覆盖连续失败续跑、单节点重试、云端重新授权和备份恢复。QA fixture 补齐账号模型权限查询并同步当前界面字段。测试中的 ErrorBoundary 日志和 jsdom 导航提示是既有预期输出，不是失败。
 - 构建与版本：开发通道升至 `0.1.0-dev.30`，使用仓库内 Cargo 工具链重新生成未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.30_x64-setup.exe`，8,336,967 字节，SHA-256 `9F941DEF98111EB698F78FD26B3BDA28A464A41D382E14A2C4A60B106B2BA5CB`。未安装、未推送、未部署。
 - 未完成与风险：条件分支/循环/触发器、自动保存草稿、历史分页、低配/最大容量/强杀断电、DOCX 分页和 Windows 原生 WebView2 QA 仍未完成；续跑仍依赖本机保留可验证的检查点/成果，真实供应商未联调。下一步保持本地 `develop/geiit-agents` 提交，后续再处理条件分支或容量验收。
+
+### 2026-10-01（本次）：修复失效 Cargo 环境回退并重建 dev.31
+
+- 代码实现：增强 `frontend/scripts/desktop-toolchain.mjs` 的工具链发现。当系统传入不存在或不可用的 `CARGO_HOME`、`RUSTUP_HOME` 时，自动回退仓库内 `.tools/cargo`、`.tools/rustup`；有效的显式 Cargo 配置仍优先使用。脚本不修改用户全局环境。
+- 本地验证：使用故意失效的 `CARGO_HOME=C:\\Users\\DOXIA\\.cargo` 和 `RUSTUP_HOME=C:\\Users\\DOXIA\\.rustup` 重跑 `npm run desktop:check` 通过；`npm run check`、`npm run lint`、`npm test -- --reporter=dot`（111 个测试文件 / 1065 项通过）、`npx vite build --configLoader runner` 和 `git diff --check` 通过。桌面构建同样在失效环境变量下完成；Rustup 仍输出用户目录 canonicalize 警告，但不影响工具链选择或构建。
+- 构建产物：开发通道升至 `0.1.0-dev.31`，未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.31_x64-setup.exe`，8,336,784 字节，SHA-256 `A53E06423B668246278374467A2CB8B119323EED212130668CAE6F450E64EACB`。未安装、未推送、未部署。
+- 未完成与风险：Cargo 回退只覆盖仓库内 Windows 开发工具链；Rustup 用户目录告警的根因仍在上游工具行为，原生 WebView2、DOCX 分页、条件工作流、容量/强杀验收等既有事项继续未完成。下一步保持本地 `develop/geiit-agents` 提交并继续模型协议/容量相关工作。

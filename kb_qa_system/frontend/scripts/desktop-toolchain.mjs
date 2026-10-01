@@ -8,13 +8,25 @@ const localCargoHome = path.join(toolsRoot, 'cargo');
 const localRustupHome = path.join(toolsRoot, 'rustup');
 const localCargoBin = path.join(localCargoHome, 'bin');
 const localCargoExecutable = path.join(localCargoBin, process.platform === 'win32' ? 'cargo.exe' : 'cargo');
+const localRustupToolchains = path.join(localRustupHome, 'toolchains');
+
+function configuredCargoExecutable(baseEnv) {
+  if (baseEnv.CARGO && path.isAbsolute(baseEnv.CARGO)) return baseEnv.CARGO;
+  if (baseEnv.CARGO_HOME) return path.join(baseEnv.CARGO_HOME, 'bin', process.platform === 'win32' ? 'cargo.exe' : 'cargo');
+  return undefined;
+}
 
 export function prepareDesktopToolchain(baseEnv = process.env) {
   const env = { ...baseEnv };
   const hasLocalCargo = existsSync(localCargoExecutable);
+  const configuredCargo = configuredCargoExecutable(env);
+  const hasConfiguredCargo = configuredCargo ? existsSync(configuredCargo) : Boolean(env.CARGO);
+  const hasConfiguredRustup = Boolean(env.RUSTUP_HOME && existsSync(path.join(env.RUSTUP_HOME, 'toolchains')));
 
-  if (!env.CARGO_HOME && hasLocalCargo) env.CARGO_HOME = localCargoHome;
-  if (!env.RUSTUP_HOME && existsSync(path.join(localRustupHome, 'toolchains'))) env.RUSTUP_HOME = localRustupHome;
+  // A stale user-level CARGO_HOME/RUSTUP_HOME can make child processes fail before
+  // Cargo emits a useful diagnostic. Use the checked-in toolchain when it exists.
+  if (hasLocalCargo && (!env.CARGO_HOME || !hasConfiguredCargo)) env.CARGO_HOME = localCargoHome;
+  if (existsSync(localRustupToolchains) && (!env.RUSTUP_HOME || !hasConfiguredRustup)) env.RUSTUP_HOME = localRustupHome;
 
   if (env.CARGO_HOME === localCargoHome && existsSync(localCargoBin)) {
     env.PATH = `${localCargoBin}${path.delimiter}${env.PATH ?? ''}`;
@@ -22,8 +34,9 @@ export function prepareDesktopToolchain(baseEnv = process.env) {
 
   return {
     env,
-    cargoExecutable: env.CARGO
-      || (env.CARGO_HOME === localCargoHome && hasLocalCargo ? localCargoExecutable : 'cargo'),
+    cargoExecutable: env.CARGO && (path.isAbsolute(env.CARGO) ? existsSync(env.CARGO) : hasConfiguredCargo)
+      ? env.CARGO
+      : (env.CARGO_HOME === localCargoHome && hasLocalCargo ? localCargoExecutable : 'cargo'),
   };
 }
 
