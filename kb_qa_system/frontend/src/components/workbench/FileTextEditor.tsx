@@ -7,7 +7,7 @@ import { compareArtifactText } from '@/officeTasks/artifactDiff';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { selectTextHistory } from '@/fileOrganizer/historyView';
 import { useFileHistory } from './useFileHistory';
-import { FileHistoryControls, FileHistoryDetails } from './FileHistoryControls';
+import { FileHistoryControls, FileHistoryDetails, FileMoveAssociations } from './FileHistoryControls';
 
 function download(text: string, name: string) {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
@@ -129,6 +129,7 @@ export function FileTextEditor() {
         <p className="mt-2 break-all text-xs">记录 {record.id}{record.restoredFrom ? ' · 恢复自 ' + record.restoredFrom : ''}{record.batch ? ' · 批次 ' + record.batch.id : ''}</p>
         {record.error && <p className="mt-2 break-words text-sm text-danger">{record.error}</p>}
         {record.inspection && <p className="mt-2 text-sm">最近核验：{record.inspection.outcome === 'after' ? '当前文件与写入版本一致' : record.inspection.outcome === 'before' ? '当前文件与原文一致' : '当前文件不同或已被替换，请保留现场'}（{new Date(record.inspection.checkedAt).toLocaleString()}）</p>}
+        <FileMoveAssociations record={record} runs={store.organizerRuns} />
         <div className="mt-3 flex flex-wrap gap-2"><button className="work-command" disabled={busy || !directory} onClick={() => directory && void act(() => store.inspectFileEdit(directory, record.id, acknowledged))}>核验当前文件</button>
           <button className="work-command" disabled={busy || !directory || !!draft} onClick={() => directory && void act(async () => { await store.openFileEdit(directory, record.name, acknowledged, record.id); if (mounted.current) setPreviewId(useWorkbenchStore.getState().fileEditDraft?.editId || ''); })}>预览恢复此记录原文</button>
           <button className="work-command" onClick={() => download(record.before.text, '历史原文-' + record.name)}>导出历史原文（明文）</button>

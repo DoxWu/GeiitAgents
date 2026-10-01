@@ -35,6 +35,15 @@ it('bounds rendered text history and mounts actions only for expanded records', 
   page('文本历史', '末页'); expect(summaries('文本版本历史')).toHaveLength(1);
   expect(store.getState().fileEditVersions).toHaveLength(21);
 });
+it('shows exact movement snapshot candidates for text history and labels ambiguous matches', async () => {
+  const movedVersion = { ...versions[0], name: 'source.md', directoryIdentity: 'dir-a', after: { text: 'new', sha256: 'b'.repeat(64) } };
+  const movedRun: OrganizerRun = { id: 'move-history', kind: 'move', status: 'succeeded', directoryName: '源目录', destinationName: '目标目录', directoryIdentity: 'dir-a', destinationIdentity: 'dir-b', createdAt: movedVersion.createdAt, updatedAt: movedVersion.updatedAt, changes: [{ source: 'source.md', target: 'target.md', stage: '.geiit-stage-move', size: 3, sha256: 'b'.repeat(64) }] };
+  store.setState({ fileEditVersions: [movedVersion], organizerRuns: [movedRun] }); render(<FileTextEditor />); await expand('文本版本历史');
+  expect(await screen.findByRole('region', { name: '关联整理记录' })).toHaveTextContent('source.md → target.md');
+  expect(screen.getByText(/不能证明相同文件的唯一物理身份/)).toBeVisible();
+  act(() => store.setState({ organizerRuns: [movedRun, { ...movedRun, id: 'move-history-2' }] }));
+  await waitFor(() => expect(screen.getByRole('region', { name: '关联整理记录' }).querySelectorAll('li')).toHaveLength(2));
+});
 it('resets filters to page one and clamps deletion without resurrecting a removed page', async () => {
   store.setState({ fileEditVersions: versions }); render(<FileTextEditor />);
   page('文本历史', '末页'); await expand('文本版本历史');

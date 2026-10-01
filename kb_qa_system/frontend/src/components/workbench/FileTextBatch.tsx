@@ -7,7 +7,7 @@ import { compareArtifactText } from '@/officeTasks/artifactDiff';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { selectTextBatches } from '@/fileOrganizer/historyView';
 import { useFileHistory } from './useFileHistory';
-import { FileHistoryControls, FileHistoryDetails } from './FileHistoryControls';
+import { FileHistoryControls, FileHistoryDetails, FileMoveAssociations } from './FileHistoryControls';
 
 const labels: Record<FileEditVersion['status'], string> = { 'not-started': '未执行', running: '写入中', succeeded: '已完成或核验一致', 'not-applied': '核验为原文', interrupted: '中断待核验', 'needs-attention': '待核验' };
 function download(records: FileEditVersion[]) {
@@ -101,7 +101,7 @@ export function FileTextBatch() {
       <p className="text-xs">搜索与状态需匹配同一文件，命中后显示完整批次；核验、恢复和导出仍使用整组保留记录。</p>
       <FileHistoryControls {...history} label="批次历史" statuses={labels} busy={busy} />
       {history.rows.map(batch => <FileHistoryDetails key={batch.id} summary={<>{batch.rows[0].directoryName} · {batch.rows.length}/{batch.rows[0].batch!.total} 条 · {new Date(batch.createdAt).toLocaleString()} · {batch.id}</>}>{() => <>
-        <ul className="my-3 space-y-1 text-sm">{batch.rows.map(r => <li className="break-all" key={r.id}>{r.name} · {labels[r.status]}{r.error ? ' · ' + r.error : ''}{r.inspection ? ' · 核验：' + r.inspection.outcome : ''}</li>)}</ul>
+        <ul className="my-3 space-y-1 text-sm">{batch.rows.map(r => <li className="break-all" key={r.id}>{r.name} · {labels[r.status]}{r.error ? ' · ' + r.error : ''}{r.inspection ? ' · 核验：' + r.inspection.outcome : ''}<FileMoveAssociations record={r} runs={store.organizerRuns} /></li>)}</ul>
         <div className="flex flex-wrap gap-2"><button className="work-command" disabled={busy || !directory} onClick={() => directory && void act(async () => { for (const r of batch.rows) { if (!mounted.current) return; await store.inspectFileEdit(directory, r.id, ack); } })}>核验批次文件</button><button className="work-command" disabled={busy || !directory || !!store.fileEditDraft || !!store.storageError} onClick={() => directory && void act(() => store.prepareFileEditBatch(directory, [], null, ack, batch.id))}>预览恢复批次原文</button><button className="work-command" onClick={() => download(batch.rows)}>导出批次记录（明文）</button></div>
       </>}</FileHistoryDetails>)}
     </section>

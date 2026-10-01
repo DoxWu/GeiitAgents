@@ -1,5 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import type { HistoryFilter } from '@/fileOrganizer/historyView';
+import { associateTextHistoryWithMoves } from '@/fileOrganizer/historyView';
+import type { OrganizerRun } from '@/fileOrganizer/history';
+import type { FileEditVersion } from '@/fileOrganizer/textEdit';
 
 interface HistoryControlsProps extends HistoryFilter {
   label: string;
@@ -54,4 +57,18 @@ export function FileChangeList<T>({ items, render }: { items: T[]; render: (item
     </nav>}
     <ul className="mt-2 text-xs">{items.slice((current - 1) * 50, current * 50).map(render)}</ul>
   </div>;
+}
+
+export function FileMoveAssociations({ record, runs }: { record: FileEditVersion; runs: OrganizerRun[] }) {
+  const matches = associateTextHistoryWithMoves(record, runs);
+  if (!record.directoryIdentity) return <p className="mt-2 text-xs">未关联移动记录：此历史未包含可核验的目录身份。</p>;
+  if (!matches.length) return <p className="mt-2 text-xs">没有找到目录身份、文件名和内容摘要均匹配的整理记录。</p>;
+  return <section className="mt-3 border-t border-line pt-3" aria-label="关联整理记录">
+    <h4 className="font-medium text-sm">关联整理记录候选（按路径与内容快照匹配）</h4>
+    <ul className="mt-2 space-y-2 text-xs">{matches.map(({ run, source, target, side }, index) => <li className="break-all" key={`${run.id}-${source}-${target}-${side}-${index}`}>
+      <span>{side === 'source' ? '编辑后从源位置整理' : '整理后在目标位置编辑'}：{source} → {target}</span><br />
+      <span>整理记录 {run.id} · {run.kind === 'move' ? `${run.directoryName} → ${run.destinationName || '目标目录'}` : run.directoryName}</span>
+    </li>)}</ul>
+    <p className="mt-2 text-xs text-ink-secondary">这是快照关联，不能证明相同文件的唯一物理身份；重复内容或重复整理可能产生多个候选。</p>
+  </section>;
 }

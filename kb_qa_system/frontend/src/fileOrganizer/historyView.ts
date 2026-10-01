@@ -3,6 +3,7 @@ import type { FileEditVersion } from './textEdit';
 
 export interface HistoryFilter { query: string; status: string }
 export interface TextHistoryBatch { id: string; createdAt: string; rows: FileEditVersion[] }
+export interface FileMoveAssociation { run: OrganizerRun; source: string; target: string; side: 'source' | 'target' }
 
 function normalize(value: string) { return value.normalize('NFC').toLowerCase(); }
 function includes(query: string, values: (string | undefined)[]) {
@@ -25,6 +26,21 @@ export function selectOrganizerHistory(records: OrganizerRun[], filter: HistoryF
 export function selectTextHistory(records: FileEditVersion[], filter: HistoryFilter): FileEditVersion[] {
   const query = normalize(filter.query.trim());
   return newest(records.filter(record => textMatches(record, query, filter.status)));
+}
+export function associateTextHistoryWithMoves(record: FileEditVersion, runs: OrganizerRun[]): FileMoveAssociation[] {
+  if (!record.directoryIdentity) return [];
+  const matches: FileMoveAssociation[] = [];
+  for (const run of runs) {
+    if (!['rename', 'move', 'undo'].includes(run.kind) || !['succeeded', 'undone'].includes(run.status)) continue;
+    for (const change of run.changes) {
+      const source = record.directoryIdentity === run.directoryIdentity && record.name === change.source && record.after.sha256 === change.sha256;
+      const targetDirectory = run.destinationIdentity ?? run.directoryIdentity;
+      const target = record.directoryIdentity === targetDirectory && record.name === change.target && record.before.sha256 === change.sha256;
+      if (source) matches.push({ run, source: change.source, target: change.target, side: 'source' });
+      if (target && (!source || change.source !== change.target)) matches.push({ run, source: change.source, target: change.target, side: 'target' });
+    }
+  }
+  return matches.sort((a, b) => Date.parse(b.run.createdAt) - Date.parse(a.run.createdAt) || a.run.id.localeCompare(b.run.id));
 }
 export function selectTextBatches(records: FileEditVersion[], filter: HistoryFilter): TextHistoryBatch[] {
   const groups = new Map<string, TextHistoryBatch>(), query = normalize(filter.query.trim());
