@@ -7,6 +7,8 @@ import { parseFirstXlsxSheet } from '@/officeTasks/xlsx';
 vi.mock('@/officeTasks/xlsx', () => ({ parseFirstXlsxSheet: vi.fn() }));
 import { importDocxReference } from '@/officeTasks/docxImport';
 vi.mock('@/officeTasks/docxImport', () => ({ importDocxReference: vi.fn() }));
+import { importPptxReference } from '@/officeTasks/pptxImport';
+vi.mock('@/officeTasks/pptxImport', () => ({ importPptxReference: vi.fn() }));
 
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
@@ -23,6 +25,7 @@ beforeEach(() => {
   useAuthStore.setState({ user: null, isAuthenticated: false });
   vi.mocked(store.getState().startOfficeToolTask).mockResolvedValue('new-task');
   vi.mocked(importDocxReference).mockResolvedValue({ markdown: '# DOCX 正文', warnings: ['图片未提取。'] });
+  vi.mocked(importPptxReference).mockResolvedValue({ markdown: '## 幻灯片 1\n\nPPTX 正文', warnings: ['图表数据未提取。'] });
 });
 afterEach(cleanup);
 it('imports the first XLSX sheet locally, clears consent and preserves input on failure', async () => {
@@ -66,10 +69,21 @@ it('requires fresh cloud consent after input or account changes and consumes it 
 it('imports DOCX text locally, surfaces extraction warnings and revokes cloud consent', async () => {
   const file = new File(['fixture'], 'weekly.docx'); Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(7) });
   render(<OfficeToolTasks />); fireEvent.click(screen.getByLabelText(/允许本次最多 6 轮请求/));
-  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB）'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB，PPTX 5 MB）'), { target: { files: [file] } });
   await screen.findByText('图片未提取。');
   expect(importDocxReference).toHaveBeenCalled();
   expect(screen.getByLabelText('参考材料（可选）')).toHaveValue('# DOCX 正文');
+  expect(screen.getByLabelText(/允许本次最多 6 轮请求/)).not.toBeChecked();
+  expect(store.getState().startOfficeToolTask).not.toHaveBeenCalled();
+});
+
+it('imports PPTX slide text locally, surfaces chart warnings and revokes cloud consent', async () => {
+  const file = new File(['fixture'], 'slides.pptx'); Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(7) });
+  render(<OfficeToolTasks />); fireEvent.click(screen.getByLabelText(/允许本次最多 6 轮请求/));
+  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB，PPTX 5 MB）'), { target: { files: [file] } });
+  await screen.findByText('图表数据未提取。');
+  expect(importPptxReference).toHaveBeenCalled();
+  expect(screen.getByLabelText('参考材料（可选）')).toHaveValue('## 幻灯片 1\n\nPPTX 正文');
   expect(screen.getByLabelText(/允许本次最多 6 轮请求/)).not.toBeChecked();
   expect(store.getState().startOfficeToolTask).not.toHaveBeenCalled();
 });
@@ -79,7 +93,7 @@ it.each(['edit', 'unmount'] as const)('ignores late file contents after %s', asy
   const file = new File(['original'], 'report.md', { type: 'text/markdown' });
   Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
   render(<OfficeToolTasks />);
-  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB）'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB，PPTX 5 MB）'), { target: { files: [file] } });
   if (reason === 'edit') fireEvent.change(screen.getByLabelText('参考材料（可选）'), { target: { value: '用户新输入' } });
   else cleanup();
   await act(async () => finish(new TextEncoder().encode('迟到的文件内容').buffer));
