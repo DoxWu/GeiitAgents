@@ -13,7 +13,7 @@ import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/a
 import { buildDocumentMessages, documentExportContent, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import { generationPreview, type GenerationPreview } from '@/services/generationPreview';
 import type { FinishReason } from '@/services/modelStream';
-import { workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
+import { validateWorkflow, workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
 import type { ChartInput } from '@/officeTasks/chart';
 import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
 import { inputFromDraft, validatePersonalDraft, type PersonalDraft } from '@/personal/itemDraft';
@@ -45,6 +45,8 @@ let accountLookup: AbortController | null = null;
 let organizerInFlight = false;
 let reminderSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let reminderDraftVersion = 0;
+let workflowDraftTimer: ReturnType<typeof setTimeout> | undefined;
+let workflowDraftVersion = 0;
 let personalSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let personalDraftVersion = 0;
 function clearPersonalTimer() { clearTimeout(personalSaveTimer); personalSaveTimer = undefined; }
@@ -57,6 +59,7 @@ function requireReminderOwner(owner: string) {
   if (!vault || !useWorkbenchStore.getState().unlocked || !auth.isAuthenticated || !auth.user || owner !== reminderOwner(auth.user.id, auth.user.email)) throw new Error('请解锁密钥库并使用草稿所属账号。');
 }
 function clearReminderTimer() { clearTimeout(reminderSaveTimer); reminderSaveTimer = undefined; }
+function clearWorkflowDraftTimer() { clearTimeout(workflowDraftTimer); workflowDraftTimer = undefined; }
 
 interface WorkbenchState {
   textBatchPreview: TextBatchPreview | null;
@@ -71,6 +74,10 @@ interface WorkbenchState {
   cancelPersonalImport: () => void;
   retryPersonalImport: () => Promise<void>;
   workflows: WorkflowDefinition[];
+  workflowDraft: WorkflowDefinition | null;
+  workflowDraftSaving: boolean;
+  stageWorkflowDraft: (definition: WorkflowDefinition) => boolean;
+  clearWorkflowDraft: () => Promise<void>;
   saveWorkflow: (definition: WorkflowDefinition) => Promise<WorkflowDefinition>;
   removeWorkflow: (id: string, revision: number) => Promise<void>;
   startWorkflow: (id: string, revision: number, input: WorkflowInput, profileId: string, allowCloud: boolean, resume?: { sourceTaskId: string; fromNodeId?: string }) => Promise<string>;
@@ -206,12 +213,13 @@ async function persist(required = false) {
   }
   const epoch = generation;
   try {
-    const draftVersion = personalDraftVersion, textVersion = fileEditDraftVersion;
+    const draftVersion = personalDraftVersion, textVersion = fileEditDraftVersion, workflowVersion = workflowDraftVersion;
     await vault.save(vaultSnapshot());
     if (epoch === generation) {
       useWorkbenchStore.setState({ storageError: null });
       if (draftVersion === personalDraftVersion) { clearPersonalTimer(); useWorkbenchStore.setState({ personalDraftSaving: false }); }
       if (textVersion === fileEditDraftVersion) { clearFileEditTimer(); useWorkbenchStore.setState({ fileEditSaving: false }); }
+      if (workflowVersion === workflowDraftVersion) { clearWorkflowDraftTimer(); useWorkbenchStore.setState({ workflowDraftSaving: false }); }
     }
   } catch (error) {
     const message = error instanceof Error && error.message.includes('超过 16 MiB 快照上限')
@@ -224,7 +232,7 @@ async function persist(required = false) {
 
 function vaultSnapshot(): VaultData {
   const state = useWorkbenchStore.getState();
-  return { workflows: state.workflows, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
+  return { workflows: state.workflows, workflowDraft: state.workflowDraft, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
 }
 
 function eraseMemory() {
@@ -242,7 +250,8 @@ function eraseMemory() {
   secrets = [];
   vault?.lock();
   vault = null;
-  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+  clearWorkflowDraftTimer();
+  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -725,7 +734,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
   },
-  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
+  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -764,7 +773,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
     const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
     const fileEditVersions = (data.fileEditVersions ?? []).map(r => r.status === 'running' ? { ...r, status: 'interrupted' as const, updatedAt: unlockedAt, error: '写入期间中断，文件可能已经变更；请先核验，不自动重放。' } : r);
-    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
+    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
   },
@@ -772,12 +781,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     get().cancelVaultTransfer(); get().cancelPersonalImport(); get().cancelFileEditBatch();
     // Queue the current draft snapshot before clearing memory; flush below waits
     // for it even when the 400 ms autosave debounce has not elapsed.
-    if (get().unlocked && (get().reminderDraftSaving || get().personalDraftSaving || get().fileEditSaving)) { clearReminderTimer(); clearPersonalTimer(); clearFileEditTimer(); void persist().catch(() => {}); }
+    if (get().unlocked && (get().reminderDraftSaving || get().personalDraftSaving || get().fileEditSaving || get().workflowDraftSaving)) { clearReminderTimer(); clearPersonalTimer(); clearFileEditTimer(); clearWorkflowDraftTimer(); void persist().catch(() => {}); }
     const epoch = ++generation;
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
@@ -1087,6 +1096,31 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       throw error;
     } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); }
   },
+  stageWorkflowDraft: definition => {
+    if (!get().unlocked || !vault) return false;
+    try {
+      const draft = validateWorkflow({ ...JSON.parse(JSON.stringify(definition)), updatedAt: new Date().toISOString() }, true);
+      const version = ++workflowDraftVersion;
+      clearWorkflowDraftTimer();
+      set({ workflowDraft: draft, workflowDraftSaving: true });
+      workflowDraftTimer = setTimeout(() => {
+        workflowDraftTimer = undefined;
+        if (version !== workflowDraftVersion || !get().unlocked) return;
+        void persist().finally(() => { if (version === workflowDraftVersion && get().unlocked) set({ workflowDraftSaving: false }); });
+      }, 500);
+      return true;
+    } catch {
+      // Keep the last valid encrypted draft while a field is temporarily incomplete.
+      return false;
+    }
+  },
+  clearWorkflowDraft: async () => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    workflowDraftVersion++;
+    clearWorkflowDraftTimer();
+    set({ workflowDraft: null, workflowDraftSaving: false });
+    await persist(true);
+  },
   saveWorkflow: async definition => {
     const epoch = generation;
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
@@ -1098,7 +1132,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!previous && get().workflows.length >= 30) throw new Error('最多保存 30 个工作流。');
     if (clean.revision >= 1000000) throw new Error('工作流修订已达上限，请另存为新工作流。');
     const saved = { ...clean, name: clean.name.trim(), revision: clean.revision + 1, updatedAt: new Date().toISOString() };
-    set(state => ({ workflows: [...state.workflows.filter(item => item.id !== saved.id), saved] }));
+    if (get().workflowDraft?.id === saved.id) { workflowDraftVersion++; clearWorkflowDraftTimer(); }
+    set(state => ({ workflows: [...state.workflows.filter(item => item.id !== saved.id), saved],
+      ...(state.workflowDraft?.id === saved.id ? { workflowDraft: null, workflowDraftSaving: false } : {}) }));
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
     return saved;
@@ -1106,7 +1142,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   removeWorkflow: async (id, revision) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     if (get().workflows.find(item => item.id === id)?.revision !== revision) throw new Error('工作流已变化，请重新载入。');
-    set(state => ({ workflows: state.workflows.filter(item => item.id !== id) }));
+    if (get().workflowDraft?.id === id) { workflowDraftVersion++; clearWorkflowDraftTimer(); }
+    set(state => ({ workflows: state.workflows.filter(item => item.id !== id),
+      ...(state.workflowDraft?.id === id ? { workflowDraft: null, workflowDraftSaving: false } : {}) }));
     await persist(true);
   },
   startWorkflow: async (definitionId, revision, input, profileId, allowCloud, resume) => {

@@ -8,6 +8,7 @@ import { PrivateVault } from '../privateVault';
 import { vaultBackupFixture } from '@/test/vaultBackupFixture';
 import { sha256Text } from '@/officeTasks/document';
 import type { VaultData } from '@/types/workbench';
+import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); vi.stubGlobal('TextDecoder', TextDecoder); vi.stubGlobal('Blob', NodeBlob);
@@ -26,6 +27,16 @@ it('roundtrips every vault collection and omits keys by default without mutating
   expect(imported.data).toEqual(expected); expect(imported.summary).toEqual(summary);
   expect(source.profiles[0].apiKey).toBe('synthetic-backup-key');
   expect(imported.data.profiles[0]).not.toHaveProperty('maxTokens');
+});
+
+it('roundtrips an incomplete encrypted workflow draft without promoting it to a definition', async () => {
+  const workflowDraft = { ...newWorkflow(), name: '', nodes: [newWorkflowNode('generate_document', 0)] };
+  workflowDraft.nodes[0].text = '';
+  const data: VaultData = { profiles: [], conversations: [], workflowDraft };
+  const { file } = await exportVaultBackup(data, '1234');
+  const restored = await importVaultBackup(file, '1234');
+  expect(restored.data.workflowDraft).toEqual(workflowDraft);
+  expect(restored.data.workflows).toBeUndefined();
 });
 
 it('includes keys only by opt-in and uses independent salt/nonces for each export', async () => {

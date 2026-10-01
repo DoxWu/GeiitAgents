@@ -36,6 +36,7 @@ const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: s
 const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)) };
 const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'line'), unit: str(20) });
 const workflow: Check = value => { validateWorkflow(value); };
+const workflowDraft: Check = value => { validateWorkflow(value, true); };
 const workflowInput: Check = value => { validateWorkflowInput(value); };
 const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), summary: optional(str(1_000_000)),
   title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50), resumedFromTaskId: optional(id), resumeFromNodeId: optional(id) });
@@ -65,7 +66,7 @@ const organizer = obj({ id, ...directory, destinationName: optional(str(1000, 1)
 const snapshot = obj({ text: str(256 * 1024), sha256: hash, identity: optional(hash) });
 const fileDraft = obj({ id, editId: id, ...directory, name: filename, before: snapshot, content: str(256 * 1024), newline: one('lf', 'crlf', 'cr', 'mixed'), bom: bool, restoredFrom: optional(id), restoreText: optional(str(256 * 1024)) });
 const fileVersion = obj({ id, draftId: id, ...directory, name: filename, before: snapshot, after: snapshot, batch: optional(obj({ id, index: num(19), total: num(20, 1) })), status: one('not-started', 'running', 'succeeded', 'not-applied', 'interrupted', 'needs-attention'), createdAt: date, updatedAt: date, restoredFrom: optional(id), error: optional(str(100000)), inspection: optional(obj({ outcome: one('before', 'after', 'different'), checkedAt: date })) });
-const schema = obj({ workflows: optional(arr(workflow, 30)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)),
+const schema = obj({ workflows: optional(arr(workflow, 30)), workflowDraft: optional(nullable(workflowDraft)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)),
   personalItems: optional(arr(personalItem, 500)), personalDrafts: optional(arr(personalDraft, 100)), reminderDrafts: optional(arr(reminderDraft, 20)), reminderTemplates: optional(arr(reminderTemplate, 100)), organizerRuns: optional(arr(organizer, 100)), fileEditDraft: optional(nullable(fileDraft)), fileEditVersions: optional(arr(fileVersion, 50)) });
 
 function unique(values: { id: string }[]) { if (new Set(values.map(v => v.id)).size !== values.length) fail(); }

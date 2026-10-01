@@ -8,15 +8,17 @@ import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
-  return { ACCOUNT_MODEL_ID: '$account', useWorkbenchStore: create(() => ({ workflows: [], profiles: [], taskRuns: [], toolRuns: [], artifacts: [], generationPreviews: {}, storageError: null, accountModel: null,
-    saveWorkflow: vi.fn(), startWorkflow: vi.fn(), resumeWorkflow: vi.fn(), removeWorkflow: vi.fn(), retryStorage: vi.fn() })) };
+  return { ACCOUNT_MODEL_ID: '$account', useWorkbenchStore: create(() => ({ workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], taskRuns: [], toolRuns: [], artifacts: [], generationPreviews: {}, storageError: null, accountModel: null,
+    stageWorkflowDraft: vi.fn(() => true), clearWorkflowDraft: vi.fn().mockResolvedValue(undefined), saveWorkflow: vi.fn(), startWorkflow: vi.fn(), resumeWorkflow: vi.fn(), removeWorkflow: vi.fn(), retryStorage: vi.fn() })) };
 });
 beforeEach(() => {
-  store.setState({ workflows: [], profiles: [], taskRuns: [], toolRuns: [], artifacts: [], storageError: null, accountModel: null });
+  store.setState({ workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], taskRuns: [], toolRuns: [], artifacts: [], storageError: null, accountModel: null });
   vi.mocked(store.getState().resumeWorkflow).mockReset().mockResolvedValue('resumed');
   vi.mocked(store.getState().saveWorkflow).mockReset().mockImplementation(async d => { const saved = { ...d, revision: d.revision + 1 }; store.setState({ workflows: [saved] }); return saved; });
   vi.mocked(store.getState().startWorkflow).mockReset().mockResolvedValue('run');
   vi.mocked(store.getState().retryStorage).mockReset().mockResolvedValue();
+  vi.mocked(store.getState().stageWorkflowDraft).mockReset().mockReturnValue(true);
+  vi.mocked(store.getState().clearWorkflowDraft).mockReset().mockResolvedValue();
 });
 it('separates continuation consent from new runs and invalidates it on history or connection changes', async () => {
   const node = newWorkflowNode('generate_document', 0), d = { ...newWorkflow(), revision: 1, nodes: [node] };
@@ -105,8 +107,31 @@ it('does not mark unsaved edits saved when retrying unrelated storage failures',
   const user = userEvent.setup(); render(<Workflows />);
   await user.click(screen.getByRole('button', { name: '添加整理 Markdown' }));
   await user.click(screen.getByRole('button', { name: '重试本机保存' }));
-  expect(screen.getByText(/有未保存修改/)).toBeVisible();
+  expect(screen.getByText(/本机草稿未确认保存/)).toBeVisible();
   expect(screen.getByRole('button', { name: '手动运行工作流' })).toBeDisabled();
+});
+
+it('stages definition edits without including this run input', async () => {
+  const user = userEvent.setup(); render(<Workflows />);
+  await user.type(screen.getByLabelText('工作流名称'), '周报');
+  expect(store.getState().stageWorkflowDraft).toHaveBeenCalled();
+  const staged = vi.mocked(store.getState().stageWorkflowDraft).mock.calls.at(-1)![0];
+  expect(staged.name).toBe('新工作流周报');
+  expect(staged).not.toHaveProperty('input');
+  const stageCalls = vi.mocked(store.getState().stageWorkflowDraft).mock.calls.length;
+  await user.type(screen.getByLabelText('工作流参考材料'), '仅本次运行');
+  expect(store.getState().stageWorkflowDraft).toHaveBeenCalledTimes(stageCalls);
+});
+
+it('restores a staged definition but requires an explicit save before running', async () => {
+  const draft = { ...newWorkflow(), name: '恢复的草稿', nodes: [newWorkflowNode('create_document', 0)] };
+  store.setState({ workflowDraft: draft });
+  render(<Workflows />);
+  expect(screen.getByLabelText('工作流名称')).toHaveValue('恢复的草稿');
+  expect(screen.getByText(/修改已加密保存为本机草稿/)).toBeVisible();
+  expect(screen.getByRole('button', { name: '手动运行工作流' })).toBeDisabled();
+  await userEvent.setup().click(screen.getByRole('button', { name: '保存工作流' }));
+  await waitFor(() => expect(store.getState().saveWorkflow).toHaveBeenCalledWith(draft));
 });
 
 it('imports a visible XLSX sheet into the workflow input and preserves references', async () => {

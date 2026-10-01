@@ -13,6 +13,7 @@ import { documentExportContent } from '@/officeTasks/document';
 import { exportDocx } from '@/officeTasks/docxClient';
 import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart';
 import { validateVaultBackup } from '@/services/vaultBackupSchema';
+import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 vi.mock('@/services/modelDiscovery', () => ({ discoverModels: vi.fn() }));
@@ -34,6 +35,22 @@ beforeEach(async () => {
   await store.getState().unlock(password); await store.getState().saveProfile(profile, "fixture-key");
 });
 afterEach(async () => { await store.getState().lock(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it('flushes an encrypted workflow draft on lock and restores it without making it runnable', async () => {
+  const draft = { ...newWorkflow(), nodes: [newWorkflowNode('create_document', 0)] };
+  expect(store.getState().stageWorkflowDraft(draft)).toBe(true);
+  expect(store.getState().workflows).toEqual([]);
+  await store.getState().lock();
+  const encrypted = localStorage.getItem(VAULT_STORAGE_KEY)!;
+  expect(encrypted).not.toContain(draft.nodes[0].text);
+  await store.getState().unlock(password);
+  expect(store.getState().workflowDraft).toMatchObject({ id: draft.id, revision: 0, nodes: draft.nodes });
+  expect(store.getState().workflows).toEqual([]);
+  await expect(store.getState().startWorkflow(draft.id, 0, { reference: '', csv: '' }, '', false)).rejects.toThrow('未保存');
+  const saved = await store.getState().saveWorkflow(store.getState().workflowDraft!);
+  expect(saved.revision).toBe(1);
+  expect(store.getState().workflowDraft).toBeNull();
+});
 
 it('persists a reported output limit alongside text through vault reload', async () => {
   vi.mocked(completeModel).mockImplementation(async (_profile, _key, _messages, _signal, onChunk, onFinish) => {

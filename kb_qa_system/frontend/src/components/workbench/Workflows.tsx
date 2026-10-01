@@ -12,16 +12,19 @@ const statuses: Record<TaskStatus, string> = { running: '运行中', succeeded: 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export function Workflows() {
   const store = useWorkbenchStore();
-  const [draft, setDraft] = useState<WorkflowDefinition>(() => newWorkflow()), [dirty, setDirty] = useState(false), [selected, setSelected] = useState('');
+  const [draft, setDraft] = useState<WorkflowDefinition>(() => clone(store.workflowDraft ?? newWorkflow())), [dirty, setDirty] = useState(Boolean(store.workflowDraft)), [selected, setSelected] = useState('');
+  const stageDraft = store.stageWorkflowDraft ?? (() => true);
+  const clearDraft = store.clearWorkflowDraft ?? (async () => {});
   const [input, setInput] = useState<WorkflowInput>({ reference: '', csv: '' });
   const [inputSheet, setInputSheet] = useState('');
   const [inputError, setInputError] = useState('');
+  const [draftPending, setDraftPending] = useState(false);
   const [from, setFrom] = useState(''), [to, setTo] = useState(''), [edgeWhen, setEdgeWhen] = useState<'' | 'true' | 'false'>(''), [profileId, setProfileId] = useState('');
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [resumeConsent, setResumeConsent] = useState(false);
   const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
   const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false), inputGeneration = useRef(0), inputFile = useRef<HTMLInputElement>(null);
-  dirtyRef.current = dirty;
+  dirtyRef.current = dirty && (draftPending || store.workflowDraftSaving || Boolean(store.storageError));
   useEffect(() => {
     mounted.current = true;
     const warn = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = ''; } };
@@ -46,7 +49,7 @@ export function Workflows() {
   const resumeSignature = JSON.stringify([run?.id, run?.workflow, run?.profileId, store.profiles, store.accountModel]);
   useEffect(() => { setResumeConsent(false); }, [resumeSignature]);
   const artifact = store.artifacts.find(a => a.id === artifactId && run?.artifactIds.includes(a.id)) ?? store.artifacts.find(a => run?.artifactIds.includes(a.id));
-  function change(next: WorkflowDefinition) { setDraft(next); setDirty(true); setConsent(false); setNotice(''); }
+  function change(next: WorkflowDefinition) { setDraft(next); setDirty(true); setDraftPending(stageDraft(next) === false); setConsent(false); setNotice(''); }
   function patchNode(id: string, patch: Partial<WorkflowNode>) { change({ ...draft, nodes: draft.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }); }
   async function importInputFile(file?: File) {
     if (!file) return;
@@ -74,11 +77,12 @@ export function Workflows() {
   }
   function load(definition: WorkflowDefinition) {
     if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
-    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setFrom(''); setTo(''); setEdgeWhen(''); setConsent(false); setError(''); setNotice('');
+    if (store.workflowDraft) void clearDraft().catch(e => { if (mounted.current) setError(e instanceof Error ? e.message : '无法清除工作流草稿。'); });
+    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setDraftPending(false); setFrom(''); setTo(''); setEdgeWhen(''); setConsent(false); setError(''); setNotice('');
   }
   async function save() {
     setBusy(true); setError('');
-    try { const saved = await store.saveWorkflow(draft); if (mounted.current) { setDraft(clone(saved)); setDirty(false); setNotice(`工作流已加密保存 · 修订 ${saved.revision}`); } }
+    try { const saved = await store.saveWorkflow(draft); if (mounted.current) { setDraft(clone(saved)); setDirty(false); setDraftPending(false); setNotice(`工作流已加密保存 · 修订 ${saved.revision}`); } }
     catch (e) {
       if (mounted.current) {
         // A storage failure can leave the valid new revision in memory. Keep it
@@ -152,7 +156,7 @@ export function Workflows() {
         <button className="work-command self-end" disabled={!from || !to || draft.nodes.find(n => n.id === from)?.kind === 'condition' && !edgeWhen} onClick={connect}>连接步骤</button>
       </div>
       {!!draft.edges.length && <ul className="space-y-2">{draft.edges.map(e => <li key={e.from + ':' + e.to + ':' + (e.when || '')} className="flex flex-wrap items-center gap-2 text-sm"><span>{draft.nodes.find(n => n.id === e.from)?.title} {e.when ? `(${e.when})` : ''} → {draft.nodes.find(n => n.id === e.to)?.title}</span><button className="work-command" onClick={() => change({ ...draft, edges: draft.edges.filter(edge => edge !== e) })}>移除此连线</button></li>)}</ul>}
-      <div className="flex flex-wrap items-center gap-3"><button className="work-command bg-brand text-white" onClick={() => void save()} disabled={!draft.nodes.length}>保存工作流</button><span className="text-sm text-ink-secondary">{dirty ? '有未保存修改；离开此任务类型前请保存。' : draft.revision ? `已保存修订 ${draft.revision}` : '尚未保存'} · 最多 12 个步骤 / 6 个模型步骤</span></div>
+      <div className="flex flex-wrap items-center gap-3"><button className="work-command bg-brand text-white" onClick={() => void save()} disabled={!draft.nodes.length}>保存工作流</button><span className="text-sm text-ink-secondary">{draftPending ? '草稿字段暂时不完整，最后一个有效版本仍保留。' : store.workflowDraftSaving ? '正在加密保存本机草稿…' : store.storageError ? '本机草稿未确认保存，请检查存储后重试。' : dirty ? '修改已加密保存为本机草稿；点击“保存工作流”后才能运行。' : draft.revision ? `已保存修订 ${draft.revision}` : '尚未保存'} · 最多 12 个步骤 / 6 个模型步骤</span></div>
     </fieldset>
     <section aria-label="工作流运行输入" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">本次运行输入</h2>
       <label className="work-label">工作流参考材料<textarea aria-label="工作流参考材料" className="work-input min-h-24" maxLength={50000} value={input.reference} onChange={e => { setInput({ ...input, reference: e.target.value }); setConsent(false); }} /></label>

@@ -75,6 +75,7 @@ export class PrivateVault {
         data = JSON.parse(new TextDecoder().decode(plaintext));
         if (!Array.isArray(data.profiles) || !Array.isArray(data.conversations)
           || data.workflows !== undefined && !Array.isArray(data.workflows)
+          || data.workflowDraft !== undefined && data.workflowDraft !== null && (typeof data.workflowDraft !== 'object' || Array.isArray(data.workflowDraft))
           || data.taskRuns !== undefined && !Array.isArray(data.taskRuns)
           || data.toolRuns !== undefined && !Array.isArray(data.toolRuns)
           || data.artifacts !== undefined && !Array.isArray(data.artifacts)
@@ -85,10 +86,11 @@ export class PrivateVault {
           || data.organizerRuns !== undefined && !Array.isArray(data.organizerRuns)) throw new Error();
         if (data.fileEditVersions !== undefined && !Array.isArray(data.fileEditVersions)
           || data.fileEditDraft != null && (typeof data.fileEditDraft !== 'object' || Array.isArray(data.fileEditDraft))) throw new Error();
-        if (data.workflows?.length || data.taskRuns?.some(t => t.workflow)) {
+        if (data.workflows?.length || data.workflowDraft || data.taskRuns?.some(t => t.workflow)) {
           const { validateWorkflow, validateWorkflowInput } = await import('@/workflows/definition');
           if ((data.workflows?.length ?? 0) > 30 || new Set(data.workflows?.map(d => d.id)).size !== (data.workflows?.length ?? 0)) throw new Error();
-          data.workflows?.forEach(validateWorkflow);
+          data.workflows?.forEach(item => validateWorkflow(item));
+          if (data.workflowDraft) validateWorkflow(data.workflowDraft, true);
           data.taskRuns?.forEach(t => { if (t.workflow) { validateWorkflow(t.workflow.definition); validateWorkflowInput(t.workflow.input); } });
         }
       } catch {
