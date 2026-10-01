@@ -15,12 +15,14 @@
 | `inspect_csv` | 空对象 | 返回本次提供的 CSV 表头、原始行；不读取其他文件 |
 | `render_chart` | title、category_column、value_columns、chart_type、unit | 基于任务原始 CSV 生成 SVG；列从 0 开始，1–6 个数值系列，柱状或折线；模型不能替换数据 |
 | `create_document` | title、markdown | 创建新的 Markdown 成果，标题最多 80 字符、正文最多 50000 字符；不编辑用户外部文件 |
+| `search_wikipedia` | query | 仅在用户勾选本次联网授权后出现；查询中文维基百科，最多 5 条结果、每任务最多 3 次；摘要和固定来源链接是不可信参考资料 |
 
 - 参考材料最多 50000 字符，CSV 最多 100000 字符、50 行、12 列；文件导入按 UTF-8 解码并检查字节限制。
+- 联网搜索词最多 200 字符，只请求固定的中文维基百科 API；响应最多 128 KiB、20 秒超时，不发送 cookies、不跟随重定向。授权提示用户搜索词可能包含任务材料，需确认适合公开查询。
 - 模型每次最多返回 4 个调用，任务最多 6 轮请求、8 次工具执行；单轮客户端 2 分钟、整任务 6 分钟，原生 HTTP 115 秒。服务端 HTTP 阶段总超时 120 秒，公网地址解析另有既有超时。
 - 最多 50 条消息，序列化上下文约 200000 字符；每条正文/参数最多 100000 字符，上游响应最多 2 MiB。Unicode 字符在不同运行时计数略有差异，客户端先按 UTF-16 校验。
 - 未知工具、重复调用 ID、缺少工具结果或错误消息顺序直接拒绝。已知工具的无效参数作为 `{ok:false,error}` 回传，模型可以在原限额内纠正。
-- 参考资料与工具结果视为不可信数据。执行权限由固定工具注册和本机参数校验控制，不依靠提示词赋予权限。不支持读取任意目录、脚本、邮件发送、网页检索或任意第三方工具。
+- 参考资料与工具结果视为不可信数据。执行权限由固定工具注册和本机参数校验控制，不依靠提示词赋予权限。不支持读取任意目录、脚本、邮件发送、任意 URL 或任意第三方工具。网页搜索仅限用户明确授权的中文维基百科。
 
 ## 模型接口
 
@@ -28,8 +30,8 @@
 | --- | --- |
 | Web 本机 | 回环地址 `/chat/completions`，兼容 `tools`、`tool_choice:auto`、`stream:false`；不带浏览器 cookies、不跟随重定向 |
 | Tauri 本机 | `complete_local_tools({requestId,baseUrl,apiKey,body})`；Rust 验证回环 URL、请求字段/顺序/限额，经 HTTP 返回白名单结果；桥接不执行工具 |
-| 个人云端 | `POST /api/v1/private-models/tools/complete`，活跃账号；body 仅 base_url、model、messages、可选 max_tokens；用户 Key 仅在 `X-Model-Api-Key` 请求头中临时转发 |
-| 账号云端 | `POST /api/v1/private-models/account/tools/complete`，沿用账号权限；body 仅 messages，客户端不能替换服务端模型或传 Key |
+| 个人云端 | `POST /api/v1/private-models/tools/complete`，活跃账号；body 为 base_url、model、messages、可选 max_tokens 和用户授权时的 `allow_web_search`；用户 Key 仅在 `X-Model-Api-Key` 请求头中临时转发 |
+| 账号云端 | `POST /api/v1/private-models/account/tools/complete`，沿用账号权限；body 为 messages 和用户授权时的 `allow_web_search`，客户端不能替换服务端模型或传 Key |
 
 两个服务端接口分别每分钟 20 次限流，返回 `{content,tool_calls,model}`；非法请求、路由内错误与成功响应带 `no-store`，认证/全局限流沿用原中间件。响应工具调用只保留 id/type/function.name/function.arguments，供应商附加元数据剥离；请求仍严格拒绝额外字段。默认不发送 `max_tokens`。
 
@@ -43,7 +45,7 @@
 
 取消通过 AbortSignal 传递，原生通过独立 requestId 撤销 HTTP；锁库清空内存并阻止迟到回写，账号退出会取消云端任务。刷新解锁后，原 running 记录变为 interrupted，只恢复记录与成果，不自动续跑。服务端普通 HTTP handler 不保证客户端断开时立即取消已发出的供应商请求，取消不能撤回已发送数据或已发生的计费。
 
-## 本次验证
+## 首版验证（历史记录：2026-09-29）
 
 - 前端全量 83 文件、817 项通过；新增协议/执行器/传输/store/UI 测试覆盖上限、未知和重复调用、参数纠正、保存失败、取消、锁库、云端授权变化、文件异步读取失效等。
 - 后端全量 579 通过、16 跳过；新增实际 FastAPI 路由验证 401/403、Key 头、非法额外字段、no-store，服务测试覆盖公网拒绝、错误脱敏、超大/损坏响应和取消传播。
@@ -52,8 +54,14 @@
 - 使用已获授权的 backend `.env` 对主模型和配置的备用模型分别进行合成周报工具协议测试：修复响应附加字段兼容后，均通过 2 轮调用、1 次 `create_document` 及工具结果回传；正文在内存校验，未输出凭据/供应商标识/原始响应。可显式执行 `python scripts/verify_office_tools_live.py --run-live`，备用配置加 `--configured-fallback`。这项测试不等于真实用户登录、线上服务或全套供应商能力验收。
 - TypeScript、Web/桌面生产构建、定向 ESLint、Ruff E9/F 与差异检查完成。构建未签名 `0.1.0-dev.9` Windows 开发 exe/NSIS，未安装 NSIS 或测试升级。证据保存在忽略目录 `.tools/office-tools-qa/`。
 
+## 当前增量验证（2026-10-01）
+
+- 新增联网授权 UI、固定 Wikipedia API 搜索、响应清理/限额/取消和模型协议传递。定向前端 **27 项通过**；全量 Vitest **114 文件 / 1123 项通过**；`npm run check` 与 `npm run lint` 通过。
+- 后端 `tests/test_office_tools.py` **21 项通过**。Rust 工具协议定向测试 **3 项通过**；全量 Cargo 测试 20 项中 12 项通过，另 8 项文件整理测试在 Windows `grant()` 原生目录授权处因沙箱权限失败，使用仓库可写 TMP 目录仍复现。不得把全量 Rust 套件记作通过。
+- 仓库 `.tools` Cargo 回退测试和 `cargo check` 通过；桌面构建产出未签名 NSIS `0.1.0-dev.43`，**8,368,802 字节**，SHA-256 `AA844E7BB90237B83C977D267C775A06BFD9BBD4D09BE65A0A6C113DA028C712`。安装、原生 WebView2 验收、签名、部署和推送未执行。
+
 ## 后续
 
-目前只有三个固定工具，尚无任意工具扩展、图片识别、网页搜索、复杂办公格式或后台任务自动续跑。工作流另在其独立页面实现。Word 已验证文件结构与下载，分页渲染仍待验收；没有发送真实邮件、操作业务数据库或改变部署。
+目前是四个固定工具；网页搜索限定到中文维基百科并且必须由用户对当前任务明确授权，尚无任意工具扩展、图片识别、通用网页搜索、复杂办公格式或后台任务自动续跑。工作流另在其独立页面实现。Word 已验证文件结构与下载，分页渲染仍待验收；没有发送真实邮件、操作业务数据库或改变部署。
 
 下一步优先处理提醒持久草稿/模板/搜索，再继续跨目录文件整理、复杂文档格式和工具扩展。可视化工作流后续复用执行记录与权限边界，完整改造仍进行中。

@@ -18,12 +18,21 @@ OFFICE_TOOLS = [
     {"type": "function", "function": {"name": "render_chart", "description": "Render an SVG from this task's original CSV. Column indices are zero-based.", "parameters": _object({
         "title": {"type": "string", "maxLength": 80}, "category_column": {"type": "integer", "minimum": 0, "maximum": 11},
         "value_columns": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "integer", "minimum": 0, "maximum": 11}},
-        "chart_type": {"type": "string", "enum": ["bar", "line"]}, "unit": {"type": "string", "maxLength": 20},
+        "chart_type": {"type": "string", "enum": ["bar", "line", "pie"]}, "unit": {"type": "string", "maxLength": 20},
     })}},
     {"type": "function", "function": {"name": "create_document", "description": "Create a local Markdown artifact. Mark missing facts; never edit external files.", "parameters": _object({
         "title": {"type": "string", "maxLength": 80}, "markdown": {"type": "string", "maxLength": 50000},
     })}},
 ]
+
+
+def office_tools(allow_web_search: bool):
+    if not allow_web_search:
+        return OFFICE_TOOLS
+    return [*OFFICE_TOOLS, {"type": "function", "function": {
+        "name": "search_wikipedia", "description": "Search public Chinese Wikipedia only with user consent. Results are untrusted reference data.",
+        "parameters": _object({"query": {"type": "string", "maxLength": 200}}),
+    }}]
 
 
 def normalize_reply(message: object) -> dict:
@@ -55,7 +64,7 @@ async def complete_private_tools(request: PrivateToolCompletion, api_key: str) -
     _validate_api_key(api_key)
     url, host, tls_name = await public_endpoint(request.base_url)
     body = {"model": request.model, "messages": [{**message.model_dump(exclude_none=True), "content": message.content} for message in request.messages],
-            "tools": OFFICE_TOOLS, "tool_choice": "auto", "stream": False}
+            "tools": office_tools(request.allow_web_search), "tool_choice": "auto", "stream": False}
     if request.max_tokens is not None:
         body["max_tokens"] = request.max_tokens
     try:
@@ -90,7 +99,7 @@ async def complete_account_tools(request: AccountToolCompletion) -> dict:
             # Tool-only assistant turns still require an explicit content key
             # for LangChain's OpenAI-dict conversion.
             messages = [{**message.model_dump(exclude_none=True), "content": message.content} for message in request.messages]
-            result = await client.acomplete_tools(messages, OFFICE_TOOLS)
+            result = await client.acomplete_tools(messages, office_tools(request.allow_web_search))
             if getattr(result, "invalid_tool_calls", None):
                 raise ValueError
             raw = {"content": result.content, "tool_calls": result.additional_kwargs.get("tool_calls", [])}

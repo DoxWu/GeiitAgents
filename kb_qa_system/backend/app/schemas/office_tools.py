@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ToolName = Literal["inspect_csv", "render_chart", "create_document"]
+ToolName = Literal["inspect_csv", "render_chart", "create_document", "search_wikipedia"]
 
 
 class ToolFunction(BaseModel):
@@ -30,6 +30,7 @@ class ToolMessage(BaseModel):
 class AccountToolCompletion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     messages: list[ToolMessage] = Field(min_length=1, max_length=50)
+    allow_web_search: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def ordered_messages(self):
@@ -50,6 +51,8 @@ class AccountToolCompletion(BaseModel):
                     if not message.tool_calls and not (message.content or "").strip():
                         raise ValueError("Empty assistant message")
                     for call in message.tool_calls or []:
+                        if call.function.name == "search_wikipedia" and not self.allow_web_search:
+                            raise ValueError("Search is not authorized")
                         if call.id in seen:
                             raise ValueError("Repeated tool call")
                         seen.add(call.id)

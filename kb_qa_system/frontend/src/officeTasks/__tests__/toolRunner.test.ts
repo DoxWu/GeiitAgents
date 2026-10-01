@@ -1,6 +1,6 @@
 import { webcrypto } from 'node:crypto';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
-import { runOfficeTools, type ToolCheckpoint } from '../toolRunner';
+import { executeOfficeTool, runOfficeTools, type ToolCheckpoint } from '../toolRunner';
 import { normalizeToolReply, validateToolMessages, type ToolCall, type ToolMessage, type ToolReply } from '../toolProtocol';
 const input = { title: '报告', instruction: '检查 CSV，绘制图表并写报告', csv: '月份,销售额\n一月,120\n二月,180' };
 const call = (id: string, name: ToolCall['function']['name'], args: unknown): ToolCall => ({ id, type: 'function', function: { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) } });
@@ -43,6 +43,59 @@ it('returns invalid arguments as tool errors for a bounded repair, never as exec
   await runOfficeTools('task', input, new AbortController().signal, model, async event => { events.push(event); });
   expect(events.filter(event => event.artifact)).toHaveLength(1);
   expect(events.some(event => event.step.callId === 'invalid' && event.step.status === 'failed')).toBe(true);
+});
+
+it('searches only Chinese Wikipedia after consent and returns bounded plain text with source links', async () => {
+  const response = new Response(JSON.stringify({ query: { search: [
+    { title: '人工智能', snippet: '公开 <b>摘要</b> &amp; 引用' },
+    { title: '<img src=x onerror=alert(1)>', snippet: '<script>alert(1)</script>资料' },
+  ] } }), { headers: { 'Content-Type': 'application/json' } });
+  const fetchMock = vi.fn().mockResolvedValue(response); vi.stubGlobal('fetch', fetchMock);
+  const output = await executeOfficeTool(call('search', 'search_wikipedia', { query: '人工智能' }), input, 'task', new AbortController().signal, true);
+  expect(output.result.results).toEqual([{ title: '人工智能', snippet: '公开 摘要 & 引用', url: 'https://zh.wikipedia.org/wiki/%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD' }]);
+  expect(fetchMock).toHaveBeenCalledWith(expect.objectContaining({ hostname: 'zh.wikipedia.org', pathname: '/w/api.php' }), expect.objectContaining({ credentials: 'omit', redirect: 'error', cache: 'no-store' }));
+});
+
+it('does not execute search without consent and enforces the three-search task limit', async () => {
+  const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+  const search = (id: string) => call(id, 'search_wikipedia', { query: 'test' });
+  await expect(executeOfficeTool(search('no-consent'), input, 'task', new AbortController().signal))
+    .rejects.toThrow('没有获得网络搜索授权');
+  expect(fetchMock).not.toHaveBeenCalled();
+
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ query: { search: [] } }))));
+  let index = 0;
+  const model = vi.fn().mockImplementation(async () => {
+    return reply(search('query-' + index++));
+  });
+  await expect(runOfficeTools('task', input, new AbortController().signal, model, async () => {}, true)).rejects.toThrow('6 轮');
+  expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+});
+
+it.each([
+  '{not-json',
+  JSON.stringify({ query: { search: 'invalid' } }),
+  'x'.repeat(128 * 1024 + 1),
+])('returns malformed or oversized search responses as bounded tool errors', async body => {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(body)));
+  await expect(executeOfficeTool(call('search', 'search_wikipedia', { query: 'test' }), input, 'task', new AbortController().signal, true))
+    .rejects.toThrow(/搜索服务返回格式无效|中文维基百科搜索暂不可用|搜索结果超过大小限制/);
+  expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+});
+
+it('aborts an in-flight Wikipedia request when the task is cancelled', async () => {
+  const controller = new AbortController();
+  let requestSignal: AbortSignal | undefined;
+  vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
+    requestSignal = init.signal as AbortSignal;
+    return new Promise<Response>((_resolve, reject) => requestSignal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+  }));
+  const model = vi.fn().mockResolvedValue(reply(call('search', 'search_wikipedia', { query: 'test' })));
+  const pending = runOfficeTools('task', input, controller.signal, model, async () => {}, true);
+  await vi.waitFor(() => expect(requestSignal).toBeDefined());
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  expect(requestSignal?.aborted).toBe(true);
 });
 
 it('refuses unknown tools and duplicate call IDs before executing them', async () => {

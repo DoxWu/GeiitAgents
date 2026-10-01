@@ -12,7 +12,7 @@ const reply = { content: null, tool_calls: [{ id: 'call1', type: 'function', fun
 afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks(); });
 
 it('sends fixed tool schemas through local HTTP without a default output limit', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: reply }] }))));
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ choices: [{ message: reply }] }))));
   expect(await completeToolModel(profile, '', messages, new AbortController().signal)).toEqual(reply);
   const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
   expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['inspect_csv', 'render_chart', 'create_document']);
@@ -21,7 +21,7 @@ it('sends fixed tool schemas through local HTTP without a default output limit',
 });
 
 it('accepts only the requested inert empty-argument tool call as a capability probe', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: reply }] }))));
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ choices: [{ message: reply }] }))));
   await expect(probeToolCallModel(profile, '', new AbortController().signal)).resolves.toBeUndefined();
   const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
   expect(body.messages).toEqual([{ role: 'user', content: expect.stringContaining('inspect_csv exactly once') }]);
@@ -45,16 +45,31 @@ it('keeps private keys in the relay header and account model choice on the serve
   expect(apiClient.post).toHaveBeenLastCalledWith('/private-models/account/tools/complete', { messages }, expect.not.objectContaining({ headers: expect.anything() }));
 });
 
+it('advertises web search only after explicit consent on every model path', async () => {
+  const controller = new AbortController();
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ choices: [{ message: reply }] }))));
+  await completeToolModel(profile, '', messages, controller.signal);
+  expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).tools).toHaveLength(3);
+  await completeToolModel(profile, '', messages, controller.signal, true);
+  expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body)).tools.at(-1).function.name).toBe('search_wikipedia');
+
+  vi.mocked(apiClient.post).mockResolvedValue(reply);
+  await completeToolModel({ ...profile, mode: 'relay', baseUrl: 'https://models.example/v1' }, 'fixture-key', messages, controller.signal, true);
+  expect(apiClient.post).toHaveBeenLastCalledWith('/private-models/tools/complete', expect.objectContaining({ allow_web_search: true }), expect.anything());
+  await completeToolModel(null, '', messages, controller.signal, true);
+  expect(apiClient.post).toHaveBeenLastCalledWith('/private-models/account/tools/complete', expect.objectContaining({ messages, allow_web_search: true }), expect.anything());
+});
+
 it('uses and cancels the native structured command without accepting a late reply', async () => {
   vi.stubGlobal('__TAURI_INTERNALS__', {});
   let finish!: (value: unknown) => void;
   vi.mocked(invoke).mockImplementation(command => command === 'cancel_local_model' ? Promise.resolve(undefined) : new Promise(resolve => { finish = resolve; }));
   const controller = new AbortController();
-  const pending = completeToolModel(profile, 'fixture-key', messages, controller.signal);
+  const pending = completeToolModel(profile, 'fixture-key', messages, controller.signal, true);
   const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   await vi.waitFor(() => expect(finish).toBeDefined());
   const args = vi.mocked(invoke).mock.calls[0][1] as Record<string, unknown>;
-  expect(JSON.parse(String(args.body)).tools).toHaveLength(3);
+  expect(JSON.parse(String(args.body)).tools.at(-1).function.name).toBe('search_wikipedia');
   controller.abort(); finish(reply); await rejected;
   expect(invoke).toHaveBeenCalledWith('cancel_local_model', { requestId: args.requestId });
 });

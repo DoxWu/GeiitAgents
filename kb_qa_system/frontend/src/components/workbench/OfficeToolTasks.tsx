@@ -7,11 +7,12 @@ import { ToolArtifact } from './ToolArtifact';
 import { artifactSeries } from '@/officeTasks/artifactSeries';
 
 const statusText: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
-const toolText: Record<string, string> = { 'model.tools': '请求模型', 'office.inspect_csv': '读取 CSV', 'office.render_chart': '生成图表', 'office.create_document': '创建文档', 'document.export-docx': '导出 Word' };
+const toolText: Record<string, string> = { 'model.tools': '请求模型', 'office.inspect_csv': '读取 CSV', 'office.render_chart': '生成图表', 'office.create_document': '创建文档', 'office.search_wikipedia': '搜索维基百科', 'document.export-docx': '导出 Word' };
 export function OfficeToolTasks() {
   const store = useWorkbenchStore(), userId = useAuthStore(s => s.isAuthenticated ? s.user?.id : undefined);
   const [input, setInput] = useState<OfficeToolInput>({ title: '', instruction: '', sourceContent: '', csv: '' });
   const [profileId, setProfileId] = useState(''), [allowCloud, setAllowCloud] = useState(false), [busy, setBusy] = useState(false);
+  const [allowWebSearch, setAllowWebSearch] = useState(false);
   const [selected, setSelected] = useState(''), [selectedArtifact, setSelectedArtifact] = useState(''), [error, setError] = useState('');
   const [importedSheet, setImportedSheet] = useState('');
   const mounted = useRef(false), starting = useRef(false), readVersion = useRef(0);
@@ -19,7 +20,7 @@ export function OfficeToolTasks() {
   const chosen = profileId || store.profiles[0]?.id || (store.accountModel ? ACCOUNT_MODEL_ID : '');
   const chosenProfile = store.profiles.find(profile => profile.id === chosen);
   const cloud = chosen === ACCOUNT_MODEL_ID || chosenProfile?.mode === 'relay';
-  useEffect(() => { setAllowCloud(false); }, [chosen, chosenProfile, userId, store.accountModel]);
+  useEffect(() => { setAllowCloud(false); setAllowWebSearch(false); }, [chosen, chosenProfile, userId, store.accountModel]);
   const tasks = store.taskRuns.filter(task => task.type === 'office.tools');
   const task = tasks.find(task => task.id === selected) || tasks[0];
   const artifacts = task ? task.artifactIds.map(id => store.artifacts.find(item => item.id === id)).filter((item): item is WorkArtifact => Boolean(item)) : [];
@@ -27,7 +28,7 @@ export function OfficeToolTasks() {
   const root = roots.find(item => item.id === selectedArtifact) || roots[0];
   const versions = root?.kind === 'markdown' ? artifactSeries(root, artifacts) : undefined;
   const artifact = versions?.[0] || root;
-  function change(patch: Partial<OfficeToolInput>) { readVersion.current++; setInput(current => ({ ...current, ...patch })); if (patch.csv !== undefined) setImportedSheet(''); setAllowCloud(false); setError(''); }
+  function change(patch: Partial<OfficeToolInput>) { readVersion.current++; setInput(current => ({ ...current, ...patch })); if (patch.csv !== undefined) setImportedSheet(''); setAllowCloud(false); setAllowWebSearch(false); setError(''); }
   async function open(file: File | undefined, kind: 'csv' | 'reference') {
     if (!file) return;
     const version = ++readVersion.current;
@@ -49,8 +50,8 @@ export function OfficeToolTasks() {
   async function start() {
     if (starting.current) return;
     starting.current = true; readVersion.current++; setBusy(true); setError(''); setSelected('');
-    const consent = allowCloud; setAllowCloud(false);
-    try { const id = await store.startOfficeToolTask(chosen, input, consent); if (mounted.current) setSelected(id); }
+    const consent = allowCloud, searchConsent = allowWebSearch; setAllowCloud(false); setAllowWebSearch(false);
+    try { const id = await store.startOfficeToolTask(chosen, input, consent, searchConsent); if (mounted.current) setSelected(id); }
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : '多步骤任务失败。'); }
     finally { starting.current = false; if (mounted.current) setBusy(false); }
   }
@@ -73,6 +74,7 @@ export function OfficeToolTasks() {
           <label className="work-label">导入任务 CSV / XLSX（CSV 400 KB，XLSX 2 MB）<input type="file" accept=".csv,.xlsx" onChange={e => { void open(e.target.files?.[0], 'csv'); e.target.value = ''; }} /></label>{importedSheet && <p role="status" className="text-xs text-ink-secondary">工作表：{importedSheet}</p>}
           <p className="text-xs text-ink-secondary">表格最多 50 行、12 列；XLSX 只读取首个可见工作表，公式和合并格需先转为普通单元格。图表支持 1–6 个同量纲数值系列。参考材料最多 50000 字符。运行期间关闭客户端或锁库会中断任务，已保存成果保留，不自动重放。</p>
           {cloud && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={allowCloud} onChange={e => setAllowCloud(e.target.checked)} />允许本次最多 6 轮请求将目标、参考材料、CSV 工具结果和生成内容发给所选云端模型；可能计费。</label>}
+          <label className="flex items-start gap-2 text-sm"><input aria-label="允许本次网络搜索" type="checkbox" className="mt-1" checked={allowWebSearch} onChange={e => setAllowWebSearch(e.target.checked)} />允许本次将模型生成的搜索词发送给中文维基百科（最多 3 次），并将公开摘要和来源链接交给所选模型。搜索词可能包含任务材料，请核对材料适合公开查询。</label>
           <button className="work-command justify-self-start bg-brand text-white" type="submit" disabled={!chosen || busy || Boolean(cloud && !allowCloud)}>{busy ? '任务运行中…' : '开始多步骤任务'}</button>
         </fieldset>
       </form>

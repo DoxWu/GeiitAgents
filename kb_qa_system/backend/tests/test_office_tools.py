@@ -49,6 +49,19 @@ def test_relay_uses_fixed_tools_and_header_key_with_optional_limit(limit):
     asyncio.run(run())
 
 
+def test_relay_advertises_search_tool_only_when_authorized():
+    async def run():
+        def provider(req):
+            import json
+            data = json.loads(req.content)
+            assert [tool["function"]["name"] for tool in data["tools"]] == ["inspect_csv", "render_chart", "create_document", "search_wikipedia"]
+            return httpx.Response(200, json={"choices": [{"message": {"content": "done", "tool_calls": []}}]})
+        body = request(allow_web_search=True)
+        with patch("app.services.office_tools.public_endpoint", AsyncMock(return_value=("https://1.1.1.1/v1/chat/completions", "models.example", "models.example"))), transport(provider):
+            await complete_private_tools(body, "fixture-key")
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("status", [307, 401, 403, 429, 500])
 def test_provider_errors_are_sanitized_and_not_followed(status):
     async def run():
@@ -74,6 +87,17 @@ def test_messages_require_ordered_results_unique_calls_and_no_body_key():
     assert len(AccountToolCompletion(messages=valid).messages) == 2
     with pytest.raises(ValidationError):
         AccountToolCompletion(messages=[*valid, model, valid[-1]])
+
+
+def test_search_tool_is_exposed_only_with_strict_user_authorization():
+    search = {"id": "search1", "type": "function", "function": {"name": "search_wikipedia", "arguments": '{"query":"test"}'}}
+    history = [{"role": "assistant", "content": None, "tool_calls": [search]}, {"role": "tool", "content": '{"ok":true}', "tool_call_id": "search1"}]
+    with pytest.raises(ValidationError):
+        AccountToolCompletion(messages=history)
+    with pytest.raises(ValidationError):
+        AccountToolCompletion(messages=[{"role": "user", "content": "goal"}], allow_web_search="true")
+    request = AccountToolCompletion(messages=history, allow_web_search=True)
+    assert request.allow_web_search is True
 
 
 @pytest.mark.parametrize("message", [{"tool_calls": [call("shell")]}, {"tool_calls": [call(), call()]}, {"content": ""}, {"content": ["image"]}, {"content": "done", "tool_calls": False}])

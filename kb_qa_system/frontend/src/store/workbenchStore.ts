@@ -154,7 +154,7 @@ interface WorkbenchState {
   cancel: (id: string) => void;
   saveKnowledgeAnswer: (answer: KnowledgeAnswerArtifact) => Promise<string>;
   startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
-  startOfficeToolTask: (profileId: string, input: OfficeToolInput, allowCloud: boolean) => Promise<string>;
+  startOfficeToolTask: (profileId: string, input: OfficeToolInput, allowCloud: boolean, allowWebSearch?: boolean) => Promise<string>;
   startChartTask: (input: ChartInput, requestId: string) => Promise<string>;
   cancelTask: (id: string) => void;
   removeTask: (id: string) => Promise<void>;
@@ -1047,7 +1047,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       preview.dispose(); clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token);
     }
   },
-  startOfficeToolTask: async (profileId, input, allowCloud) => {
+  startOfficeToolTask: async (profileId, input, allowCloud, allowWebSearch = false) => {
     const epoch = generation;
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const { validateOfficeToolInput, runOfficeTools } = await import('@/officeTasks/toolRunner');
@@ -1074,7 +1074,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         controller.signal.addEventListener('abort', abort, { once: true });
         const roundTimeout = setTimeout(abort, 120000);
         try {
-          const reply = await completeToolModel(account ? null : profile!, secret?.apiKey || '', messages, round.signal);
+          const reply = await completeToolModel(account ? null : profile!, secret?.apiKey || '', messages, round.signal, allowWebSearch);
           guard(); if (round.signal.aborted) throw new Error('本轮模型请求已超时。'); return reply;
         } catch (error) {
           guard();
@@ -1090,7 +1090,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
             toolRunIds: task.toolRunIds.includes(step.id) ? task.toolRunIds : [...task.toolRunIds, step.id], artifactIds: artifact ? [...task.artifactIds, artifact.id] : task.artifactIds }),
         }));
         await persist(true); guard();
-      });
+      }, allowWebSearch);
       guard();
       set(state => ({ taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, status: 'succeeded', summary, updatedAt: new Date().toISOString() } : task) }));
       await persist(true); guard(); return id;

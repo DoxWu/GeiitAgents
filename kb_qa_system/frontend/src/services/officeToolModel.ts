@@ -1,6 +1,6 @@
 import { apiClient } from '@/api/client';
 import type { ModelProfile } from '@/types/workbench';
-import { OFFICE_TOOLS, normalizeToolReply, validateToolMessages, type ToolMessage, type ToolReply } from '@/officeTasks/toolProtocol';
+import { officeTools, normalizeToolReply, validateToolMessages, type ToolMessage, type ToolReply } from '@/officeTasks/toolProtocol';
 import { isDesktop, requirePrivateRelay, validateProfile } from './workbenchModel';
 
 export async function probeToolCallModel(profile: ModelProfile, apiKey: string, signal: AbortSignal): Promise<void> {
@@ -12,23 +12,23 @@ export async function probeToolCallModel(profile: ModelProfile, apiKey: string, 
   if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length) throw new Error('模型返回的工具参数与空对象契约不匹配。未执行任何工具。');
 }
 
-export async function completeToolModel(profile: ModelProfile | null, apiKey: string, messages: ToolMessage[], signal: AbortSignal): Promise<ToolReply> {
+export async function completeToolModel(profile: ModelProfile | null, apiKey: string, messages: ToolMessage[], signal: AbortSignal, allowWebSearch = false): Promise<ToolReply> {
   validateToolMessages(messages);
   if (signal.aborted) throw new DOMException('已取消', 'AbortError');
   if (!profile) {
-    const reply = await apiClient.post('/private-models/account/tools/complete', { messages }, { signal, cache: 'no-store', redirect: 'error' });
+    const reply = await apiClient.post('/private-models/account/tools/complete', { messages, ...(allowWebSearch ? { allow_web_search: true } : {}) }, { signal, cache: 'no-store', redirect: 'error' });
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
     return normalizeToolReply(reply);
   }
   const baseUrl = validateProfile(profile);
   if (profile.mode === 'relay') {
     requirePrivateRelay(apiKey);
-    const reply = await apiClient.post('/private-models/tools/complete', { base_url: baseUrl, model: profile.model, messages, ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) },
+    const reply = await apiClient.post('/private-models/tools/complete', { base_url: baseUrl, model: profile.model, messages, ...(allowWebSearch ? { allow_web_search: true } : {}), ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) },
       { signal, headers: { 'X-Model-Api-Key': apiKey }, cache: 'no-store', redirect: 'error' });
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
     return normalizeToolReply(reply);
   }
-  const body = { model: profile.model, messages, tools: OFFICE_TOOLS, tool_choice: 'auto', stream: false, ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) };
+  const body = { model: profile.model, messages, tools: officeTools(allowWebSearch), tool_choice: 'auto', stream: false, ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) };
   try {
     if (isDesktop()) {
       const { invoke } = await import('@tauri-apps/api/core');

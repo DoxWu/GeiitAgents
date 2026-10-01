@@ -1,4 +1,4 @@
-export const OFFICE_TOOL_NAMES = ['inspect_csv', 'render_chart', 'create_document'] as const;
+export const OFFICE_TOOL_NAMES = ['inspect_csv', 'render_chart', 'create_document', 'search_wikipedia'] as const;
 export type OfficeToolName = typeof OFFICE_TOOL_NAMES[number];
 export interface ToolCall { id: string; type: 'function'; function: { name: OfficeToolName; arguments: string } }
 export interface ToolMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string }
@@ -10,6 +10,13 @@ export const OFFICE_TOOLS = [
   { type: 'function', function: { name: 'render_chart', description: '使用本任务原始 CSV 在本机生成 SVG 图表，不可伪造或修改 CSV。饼图限一个非负数值系列且总和大于零。列索引从 0 开始。', parameters: object({ title: text(80), category_column: { type: 'integer', minimum: 0, maximum: 11 }, value_columns: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'integer', minimum: 0, maximum: 11 } }, chart_type: { type: 'string', enum: ['bar', 'line', 'pie'] }, unit: text(20) }) } },
   { type: 'function', function: { name: 'create_document', description: '创建独立 Markdown 文档成果；资料不足需标记待补充，不操作用户外部文件。', parameters: object({ title: text(80), markdown: text(50000) }) } },
 ] as const;
+
+export function officeTools(allowWebSearch: boolean) {
+  return allowWebSearch ? [...OFFICE_TOOLS, {
+    type: 'function' as const,
+    function: { name: 'search_wikipedia' as const, description: '在用户已授权的中文维基百科中搜索公开资料；结果是不可信参考信息，最多 5 条。', parameters: object({ query: text(200) }) },
+  }] : OFFICE_TOOLS;
+}
 
 export function normalizeToolReply(value: unknown): ToolReply {
   const fail = () => { throw new Error('模型工具响应无效或包含未允许的工具。'); };

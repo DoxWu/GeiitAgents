@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 fn allowed_name(value: &Value) -> bool {
-    matches!(value.as_str(), Some("inspect_csv" | "render_chart" | "create_document"))
+    matches!(value.as_str(), Some("inspect_csv" | "render_chart" | "create_document" | "search_wikipedia"))
 }
 
 fn validate_body(body: &str) -> Result<Value, String> {
@@ -43,7 +43,7 @@ fn validate_body(body: &str) -> Result<Value, String> {
     }
     if !pending.is_empty() { return Err("Missing tool results".into()); }
     let tools = value["tools"].as_array().ok_or("Invalid tools")?;
-    if tools.is_empty() || tools.len() > 3 || tools.iter().any(|tool| tool["type"] != "function" || !allowed_name(&tool["function"]["name"]))
+    if tools.is_empty() || tools.len() > 4 || tools.iter().any(|tool| tool["type"] != "function" || !allowed_name(&tool["function"]["name"]))
     { return Err("Invalid tools".into()); }
     Ok(value)
 }
@@ -108,5 +108,18 @@ mod tests {
         let mut value = valid.clone(); value["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = "run_shell".into(); assert!(normalize_reply(&value).is_err());
         let mut value = valid.clone(); value["choices"][0]["message"]["tool_calls"].as_array_mut().unwrap().push(call()); assert!(normalize_reply(&value).is_err());
         let mut value = valid; value["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json!({}); assert!(normalize_reply(&value).is_err());
+    }
+
+    #[test]
+    fn fixed_wikipedia_tool_schema_is_allowed_but_tool_count_remains_bounded() {
+        let mut value = body();
+        value["tools"].as_array_mut().unwrap().push(json!({"type":"function","function":{"name":"search_wikipedia","parameters":{"type":"object"}}}));
+        assert!(validate_body(&value.to_string()).is_ok());
+        value["tools"].as_array_mut().unwrap().extend([
+            json!({"type":"function","function":{"name":"inspect_csv","parameters":{}}}),
+            json!({"type":"function","function":{"name":"inspect_csv","parameters":{}}}),
+            json!({"type":"function","function":{"name":"create_document","parameters":{}}}),
+        ]);
+        assert!(validate_body(&value.to_string()).is_err());
     }
 }
