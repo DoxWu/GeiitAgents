@@ -5,6 +5,8 @@ import { useWorkbenchStore as store } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
 import { parseFirstXlsxSheet } from '@/officeTasks/xlsx';
 vi.mock('@/officeTasks/xlsx', () => ({ parseFirstXlsxSheet: vi.fn() }));
+import { importDocxReference } from '@/officeTasks/docxImport';
+vi.mock('@/officeTasks/docxImport', () => ({ importDocxReference: vi.fn() }));
 
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
@@ -20,6 +22,7 @@ beforeEach(() => {
   store.setState({ profiles: [{ id: 'cloud', name: 'Cloud', model: 'fixture', mode: 'relay', baseUrl: 'https://models.example/v1', hasKey: true }], accountModel: null, taskRuns: [], toolRuns: [], artifacts: [], storageError: null });
   useAuthStore.setState({ user: null, isAuthenticated: false });
   vi.mocked(store.getState().startOfficeToolTask).mockResolvedValue('new-task');
+  vi.mocked(importDocxReference).mockResolvedValue({ markdown: '# DOCX 正文', warnings: ['图片未提取。'] });
 });
 afterEach(cleanup);
 it('imports the first XLSX sheet locally, clears consent and preserves input on failure', async () => {
@@ -60,12 +63,23 @@ it('requires fresh cloud consent after input or account changes and consumes it 
   expect(start).toBeDisabled();
 });
 
+it('imports DOCX text locally, surfaces extraction warnings and revokes cloud consent', async () => {
+  const file = new File(['fixture'], 'weekly.docx'); Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(7) });
+  render(<OfficeToolTasks />); fireEvent.click(screen.getByLabelText(/允许本次最多 6 轮请求/));
+  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB）'), { target: { files: [file] } });
+  await screen.findByText('图片未提取。');
+  expect(importDocxReference).toHaveBeenCalled();
+  expect(screen.getByLabelText('参考材料（可选）')).toHaveValue('# DOCX 正文');
+  expect(screen.getByLabelText(/允许本次最多 6 轮请求/)).not.toBeChecked();
+  expect(store.getState().startOfficeToolTask).not.toHaveBeenCalled();
+});
+
 it.each(['edit', 'unmount'] as const)('ignores late file contents after %s', async reason => {
   let finish!: (buffer: ArrayBuffer) => void;
   const file = new File(['original'], 'report.md', { type: 'text/markdown' });
   Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
   render(<OfficeToolTasks />);
-  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT，最多 200 KB）'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('导入参考文件（MD/TXT 200 KB，DOCX 2 MB）'), { target: { files: [file] } });
   if (reason === 'edit') fireEvent.change(screen.getByLabelText('参考材料（可选）'), { target: { value: '用户新输入' } });
   else cleanup();
   await act(async () => finish(new TextEncoder().encode('迟到的文件内容').buffer));

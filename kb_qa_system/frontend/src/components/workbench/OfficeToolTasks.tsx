@@ -15,6 +15,7 @@ export function OfficeToolTasks() {
   const [allowWebSearch, setAllowWebSearch] = useState(false);
   const [selected, setSelected] = useState(''), [selectedArtifact, setSelectedArtifact] = useState(''), [error, setError] = useState('');
   const [importedSheet, setImportedSheet] = useState('');
+  const [importNotice, setImportNotice] = useState('');
   const mounted = useRef(false), starting = useRef(false), readVersion = useRef(0);
   useEffect(() => { const reads = readVersion; mounted.current = true; return () => { mounted.current = false; reads.current++; }; }, []);
   const chosen = profileId || store.profiles[0]?.id || (store.accountModel ? ACCOUNT_MODEL_ID : '');
@@ -28,23 +29,28 @@ export function OfficeToolTasks() {
   const root = roots.find(item => item.id === selectedArtifact) || roots[0];
   const versions = root?.kind === 'markdown' ? artifactSeries(root, artifacts) : undefined;
   const artifact = versions?.[0] || root;
-  function change(patch: Partial<OfficeToolInput>) { readVersion.current++; setInput(current => ({ ...current, ...patch })); if (patch.csv !== undefined) setImportedSheet(''); setAllowCloud(false); setAllowWebSearch(false); setError(''); }
+  function change(patch: Partial<OfficeToolInput>) { readVersion.current++; setInput(current => ({ ...current, ...patch })); if (patch.csv !== undefined) setImportedSheet(''); setImportNotice(''); setAllowCloud(false); setAllowWebSearch(false); setError(''); }
   async function open(file: File | undefined, kind: 'csv' | 'reference') {
     if (!file) return;
     const version = ++readVersion.current;
     try {
-      const xlsx = kind === 'csv' && /\.xlsx$/i.test(file.name);
-      if (!file.size || file.size > (xlsx ? 2_000_000 : kind === 'csv' ? 400000 : 200000) || !(kind === 'csv' ? /\.(csv|xlsx)$/i : /\.(md|txt)$/i).test(file.name)) throw new Error('请选择规定类型与大小范围内的 UTF-8 CSV/XLSX 或 MD/TXT 文件。');
-      let content: string, sheetName = '';
+      const xlsx = kind === 'csv' && /\.xlsx$/i.test(file.name), docx = kind === 'reference' && /\.docx$/i.test(file.name);
+      if (!file.size || file.size > (xlsx || docx ? 2_000_000 : kind === 'csv' ? 400000 : 200000) || !(kind === 'csv' ? /\.(csv|xlsx)$/i : /\.(md|txt|docx)$/i).test(file.name)) throw new Error('请选择规定类型与大小范围内的文件；参考材料支持 UTF-8 MD/TXT 或 DOCX。');
+      let content: string, sheetName = '', warnings: string[] = [];
       if (xlsx) {
         const { parseFirstXlsxSheet } = await import('@/officeTasks/xlsx');
         if (!mounted.current || version !== readVersion.current) return;
         const parsed = await parseFirstXlsxSheet(await file.arrayBuffer()); content = parsed.csv; sheetName = parsed.sheetName;
+      } else if (docx) {
+        const { importDocxReference } = await import('@/officeTasks/docxImport');
+        if (!mounted.current || version !== readVersion.current) return;
+        const parsed = await importDocxReference(await file.arrayBuffer()); content = parsed.markdown; warnings = parsed.warnings;
       } else content = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
       if (!mounted.current || version !== readVersion.current) return;
       if (content.length > (kind === 'csv' ? 100000 : 50000)) throw new Error('文件文本超过长度限制。');
       change(kind === 'csv' ? { csv: content } : { sourceContent: content, sourceName: file.name });
       if (kind === 'csv') setImportedSheet(sheetName);
+      else if (warnings.length) setImportNotice(warnings.join(' '));
     } catch (error) { if (mounted.current && version === readVersion.current) setError(error instanceof Error ? error.message : '无法读取文件。'); }
   }
   async function start() {
@@ -69,10 +75,10 @@ export function OfficeToolTasks() {
           <label className="work-label">办公目标<textarea className="work-input min-h-24" required maxLength={10000} placeholder="例如：检查销售 CSV，绘制趋势图，并生成带结论与待确认事项的汇报文档。" value={input.instruction} onChange={e => change({ instruction: e.target.value })} /></label>
           <label className="work-label">任务模型<select className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setAllowCloud(false); }}><option value="" disabled>请选择模型</option>{store.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端 · {store.accountModel.model}</option>}</select></label>
           <label className="work-label">参考材料（可选）<textarea className="work-input min-h-24" maxLength={50000} value={input.sourceContent || ''} onChange={e => change({ sourceContent: e.target.value, sourceName: undefined })} /></label>
-          <label className="work-label">导入参考文件（MD/TXT，最多 200 KB）<input type="file" accept=".md,.txt" onChange={e => { void open(e.target.files?.[0], 'reference'); e.target.value = ''; }} /></label>
+          <label className="work-label">导入参考文件（MD/TXT 200 KB，DOCX 2 MB）<input type="file" accept=".md,.txt,.docx" onChange={e => { void open(e.target.files?.[0], 'reference'); e.target.value = ''; }} /></label>{importNotice && <p role="status" className="text-xs text-ink-secondary">{importNotice}</p>}
           <label className="work-label">任务 CSV（可选）<textarea className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv || ''} onChange={e => change({ csv: e.target.value })} /></label>
           <label className="work-label">导入任务 CSV / XLSX（CSV 400 KB，XLSX 2 MB）<input type="file" accept=".csv,.xlsx" onChange={e => { void open(e.target.files?.[0], 'csv'); e.target.value = ''; }} /></label>{importedSheet && <p role="status" className="text-xs text-ink-secondary">工作表：{importedSheet}</p>}
-          <p className="text-xs text-ink-secondary">表格最多 50 行、12 列；XLSX 只读取首个可见工作表，公式和合并格需先转为普通单元格。图表支持 1–6 个同量纲数值系列。参考材料最多 50000 字符。运行期间关闭客户端或锁库会中断任务，已保存成果保留，不自动重放。</p>
+          <p className="text-xs text-ink-secondary">DOCX 只提取正文文字、标题、列表和表格；不保留分页/样式，图片、页眉页脚及注释会提示遗漏。表格最多 50 行、12 列；XLSX 只读取首个可见工作表，公式和合并格需先转为普通单元格。图表支持 1–6 个同量纲数值系列。参考材料最多 50000 字符。运行期间关闭客户端或锁库会中断任务，已保存成果保留，不自动重放。</p>
           {cloud && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={allowCloud} onChange={e => setAllowCloud(e.target.checked)} />允许本次最多 6 轮请求将目标、参考材料、CSV 工具结果和生成内容发给所选云端模型；可能计费。</label>}
           <label className="flex items-start gap-2 text-sm"><input aria-label="允许本次网络搜索" type="checkbox" className="mt-1" checked={allowWebSearch} onChange={e => setAllowWebSearch(e.target.checked)} />允许本次将模型生成的搜索词发送给中文维基百科（最多 3 次），并将公开摘要和来源链接交给所选模型。搜索词可能包含任务材料，请核对材料适合公开查询。</label>
           <button className="work-command justify-self-start bg-brand text-white" type="submit" disabled={!chosen || busy || Boolean(cloud && !allowCloud)}>{busy ? '任务运行中…' : '开始多步骤任务'}</button>
