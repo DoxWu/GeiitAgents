@@ -1,21 +1,29 @@
-export type WorkflowNodeKind = 'inspect_csv' | 'render_chart' | 'create_document' | 'generate_document';
+export type WorkflowNodeKind = 'inspect_csv' | 'render_chart' | 'create_document' | 'generate_document' | 'condition';
+export type WorkflowConditionSource = 'reference' | 'csv' | 'previous';
+export type WorkflowConditionOperator = 'contains' | 'not_contains' | 'equals' | 'not_equals' | 'exists' | 'not_exists' | 'gt' | 'gte' | 'lt' | 'lte';
+export interface WorkflowCondition {
+  source: WorkflowConditionSource;
+  operator: WorkflowConditionOperator;
+  value: string;
+}
 export interface WorkflowNode {
   id: string; kind: WorkflowNodeKind; title: string; x: number; y: number;
   text: string; includeInputs: boolean; profileId?: string;
   categoryColumn: number; valueColumns: number[]; chartType: 'bar' | 'line' | 'pie'; unit: string;
+  condition?: WorkflowCondition;
 }
 export interface WorkflowDefinition {
   id: string; name: string; revision: number; updatedAt: string;
-  nodes: WorkflowNode[]; edges: { from: string; to: string }[];
+  nodes: WorkflowNode[]; edges: { from: string; to: string; when?: 'true' | 'false' }[];
 }
 export interface WorkflowInput { reference: string; csv: string }
 export const NODE_LABELS: Record<WorkflowNodeKind, string> = {
-  inspect_csv: '检查 CSV', render_chart: '生成图表', create_document: '整理 Markdown', generate_document: '模型生成文档',
+  inspect_csv: '检查 CSV', render_chart: '生成图表', create_document: '整理 Markdown', generate_document: '模型生成文档', condition: '条件分支',
 };
 export function newWorkflowNode(kind: WorkflowNodeKind, index: number): WorkflowNode {
   return { id: crypto.randomUUID(), kind, title: NODE_LABELS[kind], x: 24 + (index % 3) * 250, y: 24 + Math.floor(index / 3) * 150,
     text: kind === 'generate_document' ? '根据参考材料与前置步骤结果整理报告，标注待确认事项。' : '# 工作记录', includeInputs: true,
-    categoryColumn: 0, valueColumns: [1], chartType: 'bar', unit: '' };
+    categoryColumn: 0, valueColumns: [1], chartType: 'bar', unit: '', ...(kind === 'condition' ? { condition: { source: 'reference' as const, operator: 'contains' as const, value: '' } } : {}) };
 }
 export function newWorkflow(): WorkflowDefinition {
   return { id: crypto.randomUUID(), name: '新工作流', revision: 0, updatedAt: new Date().toISOString(), nodes: [], edges: [] };
@@ -38,7 +46,7 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
   if (!Array.isArray(d.nodes) || !d.nodes.length || d.nodes.length > 12) fail('工作流需要 1–12 个步骤。');
   if (!Array.isArray(d.edges) || d.edges.length > 66) fail();
   for (const value of d.nodes) {
-    const n = record(value, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit']);
+    const n = record(value, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit', 'condition']);
     text(n.id, 200, 1); text(n.title, 80, 1); text(n.text, n.kind === 'generate_document' ? 10000 : 50000);
     text(n.unit, 20); integer(n.x, 0, 2000); integer(n.y, 0, 2000); integer(n.categoryColumn, 0, 11);
     if (typeof n.kind !== 'string' || !Object.prototype.hasOwnProperty.call(NODE_LABELS, n.kind) || typeof n.includeInputs !== 'boolean'
@@ -51,15 +59,29 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
       if (n.kind !== 'generate_document') fail('只有模型步骤可以指定模型连接。');
       text(n.profileId, 200, 1);
     }
+    if (n.kind === 'condition') {
+      const condition = record(n.condition, ['source', 'operator', 'value']);
+      if (!['reference', 'csv', 'previous'].includes(String(condition.source))
+        || !['contains', 'not_contains', 'equals', 'not_equals', 'exists', 'not_exists', 'gt', 'gte', 'lt', 'lte'].includes(String(condition.operator))) fail();
+      text(condition.value, 1000);
+    } else if (n.condition !== undefined) fail('条件只能用于条件步骤。');
     if ([...n.title + n.unit].some(c => c.charCodeAt(0) < 32)) fail('步骤标题与单位不能包含控制字符。');
   }
   const definition = value as WorkflowDefinition;
   const ids = new Set(definition.nodes.map(n => n.id));
   if (ids.size !== definition.nodes.length) fail('步骤标识重复。');
   const pairs = new Set<string>();
+  const incomingKinds = new Map<string, boolean>();
   for (const value of d.edges) {
-    const e = record(value, ['from', 'to']); text(e.from, 200, 1); text(e.to, 200, 1);
-    const pair = JSON.stringify([e.from, e.to]);
+    const e = record(value, ['from', 'to', 'when']); text(e.from, 200, 1); text(e.to, 200, 1);
+    if (e.when !== undefined && !['true', 'false'].includes(String(e.when))) fail();
+    const sourceNode = definition.nodes.find(node => node.id === e.from);
+    if (e.when !== undefined && sourceNode?.kind !== 'condition') fail('只有条件步骤可以使用 true/false 连线。');
+    if (sourceNode?.kind === 'condition' && e.when === undefined) fail('条件步骤的出线必须标注分支值。');
+    const labeled = e.when !== undefined;
+    if (incomingKinds.has(e.to) && incomingKinds.get(e.to) !== labeled) fail('同一目标步骤不能混用条件分支连线与普通连线。');
+    incomingKinds.set(e.to, labeled);
+    const pair = JSON.stringify([e.from, e.to, e.when ?? null]);
     if (!ids.has(e.from) || !ids.has(e.to) || e.from === e.to || pairs.has(pair)) fail('连线包含缺失步骤、自连接或重复连接。');
     pairs.add(pair);
   }

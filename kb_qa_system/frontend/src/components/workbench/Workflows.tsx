@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
-import { NODE_LABELS, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
+import { NODE_LABELS, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { ToolArtifact } from './ToolArtifact';
 import { GenerationPreview } from './GenerationPreview';
@@ -16,7 +16,7 @@ export function Workflows() {
   const [input, setInput] = useState<WorkflowInput>({ reference: '', csv: '' });
   const [inputSheet, setInputSheet] = useState('');
   const [inputError, setInputError] = useState('');
-  const [from, setFrom] = useState(''), [to, setTo] = useState(''), [profileId, setProfileId] = useState('');
+  const [from, setFrom] = useState(''), [to, setTo] = useState(''), [edgeWhen, setEdgeWhen] = useState<'' | 'true' | 'false'>(''), [profileId, setProfileId] = useState('');
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [resumeConsent, setResumeConsent] = useState(false);
   const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
@@ -74,7 +74,7 @@ export function Workflows() {
   }
   function load(definition: WorkflowDefinition) {
     if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
-    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setFrom(''); setTo(''); setConsent(false); setError(''); setNotice('');
+    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setFrom(''); setTo(''); setEdgeWhen(''); setConsent(false); setError(''); setNotice('');
   }
   async function save() {
     setBusy(true); setError('');
@@ -90,7 +90,7 @@ export function Workflows() {
     } finally { if (mounted.current) setBusy(false); }
   }
   function connect() {
-    try { const next = { ...draft, edges: [...draft.edges, { from, to }] }; validateWorkflow(next); change(next); setError(''); }
+    try { const next = { ...draft, edges: [...draft.edges, { from, to, ...(edgeWhen ? { when: edgeWhen } : {}) }] }; validateWorkflow(next); change(next); setEdgeWhen(''); setError(''); }
     catch (e) { setError(e instanceof Error ? e.message : '无法连接。'); }
   }
   async function start() {
@@ -133,6 +133,11 @@ export function Workflows() {
           {node.kind === 'generate_document' && <label className="work-label sm:col-span-2">此步骤模型连接<select aria-label="此步骤模型连接" className="work-input" value={node.profileId || ''} onChange={e => patchNode(node.id, { profileId: e.target.value || undefined })}><option value="">使用工作流默认模型 · {store.profiles.find(p => p.id === chosen)?.name || (chosen === ACCOUNT_MODEL_ID ? '账号云端模型' : '未选择')}</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
           <label className="work-label sm:col-span-2">{node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={node.kind === 'generate_document' ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{node.kind === 'generate_document' ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
+        </> : node.kind === 'condition' ? <>
+          <label className="work-label">条件来源<select aria-label="条件来源" className="work-input" value={node.condition?.source || 'reference'} onChange={e => patchNode(node.id, { condition: { source: e.target.value as WorkflowConditionSource, operator: node.condition?.operator || 'contains', value: node.condition?.value || '' } })}><option value="reference">本次参考材料</option><option value="csv">本次 CSV</option><option value="previous">直接前置步骤结果</option></select></label>
+          <label className="work-label">条件操作<select aria-label="条件操作" className="work-input" value={node.condition?.operator || 'contains'} onChange={e => patchNode(node.id, { condition: { source: node.condition?.source || 'reference', operator: e.target.value as WorkflowConditionOperator, value: node.condition?.value || '' } })}><option value="contains">包含</option><option value="not_contains">不包含</option><option value="equals">等于</option><option value="not_equals">不等于</option><option value="exists">有内容</option><option value="not_exists">为空</option><option value="gt">数字大于</option><option value="gte">数字大于等于</option><option value="lt">数字小于</option><option value="lte">数字小于等于</option></select></label>
+          <label className="work-label sm:col-span-2">比较值<input aria-label="条件比较值" className="work-input" maxLength={1000} value={node.condition?.value || ''} disabled={node.condition?.operator === 'exists' || node.condition?.operator === 'not_exists'} onChange={e => patchNode(node.id, { condition: { source: node.condition?.source || 'reference', operator: node.condition?.operator || 'contains', value: e.target.value } })} /></label>
+          <p className="text-sm text-ink-secondary sm:col-span-2">条件步骤只产生 true 或 false；从条件步骤连出的每条线必须选择对应分支。</p>
         </> : node.kind === 'render_chart' ? <>
           <label className="work-label">分类列（从 1 开始）<input className="work-input" type="number" min={1} max={12} value={node.categoryColumn + 1} onChange={e => patchNode(node.id, { categoryColumn: Number(e.target.value) - 1 })} /></label>
           <label className="work-label">图表类型<select aria-label="图表类型" className="work-input" value={node.chartType} onChange={e => { const chartType = e.target.value as 'bar' | 'line' | 'pie'; patchNode(node.id, { chartType, ...(chartType === 'pie' ? { valueColumns: node.valueColumns.slice(0, 1) } : {}) }); }}><option value="bar">柱状图</option><option value="line">折线图</option><option value="pie">饼图</option></select></label>
@@ -140,12 +145,13 @@ export function Workflows() {
           <label className="work-label">单位<input className="work-input" maxLength={20} value={node.unit} onChange={e => patchNode(node.id, { unit: e.target.value })} /></label>
         </> : <p className="text-sm text-ink-secondary">检查本次 CSV 的表头与数据；不会执行单元格公式。</p>}
       </section>}
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-        <label className="work-label">前置步骤<select aria-label="前置步骤" className="work-input" value={from} onChange={e => setFrom(e.target.value)}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+        <label className="work-label">前置步骤<select aria-label="前置步骤" className="work-input" value={from} onChange={e => { const value = e.target.value; setFrom(value); if (draft.nodes.find(n => n.id === value)?.kind !== 'condition') setEdgeWhen(''); }}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
         <label className="work-label">后续步骤<select aria-label="后续步骤" className="work-input" value={to} onChange={e => setTo(e.target.value)}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
-        <button className="work-command self-end" disabled={!from || !to} onClick={connect}>连接步骤</button>
+        {draft.nodes.find(n => n.id === from)?.kind === 'condition' ? <label className="work-label">分支值<select aria-label="分支值" className="work-input" value={edgeWhen} onChange={e => setEdgeWhen(e.target.value as '' | 'true' | 'false')}><option value="">请选择</option><option value="true">true</option><option value="false">false</option></select></label> : <span />}
+        <button className="work-command self-end" disabled={!from || !to || draft.nodes.find(n => n.id === from)?.kind === 'condition' && !edgeWhen} onClick={connect}>连接步骤</button>
       </div>
-      {!!draft.edges.length && <ul className="space-y-2">{draft.edges.map(e => <li key={e.from + ':' + e.to} className="flex flex-wrap items-center gap-2 text-sm"><span>{draft.nodes.find(n => n.id === e.from)?.title} → {draft.nodes.find(n => n.id === e.to)?.title}</span><button className="work-command" onClick={() => change({ ...draft, edges: draft.edges.filter(edge => edge !== e) })}>移除此连线</button></li>)}</ul>}
+      {!!draft.edges.length && <ul className="space-y-2">{draft.edges.map(e => <li key={e.from + ':' + e.to + ':' + (e.when || '')} className="flex flex-wrap items-center gap-2 text-sm"><span>{draft.nodes.find(n => n.id === e.from)?.title} {e.when ? `(${e.when})` : ''} → {draft.nodes.find(n => n.id === e.to)?.title}</span><button className="work-command" onClick={() => change({ ...draft, edges: draft.edges.filter(edge => edge !== e) })}>移除此连线</button></li>)}</ul>}
       <div className="flex flex-wrap items-center gap-3"><button className="work-command bg-brand text-white" onClick={() => void save()} disabled={!draft.nodes.length}>保存工作流</button><span className="text-sm text-ink-secondary">{dirty ? '有未保存修改；离开此任务类型前请保存。' : draft.revision ? `已保存修订 ${draft.revision}` : '尚未保存'} · 最多 12 个步骤 / 6 个模型步骤</span></div>
     </fieldset>
     <section aria-label="工作流运行输入" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">本次运行输入</h2>

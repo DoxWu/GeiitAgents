@@ -39,7 +39,7 @@ const workflowInput: Check = value => { validateWorkflowInput(value); };
 const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), summary: optional(str(1_000_000)),
   title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50), resumedFromTaskId: optional(id), resumeFromNodeId: optional(id) });
 const finishReason = optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown'));
-const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('model.complete', 'document.edit', 'document.restore', 'document.export-docx', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document'),
+const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('model.complete', 'workflow.condition', 'document.edit', 'document.restore', 'document.export-docx', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document'),
   callId: optional(id), arguments: optional(str(1_000_000)), result: optional(str(1_000_000)), sourceArtifactId: optional(id), previousArtifactId: optional(id), outputArtifactId: optional(id), outputSha256: optional(hash), outputName: optional(str(300)), converterVersion: optional(str(100)), warnings: optional(arr(str(10000), 100)), status, model: optional(str(1000)), startedAt: date, finishedAt: optional(date), error: optional(str(100000)) });
 const artifact = obj({ id, taskId: id, finishReason, kind: one('markdown', 'svg'), version: num(50, 1), parentArtifactId: optional(id), restoredFromArtifactId: optional(id), name: str(300, 1), mimeType: one('text/markdown', 'image/svg+xml'), content: str(1_000_001), sha256: hash, createdAt: date });
 const itemInput = { kind: one('note', 'todo'), title: str(120), content: str(20000), tags: arr(str(30), 8), status: optional(one('open', 'done', 'cancelled')), priority: optional(one('normal', 'high', 'low')), dueAt: optional(nullable(date)) };
@@ -130,7 +130,7 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     for (const t of tools.values()) {
       if (t.workflowNodeId) {
         const node = tasks.get(t.taskId)?.workflow?.definition.nodes.find(n => n.id === t.workflowNodeId);
-        if (!node || t.tool !== (node.kind === 'generate_document' ? 'model.complete' : `office.${node.kind}`)) fail();
+        if (!node || t.tool !== (node.kind === 'condition' ? 'workflow.condition' : node.kind === 'generate_document' ? 'model.complete' : `office.${node.kind}`)) fail();
       } else if (tasks.get(t.taskId)?.workflow && t.tool !== 'document.export-docx') fail();
       if (!tasks.get(t.taskId)?.toolRunIds.includes(t.id)) fail();
       for (const reference of [t.sourceArtifactId, t.previousArtifactId, t.outputArtifactId]) {

@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 工作流现已支持失败/中断/取消后的新任务续跑、单节点重试、检查点和成果隔离，并对历史续跑记录做兼容校验。标准 `npm test` 全量 **111 文件、1066 项通过**，TypeScript、ESLint、生产 Web 构建通过；Web、relay、account 三种生产 Chromium 工作流验收均通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、连续续跑、云端重新授权和加密备份恢复。Cargo 自动发现仓库工具链，并能从失效系统环境变量回退；dev.31 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。Windows 原生 WebView2 QA 仍未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收。未调用真实模型/邮件，未推送或部署。DOCX 分页、工作流条件/触发器、容量/强杀验收继续未完成；完整目标保持进行中。
+**处于应用改造阶段：桌面基础、备份/恢复、本地库、办公任务、本机笔记/待办、文件整理和手动可视化工作流均已实现首轮。** 工作流现已支持条件分支、失败/中断/取消后的新任务续跑、单节点重试、检查点和成果隔离，并对历史续跑记录做兼容校验。标准 `npm test` 全量 **111 文件、1072 项通过**，TypeScript、ESLint、生产 Web 构建通过；Web、relay、account 三种生产 Chromium 工作流验收均通过，验证 XLSX 输入、原有本地 DAG 工具、流式模型 fixture、连续续跑、云端重新授权和加密备份恢复。Cargo 自动发现仓库工具链，并能从失效系统环境变量回退；dev.33 桌面包构建成功，见本批记录。JSZip 和表格解析器按需加载。Windows 原生 WebView2 QA 仍未能连上 CDP，报 `Native debugger unavailable`，所以没有原生运行验收。未调用真实模型/邮件，未推送或部署。DOCX 分页、工作流循环/触发器、容量/强杀验收继续未完成；完整目标保持进行中。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -15,7 +15,7 @@
 | 办公工具与持久任务 | Markdown/版本/DOCX/HTML、CSV/XLSX 本地图表和 XLSX 工作流输入、实际协议驱动的多步骤任务已实现并有本地验证 | XLSX 仅导入首个可见工作表，2 MB 输入/解压边界和公式/合并格拒绝；DOCX 分页、更多复杂格式和工具仍待做 |
 | 待办、笔记、定时邮件 | 本机记录/独立加密草稿/归档/批量导出/JSON 与 Markdown 导入/字段合并/整库备份、提醒编辑/分页/提交核查/模板/搜索已实现 | JSON 逐条预检查与完整值冲突保护、草稿另存；真实供应商/调度和容量验收仍待做 |
 | 文件整理与模型体验 | Windows 原生目录、跨目录移动/撤销、单文件及批量文本编辑/恢复、历史分页/检索、整库备份、模型目录、聊天/文档/来源回答四路径流式和办公工具协议已实现并有回归 | 筛选保留完整批次和操作范围；分页减少渲染但不降低整库数据量；多模态/专有协议、跨物理卷和低配仍待推进 |
-| 可视化工作流、性能与发布 | 手动 DAG 工作流、失败续跑和单节点重试已实现并有本地验证 | 画布布局/连线、四类节点、节点独立模型选型、修订/运行快照/加密检查点、续跑检查点复制及整库备份；条件/触发器、压测、签名与更新仍待做 |
+| 可视化工作流、性能与发布 | 手动 DAG 工作流、条件分支、失败续跑和单节点重试已实现并有本地验证 | 画布布局/连线、五类节点、节点独立模型选型、修订/运行快照/加密检查点、续跑检查点复制及整库备份；循环/触发器、压测、签名与更新仍待做 |
 
 ## 已确认决策
 
@@ -762,3 +762,10 @@
 - Local verification: `npm run desktop:toolchain:test`, `npm run desktop:check` with invalid user-level `CARGO_HOME`/`RUSTUP_HOME`, `npm run check`, `npm run lint`, production `vite build`, `git diff --check`, and full Vitest **111 files / 1068 tests passed**. Existing React act, ErrorBoundary, jsdom navigation, and Cargo canonicalize warnings remain expected output.
 - Build artifact: unsigned NSIS `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.32_x64-setup.exe`, 8,339,779 bytes, SHA-256 `49B251B348C990602884CC5BF057D06CBB9E248D0E98B5BFE2E5E0BEA840325A`. Not installed, pushed, or deployed.
 - Unfinished and risks: custom toolchain selection is locally covered but Rustup still emits its upstream canonicalize warning; native WebView2 QA, DOCX pagination, workflow conditions/triggers, storage chunking, low-memory/strong-kill tests, and real providers remain unfinished. Next step is continued local development on `develop/geiit-agents`; do not push yet.
+
+### 2026-10-01 (本批)：条件分支工作流与 dev.33 重建
+
+- 代码实现：可视化工作流新增 `condition` 节点，支持从参考材料、CSV 或直接前置结果执行包含/不包含、等于/不等于、有内容/为空和数字比较；条件出线必须标注 `true`/`false`，只运行命中的分支，未命中节点保存为成功的跳过检查点并可继续传播到后续汇合。定义校验、`workflow.condition` 工具类型、运行器、画布编辑、备份 schema 与续跑检查点已同步；同一目标节点禁止混用条件分支线与普通线。
+- 文档与验证：更新 [本机可视化工作流](VISUAL_WORKFLOWS.md) 的条件语义、跳过检查点和限制说明；全量 Vitest **111 个测试文件 / 1072 项通过**，`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`npm run desktop:toolchain:test`、失效用户 `CARGO_HOME`/`RUSTUP_HOME` 下的 `npm run desktop:check`、`git diff --check` 均通过。测试日志中的 React act、ErrorBoundary、jsdom 导航和 Cargo canonicalize 警告为既有预期输出，不是失败；未读取真实 API Key、未调用真实模型或邮件。
+- 构建产物：开发通道升至 `0.1.0-dev.33`，在失效用户 Cargo 环境变量下使用仓库工具链生成未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.33_x64-setup.exe`，8,345,713 字节，SHA-256 `A835537F110170250D6938D548864BF5B005A78BC094ECD9DF4CDACDCB423F20`。未安装、未推送、未部署；Windows 原生 WebView2 仍未做运行验收。
+- 未完成与风险：循环、定时/事件触发器、自动保存草稿、历史分页、画布缩放/自动布局、DOCX 分页、低配/最大容量/强杀断电和真实供应商验收仍未完成。Cargo 回退解决了无效用户环境变量导致的构建失败，但 Rustup 用户目录 canonicalize 警告仍来自上游行为。下一步继续在本地 `develop/geiit-agents` 推进，暂不推送远程。

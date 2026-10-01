@@ -56,6 +56,24 @@ it('edits nodes, connects them, rejects a cycle, and persists keyboard layout ch
   await waitFor(() => expect(store.getState().saveWorkflow).toHaveBeenCalled());
   const saved = vi.mocked(store.getState().saveWorkflow).mock.calls[0][0]; expect(saved.nodes[0].x).toBe(44); expect(saved.edges).toHaveLength(1);
 });
+it('configures a condition node and labels its outgoing branch', async () => {
+  const user = userEvent.setup(); render(<Workflows />);
+  const addCondition = screen.getAllByRole('button').find(button => button.textContent?.includes('\u6761\u4ef6'))!;
+  await user.click(addCondition);
+  await user.selectOptions(screen.getByLabelText(/\u6761\u4ef6\u6765\u6e90/), 'csv');
+  await user.selectOptions(screen.getByLabelText(/\u6761\u4ef6\u64cd\u4f5c/), 'contains');
+  await user.type(screen.getByLabelText(/\u6761\u4ef6\u6bd4\u8f83\u503c/), 'ready');
+  const addMarkdown = screen.getAllByRole('button').find(button => button.textContent?.includes('\u6574\u7406'))!;
+  await user.click(addMarkdown); await user.click(addMarkdown);
+  const from = screen.getByLabelText(/\u524d\u7f6e\u6b65\u9aa4/), to = screen.getByLabelText(/\u540e\u7eed\u6b65\u9aa4/);
+  const options = from.querySelectorAll('option');
+  await user.selectOptions(from, options[1].getAttribute('value')!); await user.selectOptions(to, options[2].getAttribute('value')!);
+  await user.selectOptions(screen.getByLabelText(/\u5206\u652f\u503c/), 'true'); await user.click(screen.getByRole('button', { name: /\u8fde\u63a5/ }));
+  await user.click(screen.getByRole('button', { name: /\u4fdd\u5b58/ })); await waitFor(() => expect(store.getState().saveWorkflow).toHaveBeenCalled());
+  const saved = vi.mocked(store.getState().saveWorkflow).mock.calls[0][0];
+  expect(saved.nodes[0].kind).toBe('condition'); expect(saved.nodes[0].condition).toMatchObject({ source: 'csv', value: 'ready' }); expect(saved.edges[0].when).toBe('true');
+});
+
 it('requires consent for each cloud run and clears it when runtime input changes', async () => {
   const d = { ...newWorkflow(), revision: 1, nodes: [newWorkflowNode('generate_document', 0)] };
   store.setState({ workflows: [d], profiles: [{ id: 'relay', name: 'cloud', mode: 'relay', baseUrl: 'https://example.test/v1', model: 'fixture', hasKey: true }] });

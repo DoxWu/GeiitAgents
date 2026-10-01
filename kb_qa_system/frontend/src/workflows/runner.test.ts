@@ -44,6 +44,31 @@ it('accepts and preflights a one-series pie chart workflow node', () => {
   expect(() => validateWorkflow(definition)).toThrow();
 });
 
+it('validates and executes only the selected condition branch', async () => {
+  const condition = newWorkflowNode('condition', 0), yes = newWorkflowNode('create_document', 1), no = newWorkflowNode('create_document', 2);
+  condition.condition = { source: 'reference', operator: 'contains', value: 'run' };
+  yes.text = 'selected branch'; no.text = 'unselected branch';
+  const definition = { ...newWorkflow(), nodes: [condition, yes, no], edges: [{ from: condition.id, to: yes.id, when: 'true' as const }, { from: condition.id, to: no.id, when: 'false' as const }] }, events: ToolCheckpoint[] = [];
+  await runWorkflow('task', definition, { reference: 'please run this', csv: '' }, new AbortController().signal, vi.fn(), async event => { events.push(event); });
+  expect(events).toHaveLength(5);
+  expect(events[0].step.tool).toBe('workflow.condition');
+  expect(events[2].step.workflowNodeId).toBe(yes.id);
+  expect(events[4].step.workflowNodeId).toBe(no.id);
+  expect(events[4].step.warnings).toContain('条件分支未命中，步骤已跳过。');
+  expect(events[4].step.result).toBe('__geiit_workflow_skipped__');
+});
+
+it('rejects unlabeled outgoing edges from condition nodes', () => {
+  const condition = newWorkflowNode('condition', 0), next = newWorkflowNode('create_document', 1);
+  expect(() => validateWorkflow({ ...newWorkflow(), nodes: [condition, next], edges: [{ from: condition.id, to: next.id }] })).toThrow('条件步骤的出线必须标注分支值');
+});
+it('rejects mixed conditional and ordinary incoming edges', () => {
+  const condition = newWorkflowNode('condition', 0), ordinary = newWorkflowNode('create_document', 1), target = newWorkflowNode('create_document', 2);
+  expect(() => validateWorkflow({ ...newWorkflow(), nodes: [condition, ordinary, target], edges: [
+    { from: condition.id, to: target.id, when: 'true' as const }, { from: ordinary.id, to: target.id },
+  ] })).toThrow('不能混用条件分支连线与普通连线');
+});
+
 it('does not impose the model JSON context limit on local-only nodes', async () => {
   const node = newWorkflowNode('inspect_csv', 0), csv = 'name,value\n' + Array.from({ length: 49 }, () => 'x'.repeat(1900) + ',1').join('\n');
   const d = { ...newWorkflow(), nodes: [node] };

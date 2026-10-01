@@ -14,7 +14,7 @@ export function WorkflowCanvas({ definition, selected, onSelect, onMove }: {
         {definition.edges.map(edge => {
           const from = definition.nodes.find(n => n.id === edge.from), to = definition.nodes.find(n => n.id === edge.to);
           return from && to ? <path key={edge.from + ':' + edge.to} d={`M ${from.x + 210} ${from.y + 50} C ${from.x + 250} ${from.y + 50}, ${to.x - 40} ${to.y + 50}, ${to.x} ${to.y + 50}`}
-            fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#workflow-arrow)"><title>{from.title} → {to.title}</title></path> : null;
+            fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#workflow-arrow)"><title>{from.title} {edge.when ? `(${edge.when})` : ''} → {to.title}</title></path> : null;
         })}
       </svg>
       {definition.nodes.map((node, index) => <div key={node.id} className={`absolute w-[210px] rounded border bg-surface p-3 shadow-sm ${selected === node.id ? 'border-brand ring-1 ring-brand' : 'border-line'}`} style={{ left: node.x, top: node.y }}>
