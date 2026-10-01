@@ -118,11 +118,67 @@ it('resumes a failed workflow from saved checkpoints without rerunning completed
   expect(resumed.resumeFromNodeId).toBe(generate.id);
   expect(resumed.status).toBe('succeeded');
   expect(vi.mocked(completeModel)).toHaveBeenCalledTimes(2);
-  expect(resumed.toolRunIds).toHaveLength(2);
-  expect(new Set(resumed.toolRunIds).size).toBe(2);
+  expect(resumed.toolRunIds).toHaveLength(3);
+  expect(new Set(resumed.toolRunIds).size).toBe(3);
+  expect(store.getState().toolRuns.find(t => t.id === resumed.toolRunIds[0])?.warnings).toContain('已恢复成功检查点，本次未重新执行。');
   expect(resumed.artifactIds.every(id => !failed.artifactIds.includes(id))).toBe(true);
   const restored = await importVaultBackup((await store.getState().exportWorkbenchBackup('5678', false)).file, '5678');
   expect(restored.data.taskRuns?.find(task => task.id === resumedId)?.resumedFromTaskId).toBe(failed.id);
+  await expect(store.getState().removeTask(failed.id)).rejects.toThrow('被续跑记录引用');
+  await store.getState().removeTask(resumedId);
+  await store.getState().removeTask(failed.id);
+  expect((await importVaultBackup((await store.getState().exportWorkbenchBackup('5678', false)).file, '5678')).data.taskRuns).toEqual([]);
+});
+it('retries a failed continuation after reload using the original snapshot and cloned artifacts', async () => {
+  const a = newWorkflowNode('generate_document', 0), b = newWorkflowNode('generate_document', 1);
+  const d = await store.getState().saveWorkflow({ ...newWorkflow(), nodes: [a, b], edges: [{ from: a.id, to: b.id }] });
+  await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockImplementationOnce(async (_p, _k, _m, _s, _c, finish) => { finish?.('stop'); return '# prerequisite'; })
+    .mockRejectedValueOnce(new Error('first failure')).mockRejectedValueOnce(new Error('retry failure'));
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('first failure');
+  const original = store.getState().taskRuns[0], originalSteps = structuredClone(store.getState().toolRuns);
+  await store.getState().saveWorkflow({ ...d, name: 'changed live definition' });
+  await expect(store.getState().resumeWorkflow(original.id, b.id, false)).rejects.toThrow('retry failure');
+  const retry = store.getState().taskRuns[0];
+  expect(retry.workflow).toEqual(original.workflow);
+  expect(retry.artifactIds).toHaveLength(1);
+  expect(retry.artifactIds[0]).not.toBe(original.artifactIds[0]);
+  expect(store.getState().toolRuns.filter(t => t.taskId === original.id)).toEqual(originalSteps);
+  await store.getState().removeWorkflow(d.id, 2);
+  await store.getState().lock(); await store.getState().unlock('1234');
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, messages, _s, _c, finish) => {
+    expect(messages[1].content).toContain('# prerequisite'); finish?.('stop'); return '# recovered';
+  });
+  const finalId = await store.getState().resumeWorkflow(retry.id, b.id, false);
+  expect(completeModel).toHaveBeenCalledTimes(4);
+  const final = store.getState().taskRuns.find(t => t.id === finalId)!;
+  expect(final.toolRunIds).toHaveLength(2); expect(final.artifactIds).toHaveLength(2);
+  expect(final.status).toBe('succeeded');
+  const data = (await importVaultBackup((await store.getState().exportWorkbenchBackup('5678', false)).file, '5678')).data;
+  expect(data.taskRuns?.find(t => t.id === finalId)?.resumedFromTaskId).toBe(retry.id);
+  const badNode = structuredClone(data); badNode.taskRuns![0].resumeFromNodeId = 'missing';
+  await expect(validateVaultBackup(badNode)).rejects.toThrow();
+  const cycle = structuredClone(data); cycle.taskRuns!.find(t => t.id === original.id)!.resumedFromTaskId = finalId;
+  await expect(validateVaultBackup(cycle)).rejects.toThrow();
+});
+it('resolves legacy continuation prefixes without replay and rejects missing prerequisite artifacts', async () => {
+  const a = newWorkflowNode('create_document', 0), b = newWorkflowNode('generate_document', 1);
+  const d = await store.getState().saveWorkflow({ ...newWorkflow(), nodes: [a, b], edges: [{ from: a.id, to: b.id }] });
+  await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockRejectedValue(new Error('temporary failure'));
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow();
+  const original = store.getState().taskRuns[0];
+  await expect(store.getState().resumeWorkflow(original.id, b.id, false)).rejects.toThrow();
+  const retry = store.getState().taskRuns[0];
+  // Simulate dev.29's omitted prefix in a failed continuation.
+  store.setState(state => ({ taskRuns: state.taskRuns.map(t => t.id === retry.id ? { ...t, toolRunIds: t.toolRunIds.slice(1), artifactIds: [] } : t),
+    toolRuns: state.toolRuns.filter(t => t.id !== retry.toolRunIds[0]), artifacts: state.artifacts.filter(a => a.taskId !== retry.id) }));
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, _c, finish) => { finish?.('stop'); return 'recovered'; });
+  const finalId = await store.getState().resumeWorkflow(retry.id, b.id, false);
+  expect(store.getState().taskRuns.find(t => t.id === finalId)?.toolRunIds).toHaveLength(2);
+  store.setState(state => ({ artifacts: state.artifacts.filter(a => a.taskId !== original.id) }));
+  await expect(store.getState().resumeWorkflow(retry.id, b.id, false)).rejects.toThrow('前置成果已丢失');
+  expect(completeModel).toHaveBeenCalledTimes(3);
 });
 it('blocks execution when initial run record cannot persist', async () => {
   const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');

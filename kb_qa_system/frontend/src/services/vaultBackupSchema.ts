@@ -97,8 +97,19 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     for (const t of tasks.values()) {
       if (t.resumedFromTaskId && (!tasks.has(t.resumedFromTaskId) || t.resumedFromTaskId === t.id || tasks.get(t.resumedFromTaskId)!.type !== 'workflow.run')) fail();
       if (t.resumeFromNodeId && !t.resumedFromTaskId) fail();
+      if (t.resumedFromTaskId) {
+        const seen = new Set([t.id]);
+        let ancestor = tasks.get(t.resumedFromTaskId);
+        while (ancestor) {
+          if (seen.has(ancestor.id) || !ancestor.workflow || !t.workflow
+            || JSON.stringify(ancestor.workflow) !== JSON.stringify(t.workflow)) fail();
+          seen.add(ancestor.id);
+          ancestor = ancestor.resumedFromTaskId ? tasks.get(ancestor.resumedFromTaskId) : undefined;
+        }
+      }
       if ((t.type === 'workflow.run') !== Boolean(t.workflow)) fail();
       if (t.workflow) {
+        if (t.resumeFromNodeId && !t.workflow.definition.nodes.some(node => node.id === t.resumeFromNodeId)) fail();
         const steps = t.toolRunIds.map(id => tools.get(id)).filter(step => step?.workflowNodeId);
         if (new Set(steps.map(step => step!.workflowNodeId)).size !== steps.length) fail();
         if (t.status === 'succeeded' && ((!t.resumedFromTaskId && steps.length !== t.workflow.definition.nodes.length) || !steps.length || steps.some(step => step!.status !== 'succeeded'))) fail();

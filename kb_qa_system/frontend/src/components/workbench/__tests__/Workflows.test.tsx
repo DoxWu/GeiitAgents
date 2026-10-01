@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import JSZip from 'jszip';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -9,13 +9,37 @@ import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
   return { ACCOUNT_MODEL_ID: '$account', useWorkbenchStore: create(() => ({ workflows: [], profiles: [], taskRuns: [], toolRuns: [], artifacts: [], generationPreviews: {}, storageError: null, accountModel: null,
-    saveWorkflow: vi.fn(), startWorkflow: vi.fn(), removeWorkflow: vi.fn(), retryStorage: vi.fn() })) };
+    saveWorkflow: vi.fn(), startWorkflow: vi.fn(), resumeWorkflow: vi.fn(), removeWorkflow: vi.fn(), retryStorage: vi.fn() })) };
 });
 beforeEach(() => {
-  store.setState({ workflows: [], profiles: [], taskRuns: [], storageError: null, accountModel: null });
+  store.setState({ workflows: [], profiles: [], taskRuns: [], toolRuns: [], artifacts: [], storageError: null, accountModel: null });
+  vi.mocked(store.getState().resumeWorkflow).mockReset().mockResolvedValue('resumed');
   vi.mocked(store.getState().saveWorkflow).mockReset().mockImplementation(async d => { const saved = { ...d, revision: d.revision + 1 }; store.setState({ workflows: [saved] }); return saved; });
   vi.mocked(store.getState().startWorkflow).mockReset().mockResolvedValue('run');
   vi.mocked(store.getState().retryStorage).mockReset().mockResolvedValue();
+});
+it('separates continuation consent from new runs and invalidates it on history or connection changes', async () => {
+  const node = newWorkflowNode('generate_document', 0), d = { ...newWorkflow(), revision: 1, nodes: [node] };
+  const run = { id: 'failed', type: 'workflow.run' as const, workflow: { definition: d, input: { reference: 'original', csv: '' } }, title: 'history', profileId: 'relay', instruction: '', status: 'failed' as const,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), toolRunIds: ['partial'], artifactIds: [] };
+  store.setState({ workflows: [d], profiles: [{ id: 'relay', name: 'cloud', mode: 'relay', baseUrl: 'https://example.test/v1', model: 'fixture', hasKey: true }],
+    taskRuns: [run, { ...run, id: 'other', toolRunIds: [] }], toolRuns: [{ id: 'partial', taskId: run.id, workflowNodeId: node.id, tool: 'model.complete', status: 'succeeded', finishReason: 'length', startedAt: run.createdAt }] });
+  const user = userEvent.setup(); render(<Workflows />); await user.selectOptions(screen.getByLabelText('已保存工作流'), d.id);
+  await user.click(screen.getByLabelText(/允许本次按已保存工作流/));
+  const resume = screen.getByRole('button', { name: '从失败步骤继续' });
+  await user.click(resume); expect(store.getState().resumeWorkflow).not.toHaveBeenCalled();
+  const consent = screen.getByLabelText('确认续跑时重新向云端模型发送步骤内容');
+  await user.click(consent); await user.selectOptions(screen.getByLabelText('选择工作流运行'), 'other'); expect(consent).not.toBeChecked();
+  await user.click(consent);
+  act(() => store.setState(state => ({ profiles: state.profiles.map(p => ({ ...p, model: 'changed' })) })));
+  expect(consent).not.toBeChecked();
+  await user.selectOptions(screen.getByLabelText('选择工作流运行'), 'failed');
+  await user.click(consent);
+  vi.mocked(store.getState().resumeWorkflow).mockRejectedValueOnce(new Error('fixture failure'));
+  await user.click(screen.getByRole('button', { name: '重试此步骤并继续' }));
+  expect(store.getState().resumeWorkflow).toHaveBeenCalledWith('failed', node.id, true);
+  expect(consent).not.toBeChecked();
+  expect(await screen.findByRole('alert')).toHaveTextContent('fixture failure');
 });
 it('edits nodes, connects them, rejects a cycle, and persists keyboard layout changes', async () => {
   const user = userEvent.setup(); render(<Workflows />);

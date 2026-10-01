@@ -1104,23 +1104,39 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const frozenInput = JSON.parse(JSON.stringify(input)) as WorkflowInput;
     const { prepareWorkflow, runWorkflow } = await import('@/workflows/runner');
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
-    const definition = get().workflows.find(item => item.id === definitionId);
-    if (!definition || definition.revision !== revision) throw new Error('工作流未保存或修订已变化，请保存/重新载入后运行。');
-    const frozen = prepareWorkflow(definition, frozenInput);
     const source = resume ? get().taskRuns.find(task => task.id === resume.sourceTaskId) : undefined;
     if (resume && (!source || !source.workflow || !['failed', 'interrupted', 'cancelled'].includes(source.status))) {
       throw new Error('仅失败、中断或取消的工作流可以继续运行。');
     }
+    const definition = resume ? source?.workflow?.definition : get().workflows.find(item => item.id === definitionId);
+    if (!definition || definition.revision !== revision) throw new Error('工作流未保存或修订已变化，请保存/重新载入后运行。');
+    const frozen = prepareWorkflow(definition, frozenInput);
     if (resume && source?.workflow && (source.workflow.definition.id !== frozen.definition.id || source.workflow.definition.revision !== frozen.definition.revision
       || JSON.stringify(source.workflow.input) !== JSON.stringify(frozen.input))) {
       throw new Error('续跑必须使用原工作流修订和原始输入快照。');
     }
     const completedResults = new Map<string, string>();
+    const restoredCheckpoints: { step: ToolRun; artifact?: WorkArtifact }[] = [];
     let resumeNodeId = resume?.fromNodeId;
     if (resume && source) {
       const ordered = workflowOrder(frozen.definition);
+      // dev.29 continuations omitted skipped checkpoints. Resolve only their
+      // skipped prefix from ancestry; an actual failed checkpoint takes precedence.
+      const findCheckpoint = (nodeId: string) => {
+        let current: TaskRun | undefined = source;
+        const seen = new Set<string>();
+        while (current && !seen.has(current.id)) {
+          seen.add(current.id);
+          const step = get().toolRuns.find(tool => tool.taskId === current!.id && tool.workflowNodeId === nodeId);
+          if (step) return step;
+          const skippedBefore = ordered.findIndex(node => node.id === current!.resumeFromNodeId);
+          if (!current.resumedFromTaskId || ordered.findIndex(node => node.id === nodeId) >= skippedBefore) break;
+          current = get().taskRuns.find(task => task.id === current!.resumedFromTaskId);
+        }
+        return undefined;
+      };
       const firstIncomplete = ordered.find(node => {
-        const step = get().toolRuns.find(tool => tool.taskId === source.id && tool.workflowNodeId === node.id);
+        const step = findCheckpoint(node.id);
         return !step || step.status !== 'succeeded' || Boolean(step.finishReason && step.finishReason !== 'stop');
       });
       resumeNodeId = resumeNodeId || firstIncomplete?.id;
@@ -1128,16 +1144,23 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       const resumeIndex = ordered.findIndex(node => node.id === resumeNodeId);
       if (resumeIndex < 0) throw new Error('续跑步骤不存在于原工作流快照中。');
       for (const node of ordered.slice(0, resumeIndex)) {
-        const step = get().toolRuns.find(tool => tool.taskId === source.id && tool.workflowNodeId === node.id);
+        const step = findCheckpoint(node.id);
         if (!step || step.status !== 'succeeded' || Boolean(step.finishReason && step.finishReason !== 'stop') || !step.result) {
           throw new Error('续跑步骤的前置检查点不完整，无法安全跳过。');
         }
         let result = step.result;
+        const restoredStep = { ...step, id: crypto.randomUUID(), warnings: [...new Set([...(step.warnings ?? []), '已恢复成功检查点，本次未重新执行。'])] };
+        let restoredArtifact: WorkArtifact | undefined;
         if (step.outputArtifactId) {
-          const artifact = get().artifacts.find(item => item.id === step.outputArtifactId && item.taskId === source.id);
+          const artifact = get().artifacts.find(item => item.id === step.outputArtifactId && item.taskId === step.taskId);
           if (!artifact) throw new Error('续跑所需的前置成果已丢失。');
-          if (artifact.kind === 'markdown') result = artifact.content;
+          restoredArtifact = { ...artifact, id: crypto.randomUUID() };
+          restoredStep.outputArtifactId = restoredArtifact.id;
+          const payload = JSON.parse(step.result) as Record<string, unknown>;
+          restoredStep.result = JSON.stringify({ ...payload, artifact_id: restoredArtifact.id });
+          result = artifact.kind === 'markdown' ? artifact.content : restoredStep.result;
         }
+        restoredCheckpoints.push({ step: restoredStep, artifact: restoredArtifact });
         completedResults.set(node.id, result);
       }
     }
@@ -1162,8 +1185,11 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     controllers.set(token, controller); if ([...routes.values()].some(route => route.account)) accountRequests.add(token);
     const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('工作流已停止或密钥库已锁定', 'AbortError'); };
     set(state => ({ taskRuns: [{ id, type: 'workflow.run', workflow: frozen, title: definition.name, profileId: usesModel ? profileId : '',
-      instruction: resume ? '从已保存检查点继续运行工作流' : '手动运行已保存工作流', status: 'running', createdAt: now, updatedAt: now, toolRunIds: [], artifactIds: [],
-      ...(source ? { resumedFromTaskId: source.id, ...(resumeNodeId ? { resumeFromNodeId: resumeNodeId } : {}) } : {}) }, ...state.taskRuns] }));
+      instruction: resume ? '从已保存检查点继续运行工作流' : '手动运行已保存工作流', status: 'running', createdAt: now, updatedAt: now,
+      toolRunIds: restoredCheckpoints.map(item => item.step.id), artifactIds: restoredCheckpoints.flatMap(item => item.artifact ? [item.artifact.id] : []),
+      ...(source ? { resumedFromTaskId: source.id, ...(resumeNodeId ? { resumeFromNodeId: resumeNodeId } : {}) } : {}) }, ...state.taskRuns],
+      toolRuns: [...state.toolRuns, ...restoredCheckpoints.map(item => ({ ...item.step, taskId: id }))],
+      artifacts: [...restoredCheckpoints.flatMap(item => item.artifact ? [{ ...item.artifact, taskId: id }] : []), ...state.artifacts] }));
     const timeout = setTimeout(() => controller.abort(), 12 * 60000);
     try {
       await persist(true); guard();
@@ -1303,6 +1329,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     if (artifactOperations.has(id)) throw new Error('此任务正在保存或导出，请稍后删除。');
     if (get().taskRuns.find(task => task.id === id)?.status === 'running') throw new Error('请先取消运行中的任务。');
+    if (get().taskRuns.some(task => task.resumedFromTaskId === id)) throw new Error('此运行被续跑记录引用，请先删除后续续跑记录。');
     set(state => ({ taskRuns: state.taskRuns.filter(task => task.id !== id), toolRuns: state.toolRuns.filter(tool => tool.taskId !== id),
       artifacts: state.artifacts.filter(artifact => artifact.taskId !== id) }));
     await persist(true);

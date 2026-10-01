@@ -18,6 +18,7 @@ export function Workflows() {
   const [inputError, setInputError] = useState('');
   const [from, setFrom] = useState(''), [to, setTo] = useState(''), [profileId, setProfileId] = useState('');
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [resumeConsent, setResumeConsent] = useState(false);
   const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState('');
   const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false), inputGeneration = useRef(0), inputFile = useRef<HTMLInputElement>(null);
   dirtyRef.current = dirty;
@@ -42,6 +43,8 @@ export function Workflows() {
     const id = n.profileId || run.profileId;
     return id === ACCOUNT_MODEL_ID || store.profiles.find(p => p.id === id)?.mode === 'relay';
   }));
+  const resumeSignature = JSON.stringify([run?.id, run?.workflow, run?.profileId, store.profiles, store.accountModel]);
+  useEffect(() => { setResumeConsent(false); }, [resumeSignature]);
   const artifact = store.artifacts.find(a => a.id === artifactId && run?.artifactIds.includes(a.id)) ?? store.artifacts.find(a => run?.artifactIds.includes(a.id));
   function change(next: WorkflowDefinition) { setDraft(next); setDirty(true); setConsent(false); setNotice(''); }
   function patchNode(id: string, patch: Partial<WorkflowNode>) { change({ ...draft, nodes: draft.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }); }
@@ -102,12 +105,14 @@ export function Workflows() {
     if (starting.current) return;
     const source = runs.find(item => item.id === taskId);
     if (!source || source.status === 'running') return;
-    if (runNeedsCloud && !consent) { setError('续跑云端步骤前请先确认本次授权。'); return; }
+    if (runNeedsCloud && !resumeConsent) { setError('续跑云端步骤前请先确认本次授权。'); return; }
     starting.current = true; setError(''); setNotice('');
+    const allowed = runNeedsCloud && resumeConsent; setResumeConsent(false);
+    setSelectedRun(''); setArtifactId('');
     try {
-      const id = await store.resumeWorkflow(taskId, fromNodeId, runNeedsCloud && consent);
-      if (mounted.current) { setSelectedRun(id); setArtifactId(''); setConsent(false); setNotice('已创建新的续跑记录；原运行记录和成果保持不变。'); }
-    } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '工作流续跑失败。'); }
+      const id = await store.resumeWorkflow(taskId, fromNodeId, allowed);
+      if (mounted.current) { setSelectedRun(id); setArtifactId(''); setNotice('已创建新的续跑记录；原运行记录和成果保持不变。'); }
+    } catch (e) { if (mounted.current) { setSelectedRun(useWorkbenchStore.getState().taskRuns.find(t => t.resumedFromTaskId === taskId)?.id || taskId); setError(e instanceof Error ? e.message : '工作流续跑失败。'); } }
     finally { starting.current = false; }
   }
   return <section aria-label="可视化工作流" className="min-h-0 min-w-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5">
@@ -159,14 +164,14 @@ export function Workflows() {
       {run && <><p className="font-medium">{statuses[run.status]} · {run.artifactIds.length} 个成果</p>{run.error && <p className="text-sm text-danger">{run.error}</p>}{run.summary && <p className="text-sm">{run.summary}</p>}
         <div className="flex flex-wrap gap-2">{run.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(run.id)}>停止工作流</button> : <>
           {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled') && <>
-            {runNeedsCloud && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />确认续跑时重新向云端模型发送步骤内容</label>}
+            {runNeedsCloud && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={resumeConsent} onChange={e => setResumeConsent(e.target.checked)} />确认续跑时重新向云端模型发送步骤内容</label>}
             <button className="work-command bg-brand text-white" onClick={() => void resume(run.id)}>从失败步骤继续</button>
           </>}
           <button className="work-command" onClick={() => { if (run.workflow) { if (dirty && !window.confirm('放弃尚未保存修改并复制历史快照？')) return; const copy = { ...clone(run.workflow.definition), id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() }; setDraft(copy); setDirty(true); setInput(clone(run.workflow.input)); setProfileId(run.profileId); setConsent(false); setSelected(copy.nodes[0]?.id || ''); setNotice('已复制历史快照；保存后可作为新任务重新运行，可能再次计费。'); } }}>复制快照为新工作流</button>
           <button className="work-command" onClick={() => { if (window.confirm('删除本次运行和成果？工作流定义保留。')) void store.removeTask(run.id).catch(e => { if (mounted.current) setError(e.message); }); }}>删除运行</button>
         </>}</div>
         {run.status === 'running' && store.generationPreviews[run.id] && <GenerationPreview value={store.generationPreviews[run.id]} label="工作流模型生成预览" />}
-        <ol className="space-y-2">{run.toolRunIds.map(id => store.toolRuns.find(t => t.id === id)).filter(Boolean).map(t => <li className="rounded border border-line p-3 text-sm" key={t!.id}><details><summary>{run.workflow?.definition.nodes.find(n => n.id === t!.workflowNodeId)?.title || t!.tool} · {statuses[t!.status]}</summary>{t!.finishReason && <p>{finishLabel(t!.finishReason)}</p>}{t!.error && <p>{t!.error}</p>}{t!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{t!.result}</pre>}</details>{t!.workflowNodeId && (t!.status === 'failed' || t!.status === 'interrupted' || t!.status === 'cancelled') && <button className="work-command mt-2" onClick={() => void resume(run.id, t!.workflowNodeId)}>重试此步骤并继续</button>}</li>)}</ol>
+        <ol className="space-y-2">{run.toolRunIds.map(id => store.toolRuns.find(t => t.id === id)).filter(Boolean).map(t => <li className="rounded border border-line p-3 text-sm" key={t!.id}><details><summary>{run.workflow?.definition.nodes.find(n => n.id === t!.workflowNodeId)?.title || t!.tool} · {statuses[t!.status]}</summary>{t!.warnings?.map((warning, i) => <p key={i}>{warning}</p>)}{t!.finishReason && <p>{finishLabel(t!.finishReason)}</p>}{t!.error && <p>{t!.error}</p>}{t!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{t!.result}</pre>}</details>{t!.workflowNodeId && (t!.status === 'failed' || t!.status === 'interrupted' || t!.status === 'cancelled' || t!.finishReason && t!.finishReason !== 'stop') && run.status !== 'running' && <button className="work-command mt-2" onClick={() => void resume(run.id, t!.workflowNodeId)}>重试此步骤并继续</button>}</li>)}</ol>
         {!!run.artifactIds.length && <label className="work-label">选择工作流成果<select aria-label="选择工作流成果" className="work-input" value={artifact?.id || ''} onChange={e => setArtifactId(e.target.value)}>{store.artifacts.filter(a => run.artifactIds.includes(a.id)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
         {artifact && <ToolArtifact key={artifact.id} artifact={artifact} running={run.status === 'running'} />}
       </>}
