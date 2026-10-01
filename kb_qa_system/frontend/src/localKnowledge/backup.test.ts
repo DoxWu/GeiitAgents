@@ -57,4 +57,15 @@ describe('encrypted portable local backups', () => {
     const clean = validateBackupIndex(index);
     expect(clean).not.toHaveProperty('apiKey'); expect(clean.documents[0].bytes).toBe(18);
   });
+  it.each(['pdf', 'docx', 'pptx'])('encrypts and restores extracted %s text with omission warnings', async extension => {
+    const index = sample(); index.documents[0].name = `制度.${extension}`;
+    index.documents[0].importWarnings = ['图片未保留；位置对应提取文本。'];
+    const blob = await exportBackup(index, '1234');
+    expect(await blob.text()).not.toContain('图片未保留');
+    expect((await importBackup(blob, '1234')).documents).toEqual(index.documents);
+  });
+  it.each([{ warnings: ['x'.repeat(501)] }, { warnings: Array(21).fill('x') }, { warnings: [123] }, { warnings: ['\0'] }])('rejects unbounded or malformed extraction warnings: $warnings', ({ warnings }) => {
+    const index = sample(); Object.assign(index.documents[0], { importWarnings: warnings });
+    expect(() => validateBackupIndex(index)).toThrow();
+  });
 });

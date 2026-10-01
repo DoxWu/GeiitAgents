@@ -52,6 +52,7 @@ const service = createServer(async (request, response) => {
 });
 await new Promise(resolve => service.listen(0, '127.0.0.1', resolve));
 const base = 'http://127.0.0.1:' + service.address().port;
+import { pdfFixture } from './pdf-fixture.mjs';
 let app, browser, context, page;
 try {
   if (native) {
@@ -95,6 +96,10 @@ try {
     await page.getByRole('tab', { name: '多步骤任务', exact: true }).click();
   }
   await openTasks();
+  const requestsBeforePdf = calls.length;
+  await page.getByLabel(/导入参考文件/).setInputFiles({ name: 'reference.pdf', mimeType: 'application/pdf', buffer: pdfFixture('PDF fixture text') });
+  await expect(page.getByRole('status')).toContainText('仅提取可选中的文字');
+  expect(calls).toHaveLength(requestsBeforePdf);
   async function start(title) {
     await page.getByLabel('任务标题', { exact: true }).fill(title);
     await page.getByRole('textbox', { name: '办公目标', exact: true }).fill('读取 CSV，创建销售趋势图和 Markdown 报告。');
@@ -112,6 +117,7 @@ try {
   const details = page.getByRole('region', { name: '多步骤任务详情', exact: true });
   await expect(details.getByRole('heading', { level: 2 })).toHaveText('销售分析 · 已完成', { timeout: 30000 });
   expect(calls).toHaveLength(3);
+  expect(JSON.parse(calls[0].messages.find(message => message.role === 'user').content).reference).toContain('PDF fixture text');
   await expect(page.getByLabel('选择成果')).toContainText('季度销量.svg');
   await expect(page.getByLabel('选择成果')).toContainText('季度报告.md');
   await expect(details.locator('ol > li')).toHaveCount(6);
@@ -183,7 +189,7 @@ try {
   } else expect(browserModelRequests).toEqual([]);
   expect(errors).toEqual([]); expect(protocolErrors).toEqual([]);
   const result = { passed: true, mode: native ? 'packaged WebView2 / Rust / HTTP fixture' : 'Chromium / real loopback HTTP fixture', requests: calls.length,
-    checks: ['XLSX sheet imported locally into CSV result transcript', 'three model rounds', 'SVG and Markdown artifacts', 'DOCX export', 'document version edit/compare/restore without model calls or changing original chart', 'encrypted checkpoints', 'cancel closes HTTP', 'lock/reload preserves partial artifacts', 'no replay', 'unknown tool rejected', 'reuse as new task', ...(native ? [] : ['390px'])] };
+    checks: ['PDF.js extracts selectable PDF text locally with no API request', 'PDF omissions are disclosed in the UI', 'XLSX sheet imported locally into CSV result transcript', 'three model rounds', 'SVG and Markdown artifacts', 'DOCX export', 'document version edit/compare/restore without model calls or changing original chart', 'encrypted checkpoints', 'cancel closes HTTP', 'lock/reload preserves partial artifacts', 'no replay', 'unknown tool rejected', 'reuse as new task', ...(native ? [] : ['390px'])] };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); throw error;

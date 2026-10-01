@@ -3,7 +3,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LocalKnowledgePage from '../LocalKnowledgePage';
 import { DEFAULT_PROFILE, fingerprint, type LocalIndex } from '@/localKnowledge/core';
-const mock = vi.hoisted(() => ({ init: vi.fn(), build: vi.fn(), query: vi.fn(), stop: vi.fn(), create: vi.fn(), load: vi.fn(), commit: vi.fn() }));
+const mock = vi.hoisted(() => ({ init: vi.fn(), build: vi.fn(), query: vi.fn(), stop: vi.fn(), create: vi.fn(), load: vi.fn(), commit: vi.fn(), read: vi.fn() }));
+vi.mock('@/localKnowledge/documentImport', () => ({ readLocalDocument: mock.read }));
 vi.mock('@/localKnowledge/client', () => ({ LocalEmbeddingClient: class {
   constructor() { mock.create(); }
   init = mock.init; build = mock.build; query = mock.query; stop = mock.stop;
@@ -52,5 +53,43 @@ describe('local knowledge opt-in UI', () => {
     fireEvent.click(screen.getByRole('button', { name: '自定义兼容 ONNX 模型' }));
     fireEvent.change(screen.getByLabelText('本地向量模型配置（JSON）'), { target: { value: JSON.stringify({ ...DEFAULT_PROFILE, queryPrefix: '' }) } });
     await enable(); await waitFor(() => expect(mock.commit).toHaveBeenCalledWith(updated, 'old'));
+  });
+  it('imports by extracted text size and retains omission warnings after reload', async () => {
+    mock.load.mockResolvedValue(original); mount(); await enable();
+    await screen.findByText('本地 CPU 模型已就绪');
+    const doc = { id: 'pdf', name: '报销.pdf', text: '报销需发票', bytes: 15, importWarnings: ['图片不会保留'] };
+    mock.read.mockResolvedValue(doc); mock.build.mockResolvedValue({ ...original, documents: [...original.documents, doc], revision: 'new' });
+    fireEvent.change(screen.getByLabelText('选择本地文档'), { target: { files: [{ name: '报销.pdf', size: 10_000_000 }, { name: '另一份.pdf', size: 10_000_000 }] } });
+    await waitFor(() => expect(mock.commit).toHaveBeenCalledWith(expect.objectContaining({ revision: 'new' }), 'old'));
+    expect(screen.getByText('图片不会保留')).toBeInTheDocument();
+    cleanup(); mock.load.mockResolvedValue({ ...original, documents: [doc] }); mount();
+    expect(await screen.findByText('图片不会保留')).toBeInTheDocument();
+    expect(mock.init).toHaveBeenCalledTimes(1);
+  });
+  it('preserves the original index when a later file fails to parse', async () => {
+    mock.load.mockResolvedValue(original); mount(); await enable(); await screen.findByText('本地 CPU 模型已就绪');
+    mock.read.mockResolvedValueOnce({ ...original.documents[0], id: 'new' }).mockRejectedValueOnce(new Error('PDF 受密码保护'));
+    fireEvent.change(screen.getByLabelText('选择本地文档'), { target: { files: [new File(['x'], 'ok.txt'), new File(['x'], 'locked.pdf')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('密码保护');
+    expect(mock.build).not.toHaveBeenCalled(); expect(mock.commit).not.toHaveBeenCalled();
+    expect(screen.getByText('private.txt')).toBeInTheDocument();
+  });
+  it('stops a cancelled batch before the next file and ignores late parser completion', async () => {
+    mock.load.mockResolvedValue(original); mount(); await enable(); await screen.findByText('本地 CPU 模型已就绪');
+    let finish!: (value: typeof original.documents[0]) => void;
+    mock.read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    fireEvent.change(screen.getByLabelText('选择本地文档'), { target: { files: [new File(['x'], 'a.pdf'), new File(['x'], 'b.pdf')] } });
+    await waitFor(() => expect(mock.read).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: '取消并关闭模型' })); finish(original.documents[0]);
+    await waitFor(() => expect(mock.stop).toHaveBeenCalled());
+    expect(mock.read).toHaveBeenCalledTimes(1); expect(mock.build).not.toHaveBeenCalled(); expect(mock.commit).not.toHaveBeenCalled();
+  });
+  it('rejects excessive extracted text before starting the index build', async () => {
+    const documents = Array.from({ length: 5 }, (_, n) => ({ ...original.documents[0], id: `d${n}`, bytes: 2 * 1024 * 1024 }));
+    mock.load.mockResolvedValue({ ...original, documents }); mount(); await enable(); await screen.findByText('本地 CPU 模型已就绪');
+    mock.read.mockResolvedValue({ id: 'new', name: 'new.pdf', text: 'extra', bytes: 5 });
+    fireEvent.change(screen.getByLabelText('选择本地文档'), { target: { files: [new File(['x'], 'new.pdf')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('提取文本合计超过 10 MiB');
+    expect(mock.build).not.toHaveBeenCalled(); expect(mock.commit).not.toHaveBeenCalled();
   });
 });

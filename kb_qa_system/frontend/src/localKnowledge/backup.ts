@@ -1,4 +1,4 @@
-import { fingerprint, LIMITS, validateProfile, type LocalIndex, type LocalDocument, type Chunk } from './core';
+import { fingerprint, LIMITS, LOCAL_DOCUMENT_EXTENSION, validateProfile, type LocalIndex, type LocalDocument, type Chunk } from './core';
 
 const FORMAT = 'geiit-local-knowledge-encrypted';
 const ITERATIONS = 600000;
@@ -30,10 +30,15 @@ export function validateBackupIndex(value: unknown): LocalIndex {
     const id = boundedText(doc.id, 100), name = boundedText(doc.name, 255);
     const text = boundedText(doc.text, LIMITS.fileBytes);
     const bytes = encoder.encode(text).byteLength;
-    if (ids.has(id) || !/\.(md|markdown|txt)$/i.test(name) || /[\\/]/.test(name) || Array.from(name).some(c => c.charCodeAt(0) < 32)
+    if (ids.has(id) || !LOCAL_DOCUMENT_EXTENSION.test(name) || /[\\/]/.test(name) || Array.from(name).some(c => c.charCodeAt(0) < 32)
       || !text.trim() || bytes > LIMITS.fileBytes) return fail();
+    let importWarnings: string[] | undefined;
+    if (doc.importWarnings !== undefined) {
+      if (!Array.isArray(doc.importWarnings) || doc.importWarnings.length > 20) return fail();
+      importWarnings = doc.importWarnings.map(warning => boundedText(warning, 500));
+    }
     ids.add(id); total += bytes;
-    return { id, name, text, bytes };
+    return { id, name, text, bytes, ...(importWarnings ? { importWarnings } : {}) };
   });
   if (total > LIMITS.totalBytes) return fail();
   const byId = new Map(documents.map(doc => [doc.id, doc]));

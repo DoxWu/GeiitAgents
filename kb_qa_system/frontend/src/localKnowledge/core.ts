@@ -11,7 +11,8 @@ export const DEFAULT_PROFILE: EmbeddingProfile = {
   queryPrefix: 'query: ', passagePrefix: 'passage: ',
 };
 export const LIMITS = { fileBytes: 2 * 1024 * 1024, totalBytes: 10 * 1024 * 1024, documents: 100, chunks: 2000 };
-export interface LocalDocument { id: string; name: string; text: string; bytes: number }
+export const LOCAL_DOCUMENT_EXTENSION = /\.(md|markdown|txt|pdf|docx|pptx)$/i;
+export interface LocalDocument { id: string; name: string; text: string; bytes: number; importWarnings?: string[] }
 export interface Chunk { documentId: string; start: number; end: number; text: string; vector: number[] }
 export interface LocalIndex {
   version: 1; revision: string; fingerprint: string; profile: EmbeddingProfile;
@@ -87,5 +88,5 @@ export async function readDocument(file: File): Promise<LocalDocument> {
   if (!/\.(md|markdown|txt)$/i.test(file.name) || file.size > LIMITS.fileBytes || file.size === 0) throw new Error('仅支持非空 UTF-8 Markdown/TXT 文件，每个不超过 2 MiB。');
   const text = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
   if (!text.trim() || text.includes('\0')) throw new Error('文件为空或不是有效文本。');
-  return { id: crypto.randomUUID(), name: file.name, text, bytes: file.size };
+  return { id: crypto.randomUUID(), name: file.name, text, bytes: new TextEncoder().encode(text).byteLength };
 }

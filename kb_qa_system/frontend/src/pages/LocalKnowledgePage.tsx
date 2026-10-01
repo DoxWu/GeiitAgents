@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Download, Search, ShieldCheck, Trash2 } from 'lucide-react';
-import { DEFAULT_PROFILE, fingerprint, LIMITS, rank, readDocument, validateProfile,
+import { DEFAULT_PROFILE, fingerprint, LIMITS, rank, validateProfile,
   type EmbeddingProfile, type LocalIndex, type SearchHit } from '@/localKnowledge/core';
+import { readLocalDocument } from '@/localKnowledge/documentImport';
 import { commitIndex, loadIndex, MODEL_CACHE, SESSION_LOCK } from '@/localKnowledge/storage';
 import { LocalEmbeddingClient } from '@/localKnowledge/client';
 import LocalKnowledgeBackup from '@/components/workbench/LocalKnowledgeBackup';
@@ -88,11 +89,18 @@ export default function LocalKnowledgePage() {
     const run = generation.current;
     setBusy(true); setError('');
     try {
-      if (files.length + (index?.documents.length ?? 0) > LIMITS.documents
-        || files.reduce((s, f) => s + f.size, 0) + (index?.documents.reduce((s, d) => s + d.bytes, 0) ?? 0) > LIMITS.totalBytes) throw new Error('最多 100 个文件、合计 10 MiB 文本。');
+      if (files.length + (index?.documents.length ?? 0) > LIMITS.documents) throw new Error('最多 100 个文件、合计 10 MiB 文本。');
       setStatus('读取所选文件…');
       const added = [];
-      for (const file of files) added.push(await readDocument(file));
+      let totalBytes = index?.documents.reduce((s, d) => s + d.bytes, 0) ?? 0;
+      for (const file of files) {
+        if (run !== generation.current) return;
+        const document = await readLocalDocument(file);
+        if (run !== generation.current) return;
+        totalBytes += document.bytes;
+        if (totalBytes > LIMITS.totalBytes) throw new Error('提取文本合计超过 10 MiB，原索引保留。');
+        added.push(document);
+      }
       if (run !== generation.current) return;
       const value = await client.current!.build([...(index?.documents ?? []), ...added], index);
       if (run !== generation.current) return;
@@ -157,12 +165,13 @@ export default function LocalKnowledgePage() {
       <p role="status" className="lk-status">{committing ? '正在保存索引…' : status}</p>
       {error && <p role="alert" className="lk-error">{error}</p>}
     </section><section className="lk-card">
-      <h2>2. 添加你的文档</h2><p className="lk-muted">Markdown / TXT · UTF-8 · 单文件 2 MiB<br />最多 100 个文件、10 MiB 文本、2000 个片段。</p>
-      <input ref={input} type="file" accept=".md,.markdown,.txt" multiple hidden aria-label="选择本地文档" disabled={!ready || busy}
+      <h2>2. 添加你的文档</h2><p className="lk-muted">Markdown / TXT：UTF-8，2 MiB；PDF：10 MB；DOCX：2 MB；PPTX：5 MB。<br />最多 100 个文件、10 MiB 提取文本、2000 个片段。PDF 不支持扫描件 OCR。</p>
+      <input ref={input} type="file" accept=".md,.markdown,.txt,.pdf,.docx,.pptx" multiple hidden aria-label="选择本地文档" disabled={!ready || busy}
         onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; void importFiles(files); }} />
       <button className="lk-primary" disabled={!ready || busy} onClick={() => input.current?.click()}>选择文件并建立索引</button>
       <div className="lk-files">{!index?.documents.length && <p className="lk-empty">尚未添加文档</p>}
-        {index?.documents.map(doc => <div className="lk-file" key={doc.id}><span title={doc.name}>{doc.name}<small>{(doc.bytes / 1024).toFixed(1)} KiB</small></span>
+        {index?.documents.map(doc => <div className="lk-file" key={doc.id}><div className="lk-file-content" title={doc.name}>{doc.name}<small>{(doc.bytes / 1024).toFixed(1)} KiB 文本</small>
+          {!!doc.importWarnings?.length && <details><summary>导入注意事项</summary>{doc.importWarnings.map((warning, n) => <p className="lk-muted" key={n}>{warning}</p>)}</details>}</div>
           <button aria-label={`删除 ${doc.name}`} disabled={busy} onClick={() => void remove(doc.id)}><Trash2 size={16} /></button></div>)}</div>
       {index && <div className="lk-actions"><small>{index.documents.length} 个文件 · {index.chunks.length} 个片段</small>
         <button disabled={busy} onClick={() => void remove()}>删除全部本地文档</button></div>}
@@ -173,7 +182,7 @@ export default function LocalKnowledgePage() {
       <p className="lk-muted">结果按向量相似度排序，相似度不是答案正确率。片段仅在本页显示。</p>
       {!hits.length && <p className="lk-empty">{searched ? '没有可检索的片段' : '启用模型并添加文档后，试着提出一个问题。'}</p>}
       {hits.map((hit, n) => <article className="lk-hit" key={`${hit.documentId}-${hit.start}`}><div><strong>{n + 1}. {hit.name}</strong><span>相似度 {hit.score.toFixed(3)}</span></div>
-        <small>字符 {hit.start + 1}–{hit.end} · 来源原文（UTF-16 位置）</small><pre>{hit.text}</pre></article>)}
+        <small>字符 {hit.start + 1}–{hit.end} · 入库文本（UTF-16 位置）</small><pre>{hit.text}</pre></article>)}
       {searched && hits.length > 0 && <LocalKnowledgeAnswer key={`${index?.revision}:${searchedQuestion}`} question={searchedQuestion} sources={hits} />}
     </section>
     <LocalKnowledgeBackup disabled={!loaded || ready || busy} onRestore={value => {
