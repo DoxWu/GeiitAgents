@@ -185,13 +185,17 @@ it('encrypts the successful text-test time and clears it when connection setting
   await store.getState().testProfile(profile.id);
   const testedAt = store.getState().profiles[0].textTestedAt;
   expect(testedAt).toBeTruthy();
+  expect(store.getState().profiles[0].capabilities?.text).toMatchObject({ state: 'supported', testedAt });
+  expect(store.getState().profiles[0].capabilities?.text?.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(testedAt!);
   await store.getState().lock(); await store.getState().unlock(password);
   expect(store.getState().profiles[0].textTestedAt).toBe(testedAt);
+  expect(store.getState().profiles[0].capabilities?.text).toMatchObject({ state: 'supported', testedAt });
   await store.getState().saveProfile({ ...profile, name: 'renamed' }, '');
   expect(store.getState().profiles[0].textTestedAt).toBe(testedAt);
   await store.getState().saveProfile({ ...profile, model: 'changed-model' }, '');
   expect(store.getState().profiles[0].textTestedAt).toBeUndefined();
+  expect(store.getState().profiles[0].capabilities).toBeUndefined();
 });
 
 it('encrypts tool-call capability only after the inert probe and clears it after a config change', async () => {
@@ -199,11 +203,15 @@ it('encrypts tool-call capability only after the inert probe and clears it after
   await store.getState().testProfileToolSupport(profile.id);
   const testedAt = store.getState().profiles[0].toolTestedAt;
   expect(testedAt).toBeTruthy(); expect(probeToolCallModel).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'fixture-key', expect.any(AbortSignal));
+  expect(store.getState().profiles[0].capabilities?.toolCalls).toMatchObject({ state: 'supported', testedAt });
+  expect(store.getState().profiles[0].capabilities?.toolCalls?.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(testedAt!);
   await store.getState().lock(); await store.getState().unlock(password);
   expect(store.getState().profiles[0].toolTestedAt).toBe(testedAt);
+  expect(store.getState().profiles[0].capabilities?.toolCalls).toMatchObject({ state: 'supported', testedAt });
   await store.getState().saveProfile({ ...profile, model: 'changed-model' }, '');
   expect(store.getState().profiles[0].toolTestedAt).toBeUndefined();
+  expect(store.getState().profiles[0].capabilities).toBeUndefined();
 });
 
 it('discards a late tool capability result after the vault is locked', async () => {

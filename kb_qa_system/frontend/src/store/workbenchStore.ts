@@ -160,6 +160,10 @@ function publicProfiles(): ModelProfile[] {
   return secrets.map(({ apiKey, ...profile }) => ({ ...profile, hasKey: Boolean(apiKey) }));
 }
 
+async function modelCapabilityFingerprint(profile: Pick<ModelProfile, 'mode' | 'baseUrl' | 'model' | 'maxTokens'>, apiKey: string): Promise<string> {
+  return sha256Text(JSON.stringify({ mode: profile.mode, baseUrl: profile.baseUrl, model: profile.model, maxTokens: profile.maxTokens ?? null, apiKey }));
+}
+
 function keyForEndpoint(input: ModelEndpoint, apiKey: string, clearKey: boolean, baseUrl: string): string {
   const previous = secrets.find(profile => profile.id === input.id);
   const secret = clearKey ? '' : apiKey.trim() || previous?.apiKey || '';
@@ -782,7 +786,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const secret = keyForEndpoint(input, apiKey, clearKey, baseUrl);
     const configChanged = !previous || previous.mode !== input.mode || previous.baseUrl !== baseUrl || previous.model !== input.model.trim() || previous.maxTokens !== input.maxTokens || previous.apiKey !== secret;
     const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret,
-      textTestedAt: configChanged ? undefined : previous.textTestedAt, toolTestedAt: configChanged ? undefined : previous.toolTestedAt };
+      textTestedAt: configChanged ? undefined : previous.textTestedAt,
+      toolTestedAt: configChanged ? undefined : previous.toolTestedAt,
+      capabilities: configChanged ? undefined : previous.capabilities };
     const next = [...secrets.filter((item) => item.id !== input.id), profile];
     secrets = next;
     set({ profiles: publicProfiles() });
@@ -820,7 +826,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       throw new DOMException('连接配置已改变，测试结果未保存。', 'AbortError');
     }
     const testedAt = new Date().toISOString();
-    const updated = { ...current, textTestedAt: testedAt };
+    const fingerprint = await modelCapabilityFingerprint(profile, testedSecret);
+    const updated = { ...current, textTestedAt: testedAt, capabilities: { ...current?.capabilities, text: { state: 'supported' as const, testedAt, fingerprint } } };
     secrets = secrets.map(item => item.id === id ? updated : item);
     set({ profiles: publicProfiles() });
     try {
@@ -843,7 +850,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       || currentPublic.mode !== profile.mode || currentPublic.baseUrl !== profile.baseUrl || currentPublic.model !== profile.model || currentPublic.maxTokens !== profile.maxTokens) {
       throw new DOMException('连接配置已改变，测试结果未保存。', 'AbortError');
     }
-    const testedAt = new Date().toISOString(), updated = { ...current, toolTestedAt: testedAt };
+    const testedAt = new Date().toISOString(), fingerprint = await modelCapabilityFingerprint(profile, testedSecret), updated = { ...current, toolTestedAt: testedAt, capabilities: { ...current?.capabilities, toolCalls: { state: 'supported' as const, testedAt, fingerprint } } };
     secrets = secrets.map(item => item.id === id ? updated : item); set({ profiles: publicProfiles() });
     try { await persist(true); }
     catch (error) {

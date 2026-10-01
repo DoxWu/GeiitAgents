@@ -109,6 +109,13 @@ it('shows separately verified tool support and clears it when the edited model c
   expect(screen.getByText(/不执行工具或发送文件/)).toBeInTheDocument();
 });
 
+it('shows explicit unknown statuses for capabilities that have no compatible probe', () => {
+  store.setState({ profiles: [{ id: 'saved', name: 'Saved', baseUrl: 'http://127.0.0.1:1234/v1', model: 'chat', hasKey: true, mode: 'local', capabilities: { vision: { state: 'unknown' }, contextWindow: { state: 'unknown' } } }] });
+  render(<ModelConnections />); fireEvent.click(screen.getByLabelText('编辑 Saved'));
+  expect(screen.getByText(/图片输入：未知（未探测）；上下文长度：未知（未探测）/)).toBeInTheDocument();
+  expect(screen.getByText(/最大输出上限：未配置（服务商上限未知）/)).toBeInTheDocument();
+});
+
 it('shows only the authorized account model with explicit permission refresh', () => {
   useAuthStore.setState({ isAuthenticated: true, user: { id: 2 } as ReturnType<typeof useAuthStore.getState>['user'] });
   store.setState({ accountModel: { userId: 2, model: 'server-managed' } });

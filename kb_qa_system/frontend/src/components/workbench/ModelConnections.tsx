@@ -2,11 +2,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Save, PlugZap, Trash2, Pencil, X } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
-import type { ModelProfile } from '@/types/workbench';
+import type { ModelCapabilityEvidence, ModelProfile } from '@/types/workbench';
 import type { ModelCatalog } from '@/services/modelDiscovery';
 
-type Draft = Omit<ModelProfile, 'hasKey' | 'textTestedAt' | 'toolTestedAt'>;
+type Draft = Omit<ModelProfile, 'hasKey' | 'textTestedAt' | 'toolTestedAt' | 'capabilities'>;
 const empty = (): Draft => ({ id: crypto.randomUUID(), name: '', mode: 'relay', baseUrl: '', model: '' });
+
+function capabilityLabel(evidence: ModelCapabilityEvidence | undefined, legacyTestedAt?: string): string {
+  if (evidence?.state === 'unsupported') return evidence.testedAt ? `不支持（${new Date(evidence.testedAt).toLocaleString()}）` : '不支持';
+  if (evidence?.state === 'supported' && evidence.testedAt) return `最近测试通过（${new Date(evidence.testedAt).toLocaleString()}）`;
+  return legacyTestedAt ? `最近测试通过（${new Date(legacyTestedAt).toLocaleString()}）` : '未验证';
+}
+
+function unknownCapability(evidence: ModelCapabilityEvidence | undefined): string {
+  if (evidence?.state === 'supported') return evidence.value ? `已探测（${evidence.value.toLocaleString()}）` : '已探测支持';
+  if (evidence?.state === 'unsupported') return '已探测不支持';
+  return '未知（未探测）';
+}
 
 export function ModelConnections() {
   const profiles = useWorkbenchStore(s => s.profiles);
@@ -62,7 +74,7 @@ export function ModelConnections() {
     <div className="mb-6 divide-y divide-line border-y border-line">
       {profiles.map(profile => <div key={profile.id} className="flex items-center gap-3 py-3">
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{profile.name}</p><p className="truncate text-xs text-ink-secondary">{profile.model} · {profile.mode === 'local' ? '本机直连' : '云端临时转发'}</p></div>
-        <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
+        <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, capabilities: ____, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
         <button className="work-icon" title="删除连接" aria-label={'删除 ' + profile.name} disabled={busy} onClick={() => { if (window.confirm('删除模型连接“' + profile.name + '”？')) void action('save', async () => { await useWorkbenchStore.getState().removeProfile(profile.id); return () => { reset(); setMessage('连接已删除。'); }; }); }}><Trash2 size={16} /></button>
       </div>)}
       {!profiles.length && <p className="py-4 text-sm text-ink-tertiary">暂无模型连接</p>}
@@ -71,7 +83,7 @@ export function ModelConnections() {
       await useWorkbenchStore.getState().saveProfile(draft, apiKey, clearKey);
       return () => {
         const saved = useWorkbenchStore.getState().profiles.find(p => p.id === draft.id);
-        if (saved) { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, ...config } = saved; setDraft(config); }
+        if (saved) { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, capabilities: ____, ...config } = saved; setDraft(config); }
         setApiKey(''); setClearKey(false); setMessage('连接已加密保存到本机。');
       };
     }); }}>
@@ -100,8 +112,9 @@ export function ModelConnections() {
         <label className="work-label">最大输出 Token（可选）<input className="work-input" type="number" min={1} max={2147483647} placeholder="模型默认" value={draft.maxTokens ?? ''} onChange={e => setDraft({ ...draft, maxTokens: e.target.value === '' ? undefined : Number(e.target.value) })} /></label>
       </fieldset>
       <div className="rounded-lg border border-line p-3 text-xs text-ink-secondary">
-        <p>文本调用：{!dirty && existing?.textTestedAt ? '最近测试通过（' + new Date(existing.textTestedAt).toLocaleString() + '）' : '未验证'}</p>
-        <p>工具调用：{!dirty && existing?.toolTestedAt ? '最近测试通过（' + new Date(existing.toolTestedAt).toLocaleString() + '）' : '未验证'}。图片输入、上下文与输出上限仍未知。</p>
+        <p>文本调用：{!dirty ? capabilityLabel(existing?.capabilities?.text, existing?.textTestedAt) : '未验证'}</p>
+        <p>工具调用：{!dirty ? capabilityLabel(existing?.capabilities?.toolCalls, existing?.toolTestedAt) : '未验证'}</p>
+        <p>图片输入：{!dirty ? unknownCapability(existing?.capabilities?.vision) : '未知（配置已修改）'}；上下文长度：{!dirty ? unknownCapability(existing?.capabilities?.contextWindow) : '未知（配置已修改）'}；最大输出上限：{draft.maxTokens ? `${draft.maxTokens.toLocaleString()}（服务商支持性未知）` : '未配置（服务商上限未知）'}。</p>
         <p>保存后可测试文本调用，会发送一条短消息，服务商可能计费。</p>
         <p>工具调用测试会要求模型返回固定的 `inspect_csv` 空参数调用；不执行工具或发送文件，但服务商可能计费。</p>
       </div>

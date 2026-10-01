@@ -1,3 +1,20 @@
+export type ModelCapabilityState = 'unknown' | 'supported' | 'unsupported';
+
+export interface ModelCapabilityEvidence {
+  state: ModelCapabilityState;
+  testedAt?: string;
+  fingerprint?: string;
+  value?: number;
+}
+
+export interface ModelCapabilities {
+  text?: ModelCapabilityEvidence;
+  toolCalls?: ModelCapabilityEvidence;
+  vision?: ModelCapabilityEvidence;
+  contextWindow?: ModelCapabilityEvidence;
+  maxOutputTokens?: ModelCapabilityEvidence;
+}
+
 export interface ModelProfile {
   id: string;
   name: string;
@@ -7,6 +24,7 @@ export interface ModelProfile {
   maxTokens?: number;
   textTestedAt?: string;
   toolTestedAt?: string;
+  capabilities?: ModelCapabilities;
   hasKey: boolean;
 }
 

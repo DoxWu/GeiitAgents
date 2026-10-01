@@ -101,11 +101,26 @@ it('roundtrips an optional successful text-test time and rejects an invalid time
   const source = await vaultBackupFixture();
   source.profiles[0].textTestedAt = '2026-09-30T08:00:00.000Z';
   source.profiles[0].toolTestedAt = '2026-09-30T09:00:00.000Z';
+  source.profiles[0].capabilities = {
+    text: { state: 'supported', testedAt: source.profiles[0].textTestedAt, fingerprint: 'a'.repeat(64) },
+    toolCalls: { state: 'supported', testedAt: source.profiles[0].toolTestedAt, fingerprint: 'b'.repeat(64) },
+    vision: { state: 'unknown' },
+    contextWindow: { state: 'unknown' },
+    maxOutputTokens: { state: 'unknown' },
+  };
   await expect(validateVaultBackup(source)).resolves.toMatchObject({ profiles: [{ textTestedAt: source.profiles[0].textTestedAt, toolTestedAt: source.profiles[0].toolTestedAt }] });
+  await expect(validateVaultBackup(source)).resolves.toMatchObject({ profiles: [{ capabilities: { text: { state: 'supported', fingerprint: 'a'.repeat(64) }, vision: { state: 'unknown' } } }] });
   const invalid = structuredClone(source); invalid.profiles[0].textTestedAt = 'not-a-date';
   await expect(validateVaultBackup(invalid)).rejects.toThrow('备份内容无效');
+  const invalidCapability = structuredClone(source); invalidCapability.profiles[0].capabilities!.text!.fingerprint = 'not-a-fingerprint';
+  await expect(validateVaultBackup(invalidCapability)).rejects.toThrow('备份内容无效');
+  const incompleteCapability = structuredClone(source); delete incompleteCapability.profiles[0].capabilities!.toolCalls!.fingerprint;
+  await expect(validateVaultBackup(incompleteCapability)).rejects.toThrow('备份内容无效');
+  const unknownValue = structuredClone(source); unknownValue.profiles[0].capabilities!.vision!.value = 2048;
+  await expect(validateVaultBackup(unknownValue)).rejects.toThrow('备份内容无效');
   const oldClient = structuredClone(source); delete oldClient.profiles[0].textTestedAt;
   delete oldClient.profiles[0].toolTestedAt;
+  delete oldClient.profiles[0].capabilities;
   await expect(validateVaultBackup(oldClient)).resolves.toMatchObject({ profiles: [{ id: 'local' }] });
 });
 
