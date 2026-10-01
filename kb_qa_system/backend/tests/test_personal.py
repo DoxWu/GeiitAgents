@@ -400,6 +400,57 @@ def test_reminder_pages_do_not_skip_when_schedules_change_or_records_are_inserte
     assert isinstance(c.get("/personal/reminders").json(), list)
 
 
+def test_reminder_export_is_filtered_owned_and_includes_delivery_history(fixture):
+    first = seeded(fixture.factory)
+    second = seeded(fixture.factory, recurrence="daily")
+    with fixture.factory() as db:
+        db.get(Reminder, second).subject = "Other reminder"
+        log = EmailLog(recipient="user1@example.test", subject="Review <report>", html_body="fixture", email_type="reminder", reminder_id=first)
+        db.add(log)
+        db.flush()
+        db.add(ReminderDelivery(reminder_id=first, revision=1, email_log_id=log.id, scheduled_at=NOW, next_attempt_at=NOW, status="sent"))
+        db.commit()
+    response = fixture.client.get("/personal/reminders/export", params={"q": "Review", "limit": 500})
+    assert response.status_code == 200
+    assert response.headers["content-disposition"].endswith('filename="geiit-reminders.json"')
+    payload = response.json()
+    assert payload["format"] == "geiit-reminders-v1"
+    assert payload["truncated"] is False
+    assert [item["id"] for item in payload["reminders"]] == [first]
+    assert len(payload["deliveries"]) == 1
+    assert payload["deliveries"][0]["reminder_id"] == first
+    fixture.state["id"] = 2
+    assert fixture.client.get("/personal/reminders/export").json()["reminders"] == []
+    fixture.state["id"] = 1
+    limited = fixture.client.get("/personal/reminders/export", params={"limit": 1}).json()
+    assert len(limited["reminders"]) == 1 and limited["truncated"] is True
+    assert second != first
+
+
+def test_reminder_export_rejects_invalid_filters_and_size_limits(fixture, monkeypatch):
+    rid = seeded(fixture.factory)
+    c = fixture.client
+    for params in ({"limit": 501}, {"status": "bogus"}, {"recurrence": "monthly"}, {"q": "x" * 201}):
+        response = c.get("/personal/reminders/export", params=params)
+        assert response.status_code == 422
+        assert response.json()["detail"] == "invalid_personal_request"
+    monkeypatch.setattr(fixture.module, "REMINDER_EXPORT_MAX_BYTES", 10)
+    response = c.get("/personal/reminders/export")
+    assert response.status_code == 413 and response.json()["detail"] == "reminder_export_too_large"
+    monkeypatch.setattr(fixture.module, "REMINDER_EXPORT_MAX_BYTES", 16 * 1024 * 1024)
+    monkeypatch.setattr(fixture.module, "REMINDER_EXPORT_MAX_DELIVERIES", 0)
+    with fixture.factory() as db:
+        log = EmailLog(recipient="user1@example.test", subject="fixture", html_body="fixture", email_type="reminder", reminder_id=rid)
+        db.add(log)
+        db.flush()
+        db.add(ReminderDelivery(reminder_id=rid, revision=1, email_log_id=log.id, scheduled_at=NOW, next_attempt_at=NOW))
+        db.commit()
+    response = c.get("/personal/reminders/export")
+    assert response.status_code == 413 and response.json()["detail"] == "reminder_export_limit_exceeded"
+    fixture.state["id"] = 0
+    assert c.get("/personal/reminders/export").status_code == 401
+
+
 def test_page_cursor_is_not_a_permission_and_does_not_require_the_boundary_row_to_exist(fixture):
     ids = [seeded(fixture.factory) for _ in range(4)]
     c = fixture.client

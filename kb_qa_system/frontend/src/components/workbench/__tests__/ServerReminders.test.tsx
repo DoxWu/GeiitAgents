@@ -9,6 +9,7 @@ const { auth, api } = vi.hoisted(() => ({
   api: {
     getPersonalCapabilities: vi.fn(),
     listServerReminders: vi.fn(),
+    exportServerReminders: vi.fn(),
     createServerReminder: vi.fn(),
     updateServerReminder: vi.fn(),
     listReminderDeliveries: vi.fn(),
@@ -115,6 +116,53 @@ describe("ServerReminders", () => {
     expect(screen.getByRole('alert')).toHaveTextContent('提醒能力查询失败');
     expect(screen.getByRole('button', { name: '刷新邮件提醒' })).toBeEnabled();
     view.unmount();
+  });
+
+  it('exports the active reminder filters without changing the list', async () => {
+    auth.isAuthenticated = true; auth.user = { email: 'user@example.com' };
+    api.listServerReminders.mockResolvedValue(page([reminder]));
+    api.exportServerReminders.mockResolvedValue(new Blob(['{}'], { type: 'application/json' }));
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    render(<ServerReminders />);
+    await screen.findByRole('article', { name: '提醒：提交周报' });
+    fireEvent.change(screen.getByLabelText('筛选状态'), { target: { value: 'active' } });
+    fireEvent.click(screen.getByRole('button', { name: '搜索 / 筛选' }));
+    await waitFor(() => expect(api.listServerReminders).toHaveBeenLastCalledWith(undefined, undefined, { status: 'active' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出当前筛选' }));
+    await waitFor(() => expect(api.exportServerReminders).toHaveBeenCalledWith({ status: 'active' }, expect.any(AbortSignal)));
+    expect(screen.getByRole('article', { name: '提醒：提交周报' })).toBeInTheDocument();
+    createUrl.mockRestore(); revokeUrl.mockRestore();
+  });
+
+  it('reports a truncated export and keeps the current draft on export failure', async () => {
+    await loaded();
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    api.exportServerReminders.mockResolvedValueOnce(new Blob(['{"truncated":true}'], { type: 'application/json' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出当前筛选' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('其余提醒未包含'));
+    fireEvent.change(screen.getByLabelText('提醒主题'), { target: { value: '保留草稿' } });
+    api.exportServerReminders.mockRejectedValueOnce(new Error('reminder_export_too_large'));
+    fireEvent.click(screen.getByRole('button', { name: '导出当前筛选' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('16 MiB'));
+    expect(screen.getByLabelText('提醒主题')).toHaveValue('保留草稿');
+    expect(createUrl).toHaveBeenCalledTimes(1);
+    createUrl.mockRestore(); revokeUrl.mockRestore();
+  });
+
+  it('aborts an export and ignores its late download after leaving the view', async () => {
+    const view = await loaded();
+    let resolve!: (value: Blob) => void;
+    api.exportServerReminders.mockReturnValueOnce(new Promise<Blob>(done => { resolve = done; }));
+    const createUrl = vi.spyOn(URL, 'createObjectURL');
+    fireEvent.click(screen.getByRole('button', { name: '导出当前筛选' }));
+    const signal = api.exportServerReminders.mock.calls[0][1] as AbortSignal;
+    view.unmount();
+    expect(signal.aborted).toBe(true);
+    await act(async () => resolve(new Blob(['{}'])));
+    expect(createUrl).not.toHaveBeenCalled();
+    createUrl.mockRestore();
   });
 
   it("creates a reminder for the account email with a UTC timestamp", async () => {

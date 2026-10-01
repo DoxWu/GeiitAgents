@@ -30,6 +30,7 @@
 
 - `GET /api/v1/personal/reminders/by-request/{UUID}`：正式账号范围内查询创建请求。找到返回当前 Reminder；其他账号或不存在返回相同 404，非法 UUID 返回不回显输入的 422，所有响应 no-store。
 - `GET /api/v1/personal/reminders/page?...&q=...&status=...&recurrence=...`：q 最多 200 字符；status 为 active/paused/cancelled/completed，recurrence 为 once/daily/weekly。与现有 cursor/snapshot_id/limit 合用；旧列表接口保持兼容。
+- `GET /api/v1/personal/reminders/export?limit=500&q=...&status=...&recurrence=...`：导出匹配的账号提醒与对应全部投递历史为 `geiit-reminders-v1` JSON。最多 500 条提醒、10,000 条投递记录、16 MiB；超过投递或字节上限返回 413，提醒数超出则 `truncated=true` 并保留最新 500 条。响应使用 attachment 与 no-store，不包含邮件正文、认证信息或其他账号数据。此导出用于个人留档，不是导入/恢复接口。
 - 创建/PATCH 契约未变，没有新增数据库表或迁移。模板和草稿不上传服务器；服务端搜索词会到服务端，其代理/访问日志策略仍需后续部署核查。
 
 ## 验证与限制

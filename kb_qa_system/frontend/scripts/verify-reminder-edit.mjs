@@ -2,7 +2,7 @@
 // No real user tokens, production DB connections, Celery tasks, or email delivery.
 // Start `vite preview --port 1425` first; backend test dependencies must be installed.
 import { chromium, expect } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { createServer } from 'node:net';
@@ -228,6 +228,19 @@ try {
   await page.getByRole('button', { name: '下一页提醒', exact: true }).click();
   await expect(page.getByRole('navigation', { name: '提醒分页' })).toContainText('第 2 页');
   expect((await page.locator('article h3').allTextContents()).every(subject => subject.startsWith('分页提醒'))).toBe(true);
+  const downloadEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出当前筛选', exact: true }).click();
+  const downloaded = await downloadEvent;
+  expect(downloaded.suggestedFilename()).toBe('geiit-reminders.json');
+  const exported = JSON.parse(await readFile(await downloaded.path(), 'utf8'));
+  expect(exported.format).toBe('geiit-reminders-v1');
+  expect(exported.truncated).toBe(false);
+  expect(exported.reminders).toHaveLength(61);
+  expect(exported.deliveries).toHaveLength(55);
+  expect(exported.reminders.every(item => item.subject.startsWith('分页提醒') && item.status === 'completed')).toBe(true);
+  expect(exported.deliveries.every(item => exported.reminders.some(reminder => reminder.id === item.reminder_id))).toBe(true);
+  await expect(page.getByRole('navigation', { name: '提醒分页' })).toContainText('第 2 页');
+  await expect(page.getByRole('status')).toContainText('已导出');
   await page.screenshot({ path: path.join(output, 'drafts-search-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

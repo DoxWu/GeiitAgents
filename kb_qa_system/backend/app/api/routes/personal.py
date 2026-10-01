@@ -46,6 +46,8 @@ class PersonalRoute(APIRoute):
 router = APIRouter(prefix="/personal", tags=["personal"], route_class=PersonalRoute)
 UserDep = Depends(get_current_regular_user)
 DbDep = Depends(get_db)
+REMINDER_EXPORT_MAX_DELIVERIES = 10000
+REMINDER_EXPORT_MAX_BYTES = 16 * 1024 * 1024
 
 
 def owned(db, model, item_id, user, lock=False):
@@ -246,6 +248,45 @@ def page_reminders(limit: int = Query(20, ge=1, le=100), cursor: int | None = Qu
     if recurrence:
         query = query.filter(Reminder.recurrence == recurrence)
     return page_query(query, Reminder, limit, cursor, snapshot_id)
+
+
+@router.get("/reminders/export")
+def export_reminders(limit: int = Query(500, ge=1, le=500), q: str | None = Query(None, max_length=200),
+                     status: Literal["active", "paused", "cancelled", "completed"] | None = None,
+                     recurrence: Literal["once", "daily", "weekly"] | None = None,
+                     user=UserDep, db: Session=DbDep):
+    """Export an account-owned reminder snapshot and its delivery history."""
+    query = db.query(Reminder).filter(Reminder.user_id == user.id)
+    if q and q.strip():
+        needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        query = query.filter(or_(Reminder.subject.ilike(needle, escape="\\"), Reminder.body.ilike(needle, escape="\\")))
+    if status:
+        query = query.filter(Reminder.status == status)
+    if recurrence:
+        query = query.filter(Reminder.recurrence == recurrence)
+    rows = query.order_by(Reminder.id.desc()).limit(limit + 1).all()
+    truncated = len(rows) > limit
+    reminders = rows[:limit]
+    reminder_ids = [item.id for item in reminders]
+    deliveries = []
+    if reminder_ids:
+        deliveries = db.query(ReminderDelivery).filter(ReminderDelivery.reminder_id.in_(reminder_ids)).order_by(ReminderDelivery.id.desc()).limit(REMINDER_EXPORT_MAX_DELIVERIES + 1).all()
+        if len(deliveries) > REMINDER_EXPORT_MAX_DELIVERIES:
+            raise HTTPException(413, "reminder_export_limit_exceeded")
+    payload = {
+        "format": "geiit-reminders-v1",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "truncated": truncated,
+        "reminders": [ReminderOut.model_validate(item).model_dump(mode="json") for item in reminders],
+        "deliveries": [DeliveryOut.model_validate(item).model_dump(mode="json") for item in deliveries],
+    }
+    content = json.dumps(payload, ensure_ascii=False)
+    if len(content.encode("utf-8")) > REMINDER_EXPORT_MAX_BYTES:
+        raise HTTPException(413, "reminder_export_too_large")
+    return Response(
+        content=content, media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="geiit-reminders.json"', "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/reminders/by-request/{request_id}", response_model=ReminderOut)

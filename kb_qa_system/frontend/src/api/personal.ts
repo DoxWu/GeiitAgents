@@ -61,6 +61,14 @@ export function listServerReminders(cursor?: number, snapshotId?: number, filter
   return apiClient.get<PersonalPage<ServerReminder>>('/personal/reminders/page?' + query, { cache: 'no-store' });
 }
 
+export function exportServerReminders(filters: ReminderFilters = {}, signal?: AbortSignal) {
+  const query = new URLSearchParams({ limit: '500' });
+  if (filters.q?.trim()) query.set('q', filters.q.trim());
+  if (filters.status) query.set('status', filters.status);
+  if (filters.recurrence) query.set('recurrence', filters.recurrence);
+  return apiClient.getBlob('/personal/reminders/export?' + query, { cache: 'no-store', signal });
+}
+
 export function getReminderByRequest(requestId: string) {
   return apiClient.get<ServerReminder>('/personal/reminders/by-request/' + encodeURIComponent(requestId), { cache: 'no-store' });
 }

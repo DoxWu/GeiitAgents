@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, ChevronDown, ChevronUp, Pause, Play, RefreshCw, Square } from 'lucide-react';
+import { Bell, ChevronDown, ChevronUp, Download, Pause, Play, RefreshCw, Square } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import {
-  createServerReminder, dismissReminderDelivery, getPersonalCapabilities, getServerReminder, listReminderDeliveries, listServerReminders,
+  createServerReminder, dismissReminderDelivery, exportServerReminders, getPersonalCapabilities, getServerReminder, listReminderDeliveries, listServerReminders,
   retryReminderDelivery, updateServerReminder, type DeliveryStatus, type PersonalCapabilities,
   getReminderByRequest, type ReminderFilters, type PersonalPage, type ReminderDelivery, type ReminderRecurrence, type ServerReminder,
 } from '@/api/personal';
@@ -34,6 +34,8 @@ function messageFor(error: unknown) {
     delivery_not_dismissible: '仅结果不明的投递可以人工结束；发送中的邮件需等待结果。',
     personal_storage_unavailable: '服务端暂时无法保存，请保留草稿并稍后重试。',
     invalid_personal_request: '提醒字段无效，请检查时区、日期及内容长度。',
+    reminder_export_limit_exceeded: '投递记录超过 10,000 条，请缩小筛选范围后导出。',
+    reminder_export_too_large: '导出内容超过 16 MiB，请缩小筛选范围后导出。',
   };
   return messages[error.message] ?? error.message;
 }
@@ -156,6 +158,19 @@ function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
       if (rowsResult.status === 'fulfilled') firstPage(rowsResult.value);
       else failures.push(`提醒列表查询失败：${messageFor(rowsResult.reason)}`);
       if (failures.length) throw new Error(failures.join('；'));
+    });
+  }
+  async function exportReminders() {
+    await perform(async live => {
+      const blob = await exportServerReminders(filters, requestController.current?.signal);
+      if (!live()) return;
+      const metadata = JSON.parse(await blob.text()) as { truncated?: boolean };
+      if (!live()) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = 'geiit-reminders.json'; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice(metadata.truncated ? '已导出最新 500 条匹配提醒及其投递记录，其余提醒未包含。请缩小筛选范围后继续导出。' : '提醒和投递记录已导出。');
     });
   }
   async function turnReminders(direction: -1 | 1) {
@@ -283,7 +298,7 @@ function ReminderWorkspace({ email, owner }: { email: string; owner: string }) {
         <form className="mt-3 grid gap-2" onSubmit={event => { event.preventDefault(); void perform(async live => { const page = await listServerReminders(undefined, undefined, filterInput); if (live()) { firstPage(page); setFilters({ ...filterInput }); } }); }}><fieldset disabled={busy} className="grid min-w-0 gap-2">
           <label className="work-label">搜索提醒<input className="work-input" maxLength={200} placeholder="搜索主题或正文" value={filterInput.q || ''} onChange={event => setFilterInput({ ...filterInput, q: event.target.value })} /></label>
           <div className="grid grid-cols-2 gap-2"><label className="work-label">筛选状态<select className="work-input" value={filterInput.status || ''} onChange={event => setFilterInput({ ...filterInput, status: event.target.value as ReminderFilters['status'] || undefined })}><option value="">全部状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="work-label">筛选重复规则<select className="work-input" value={filterInput.recurrence || ''} onChange={event => setFilterInput({ ...filterInput, recurrence: event.target.value as ReminderFilters['recurrence'] || undefined })}><option value="">全部规则</option>{Object.entries(recurrenceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>
-          <button className="work-command justify-self-start" type="submit">搜索 / 筛选</button>
+          <div className="flex flex-wrap gap-2"><button className="work-command" type="submit">搜索 / 筛选</button><button className="work-command" type="button" disabled={busy} onClick={() => void exportReminders()}><Download size={15} />导出当前筛选</button></div>
         </fieldset></form>
         {(filters.q || filters.status || filters.recurrence) && <p className="mt-2 text-xs">当前结果：{filters.q || '全部主题'} · {filters.status ? statusLabels[filters.status] : '全部状态'} · {filters.recurrence ? recurrenceLabels[filters.recurrence] : '全部规则'}</p>}
         {reminderPage && <Pager name="提醒" depth={reminderCursors.length} count={reminders.length} next={reminderPage.next_cursor} busy={busy} onPage={direction => void turnReminders(direction)} />}
