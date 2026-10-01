@@ -207,7 +207,7 @@ function sheetName(title: string): string {
 
 export async function exportChartXlsx(input: ChartInput): Promise<Uint8Array> {
   checkChart(input);
-  const data = parseChartCsv(input.csv), numericColumns = new Set(input.valueColumns ?? [input.valueColumn]);
+  const data = parseChartCsv(input.csv), numericColumns = new Set([...(input.valueColumns ?? [input.valueColumn]), ...(input.chartType === 'scatter' ? [input.categoryColumn] : [])]);
   const rows = [data.headers, ...data.rows];
   const sheetRows = rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => {
     const reference = `${columnName(columnIndex)}${rowIndex + 1}`;

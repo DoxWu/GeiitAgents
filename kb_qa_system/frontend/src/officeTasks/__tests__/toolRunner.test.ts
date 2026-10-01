@@ -34,6 +34,14 @@ it('allows the office tool model to create a local pie chart using one positive 
   expect(artifact?.content).toContain('data-category="A"');
   expect(artifact?.content).toContain('75.0%');
 });
+it('allows the office tool model to create a numeric scatter chart locally', async () => {
+  const events: ToolCheckpoint[] = [];
+  const model = vi.fn().mockResolvedValueOnce(reply(call('scatter', 'render_chart', {
+    title: 'Relationship', category_column: 0, value_columns: [1], chart_type: 'scatter', unit: 'units',
+  }))).mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+  await runOfficeTools('task', { ...input, csv: 'X,Y\n1,2\n3,4' }, new AbortController().signal, model, async event => { events.push(event); });
+  expect(events.find(event => event.artifact)?.artifact?.content).toContain('data-x="1" data-y="2"');
+});
 
 it('returns invalid arguments as tool errors for a bounded repair, never as execution instructions', async () => {
   const events: ToolCheckpoint[] = [];

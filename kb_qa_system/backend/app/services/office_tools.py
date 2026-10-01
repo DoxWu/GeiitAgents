@@ -16,9 +16,9 @@ def _object(properties):
 OFFICE_TOOLS = [
     {"type": "function", "function": {"name": "inspect_csv", "description": "Read this task's user-provided CSV; no other files.", "parameters": _object({})}},
     {"type": "function", "function": {"name": "render_chart", "description": "Render an SVG from this task's original CSV. Column indices are zero-based.", "parameters": _object({
-        "title": {"type": "string", "maxLength": 80}, "category_column": {"type": "integer", "minimum": 0, "maximum": 11},
+        "title": {"type": "string", "maxLength": 80}, "category_column": {"type": "integer", "minimum": 0, "maximum": 11, "description": "Categorical column, or numeric X column for scatter charts."},
         "value_columns": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "integer", "minimum": 0, "maximum": 11}},
-        "chart_type": {"type": "string", "enum": ["bar", "line", "pie"]}, "unit": {"type": "string", "maxLength": 20},
+        "chart_type": {"type": "string", "enum": ["bar", "horizontal_bar", "line", "pie", "scatter"]}, "unit": {"type": "string", "maxLength": 20},
     })}},
     {"type": "function", "function": {"name": "create_document", "description": "Create a local Markdown artifact. Mark missing facts; never edit external files.", "parameters": _object({
         "title": {"type": "string", "maxLength": 80}, "markdown": {"type": "string", "maxLength": 50000},

@@ -722,7 +722,7 @@ it('snapshots multi-series selection before async work and restores the same enc
   const svg = store.getState().artifacts[0];
   expect(svg.content).toContain('成本 · 二月: -40');
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toMatch(/成本|一月|<svg/);
-  expect(store.getState().toolRuns.find(tool => tool.tool === 'chart.render')?.converterVersion).toBe('local-chart/4');
+  expect(store.getState().toolRuns.find(tool => tool.tool === 'chart.render')?.converterVersion).toBe('local-chart/5');
   await store.getState().lock(); await store.getState().unlock(password);
   expect(store.getState().taskRuns[0].chartInput?.valueColumns).toEqual([2, 1]);
   expect(store.getState().artifacts[0]).toEqual(svg);

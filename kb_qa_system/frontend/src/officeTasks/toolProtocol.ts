@@ -7,7 +7,7 @@ const text = (maxLength: number) => ({ type: 'string', maxLength });
 const object = (properties: Record<string, unknown>) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 export const OFFICE_TOOLS = [
   { type: 'function', function: { name: 'inspect_csv', description: '读取用户为本任务提供的 CSV，返回表头和数据。不能读取其他文件。', parameters: object({}) } },
-  { type: 'function', function: { name: 'render_chart', description: '使用本任务原始 CSV 在本机生成 SVG 图表，不可伪造或修改 CSV。饼图限一个非负数值系列且总和大于零。列索引从 0 开始。', parameters: object({ title: text(80), category_column: { type: 'integer', minimum: 0, maximum: 11 }, value_columns: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'integer', minimum: 0, maximum: 11 } }, chart_type: { type: 'string', enum: ['bar', 'horizontal_bar', 'line', 'pie'] }, unit: text(20) }) } },
+  { type: 'function', function: { name: 'render_chart', description: '使用本任务原始 CSV 在本机生成 SVG 图表，不可伪造或修改 CSV。散点图的 category_column 是数值 X 列，value_columns 是 1–6 个 Y 列；饼图限一个非负数值系列且总和大于零。列索引从 0 开始。', parameters: object({ title: text(80), category_column: { type: 'integer', minimum: 0, maximum: 11 }, value_columns: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'integer', minimum: 0, maximum: 11 } }, chart_type: { type: 'string', enum: ['bar', 'horizontal_bar', 'line', 'pie', 'scatter'] }, unit: text(20) }) } },
   { type: 'function', function: { name: 'create_document', description: '创建独立 Markdown 文档成果；资料不足需标记待补充，不操作用户外部文件。', parameters: object({ title: text(80), markdown: text(50000) }) } },
 ] as const;
 

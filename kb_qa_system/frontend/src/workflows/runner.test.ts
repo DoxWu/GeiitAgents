@@ -49,6 +49,13 @@ it('accepts a horizontal bar chart workflow definition', () => {
   expect(validateWorkflow(definition).nodes[0].chartType).toBe('horizontal_bar');
   expect(prepareWorkflow(definition, input).definition.nodes[0].chartType).toBe('horizontal_bar');
 });
+it('accepts and preflights numeric scatter axes in workflow definitions', () => {
+  const chart = newWorkflowNode('render_chart', 0); chart.chartType = 'scatter';
+  const definition = { ...newWorkflow(), nodes: [chart] };
+  expect(validateWorkflow(definition).nodes[0].chartType).toBe('scatter');
+  expect(prepareWorkflow(definition, { reference: '', csv: 'time,value\n1,2\n2,3' }).definition.nodes[0].chartType).toBe('scatter');
+  expect(() => prepareWorkflow(definition, { reference: '', csv: 'time,value\none,2' })).toThrow('X 轴数值');
+});
 
 it('validates and executes only the selected condition branch', async () => {
   const condition = newWorkflowNode('condition', 0), yes = newWorkflowNode('create_document', 1), no = newWorkflowNode('create_document', 2);

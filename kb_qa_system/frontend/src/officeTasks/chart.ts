@@ -5,7 +5,7 @@ export interface ChartInput {
   valueColumn: number;
   /** Optional multi-series selection. valueColumn remains the legacy first series. */
   valueColumns?: number[];
-  chartType: 'bar' | 'horizontal_bar' | 'line' | 'pie';
+  chartType: 'bar' | 'horizontal_bar' | 'line' | 'pie' | 'scatter';
   unit: string;
 }
 export interface ChartData { headers: string[]; rows: string[][] }
@@ -14,11 +14,13 @@ export interface CheckedChart {
   input: ChartInput;
   points: { label: string; value: number }[];
   series: ChartSeries[];
+  xValues: number[];
   warnings: string[];
+  categoryLabel: string;
   valueLabel: string;
   valueLabels: string[];
 }
-export const CHART_RENDERER_VERSION = 'local-chart/4';
+export const CHART_RENDERER_VERSION = 'local-chart/5';
 export const MAX_CHART_SERIES = 6;
 
 function hasControl(value: string): boolean {
@@ -69,7 +71,7 @@ export function parseChartCsv(source: string): ChartData {
 export function checkChart(input: ChartInput): CheckedChart {
   const clean: ChartInput = { ...input, title: input.title.trim(), unit: input.unit.trim() };
   if (!clean.title || clean.title.length > 80 || clean.unit.length > 20 || /[\r\n\t]/.test(clean.title + clean.unit) || hasControl(clean.title + clean.unit)) throw new Error('图表标题需要 1–80 字符，单位最多 20 字符，不能包含换行或控制字符。');
-  if (!['bar', 'horizontal_bar', 'line', 'pie'].includes(clean.chartType)) throw new Error('请选择有效的图表类型。');
+  if (!['bar', 'horizontal_bar', 'line', 'pie', 'scatter'].includes(clean.chartType)) throw new Error('请选择有效的图表类型。');
   const data = parseChartCsv(clean.csv);
   const requestedColumns = clean.valueColumns === undefined ? [clean.valueColumn] : clean.valueColumns;
   if (!Array.isArray(requestedColumns) || requestedColumns.length < 1 || requestedColumns.length > MAX_CHART_SERIES) throw new Error(`请选择 1–${MAX_CHART_SERIES} 个数值系列。`);
@@ -83,6 +85,12 @@ export function checkChart(input: ChartInput): CheckedChart {
   if (!Number.isInteger(clean.categoryColumn) || clean.categoryColumn < 0 || clean.categoryColumn >= data.headers.length) throw new Error('请选择有效的分类列和数值列。');
   const labels = data.rows.map((row, index) => {
     const label = row[clean.categoryColumn].trim();
+    if (clean.chartType === 'scatter') {
+      if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(label)) throw new Error(`第 ${index + 1} 条 X 轴数值缺失或格式无效；仅接受小数点数字。`);
+      const value = Number(label);
+      if (!Number.isFinite(value) || Math.abs(value) > 1e12 || value !== 0 && Math.abs(value) < 1e-9 || value === 0 && /[1-9]/.test(label.split(/[eE]/)[0])) throw new Error(`第 ${index + 1} 条 X 轴数值超出支持范围（绝对值 1e-9 至 1e12，或 0）。`);
+      return label;
+    }
     if (!label || label.length > 60 || /[\r\n\t]/.test(label)) throw new Error(`第 ${index + 1} 条分类标签需要 1–60 个字符且不换行。`);
     return label;
   });
@@ -104,7 +112,7 @@ export function checkChart(input: ChartInput): CheckedChart {
   }
   const points = series[0].points;
   const warnings: string[] = [];
-  if (new Set(points.map(point => point.label)).size !== points.length) warnings.push('分类标签有重复：各行独立绘制，没有自动汇总。');
+  if (new Set(points.map(point => point.label)).size !== points.length) warnings.push(clean.chartType === 'scatter' ? 'X 值有重复：每一行仍单独绘制，没有自动汇总。' : '分类标签有重复：各行独立绘制，没有自动汇总。');
   series.forEach((current) => {
     const prefix = series.length > 1 ? `${current.label}：` : '';
     if (current.points.every(point => point.value === 0)) warnings.push(`${prefix}全部数值为 0，图形无法呈现数量差异。`);
@@ -120,7 +128,12 @@ export function checkChart(input: ChartInput): CheckedChart {
     if (nonzero.length && Math.max(...nonzero) / Math.min(...nonzero) > 1000) warnings.push('系列之间的数值跨度超过 1000 倍，小值可能难以看清；建议拆成不同图表。');
   }
   if (clean.chartType === 'line') warnings.push('折线按输入行顺序、等间距连接；请确认顺序有意义，日期间隔不会自动换算。');
-  return { input: clean, points, series, warnings, valueLabel: data.headers[clean.valueColumn], valueLabels: valueColumns.map(column => data.headers[column]) };
+  if (clean.chartType === 'scatter') warnings.push('散点按所选 X/Y 数值的真实比例绘制，不连线、不排序、不汇总；请确认各系列共用 X 轴的量纲。');
+  const xValues = clean.chartType === 'scatter' ? data.rows.map(row => {
+    const value = Number(row[clean.categoryColumn].trim());
+    return Object.is(value, -0) ? 0 : value;
+  }) : [];
+  return { input: clean, points, series, xValues, warnings, categoryLabel: data.headers[clean.categoryColumn], valueLabel: data.headers[clean.valueColumn], valueLabels: valueColumns.map(column => data.headers[column]) };
 }
 
 function escapeXml(value: string): string {
@@ -144,7 +157,7 @@ export function renderChartSvg(chart: CheckedChart): string {
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-description">`,
     `<title id="chart-title">${escapeXml(input.title)}</title><desc id="chart-description">${escapeXml(series.map(current => `${current.label}: ${current.points.map(point => `${point.label} ${point.value}`).join('，')}`).join('；'))}</desc>`,
     '<rect width="100%" height="100%" fill="#ffffff"/>', '<g font-family="Microsoft YaHei, Arial, sans-serif" font-size="13" fill="#243449">',
-    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${{ bar: '柱状图', horizontal_bar: '水平条形图', line: '折线图', pie: '饼图' }[input.chartType]}`)];
+    tag(left, 38, input.title, 'font-size="22" font-weight="bold"'), tag(left, 72, `${series.length > 1 ? `${series.length} 个数值系列` : valueLabels[0]}${input.unit ? `（${input.unit}）` : ''} · ${{ bar: '柱状图', horizontal_bar: '水平条形图', line: '折线图', pie: '饼图', scatter: '散点图' }[input.chartType]}`)];
   if (input.chartType === 'pie') {
     const width = Math.max(640, Array.from(input.title).length * 14 + 160, Array.from(valueLabels[0]).length * 13 + 160);
     const centerX = Math.min(300, width / 2), centerY = 270, radius = 130;
@@ -202,6 +215,41 @@ export function renderChartSvg(chart: CheckedChart): string {
         `<g><title>${escapeXml(current.label)}</title>${tag(legendX + 20, legendY, Array.from(current.label).length > 22 ? `${Array.from(current.label).slice(0, 21).join('')}…` : current.label)}</g>`);
     });
     parts.push(tag(plotLeft, chartHeight - 18, '按输入顺序绘制 · 完整数值见数据表或条目标题'), '</g></svg>');
+    return parts.join('');
+  }
+  if (input.chartType === 'scatter') {
+    const xValues = chart.xValues;
+    const yValues = series.flatMap(current => current.points.map(point => point.value));
+    const extent = (values: number[]) => {
+      let min = Math.min(...values), max = Math.max(...values);
+      if (min === max) { const pad = Math.max(Math.abs(min) * .08, 1); min -= pad; max += pad; }
+      else { const pad = (max - min) * .06; min -= pad; max += pad; }
+      return { min, max };
+    };
+    const xRange = extent(xValues), yRange = extent(yValues);
+    const plotLeft = 110, plotRight = width - 45, plotTop = 120, plotBottom = 450;
+    const x = (value: number) => plotLeft + (value - xRange.min) / (xRange.max - xRange.min) * (plotRight - plotLeft);
+    const y = (value: number) => plotBottom - (value - yRange.min) / (yRange.max - yRange.min) * (plotBottom - plotTop);
+    for (let tick = 0; tick <= 4; tick++) {
+      const xv = xRange.min + (xRange.max - xRange.min) * tick / 4, yv = yRange.min + (yRange.max - yRange.min) * tick / 4;
+      const xx = x(xv), yy = y(yv);
+      parts.push(`<line x1="${xx}" x2="${xx}" y1="${plotTop}" y2="${plotBottom}" stroke="#e2e8f0"/>`, tag(xx, plotBottom + 22, numberText(xv), 'text-anchor="middle"'));
+      parts.push(`<line x1="${plotLeft}" x2="${plotRight}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/>`, tag(plotLeft - 12, yy + 4, numberText(yv), 'text-anchor="end"'));
+    }
+    parts.push(`<line x1="${plotLeft}" x2="${plotRight}" y1="${plotBottom}" y2="${plotBottom}" stroke="#64748b"/>`,
+      `<line x1="${plotLeft}" x2="${plotLeft}" y1="${plotTop}" y2="${plotBottom}" stroke="#64748b"/>`,
+      tag((plotLeft + plotRight) / 2, plotBottom + 50, chart.categoryLabel, 'text-anchor="middle"'),
+      `<text x="24" y="${(plotTop + plotBottom) / 2}" transform="rotate(-90 24 ${(plotTop + plotBottom) / 2})" text-anchor="middle">${escapeXml(series.length === 1 ? valueLabels[0] : '数值')}</text>`);
+    series.forEach((current, seriesIndex) => current.points.forEach((point, index) => {
+      const cx = x(xValues[index]), cy = y(point.value), color = colors[seriesIndex % colors.length];
+      parts.push(`<circle data-series="${escapeXml(current.label)}" data-x="${xValues[index]}" data-y="${point.value}" cx="${cx}" cy="${cy}" r="5" fill="${color}"><title>${escapeXml(`${current.label} · ${chart.categoryLabel} ${xValues[index]} · ${current.label} ${point.value}`)}</title></circle>`);
+    }));
+    series.forEach((current, index) => {
+      const legendX = plotLeft + (index % 3) * 220, legendY = 520 + Math.floor(index / 3) * 26;
+      parts.push(`<circle cx="${legendX + 6}" cy="${legendY - 4}" r="5" fill="${colors[index % colors.length]}"/>`,
+        `<g><title>${escapeXml(current.label)}</title>${tag(legendX + 20, legendY, current.label)}</g>`);
+    });
+    parts.push(tag(plotLeft, height - 24, '按 CSV 原始行一一对应 X/Y 值 · 不自动拟合或聚合'), '</g></svg>');
     return parts.join('');
   }
   for (let tick = 0; tick <= 4; tick++) {

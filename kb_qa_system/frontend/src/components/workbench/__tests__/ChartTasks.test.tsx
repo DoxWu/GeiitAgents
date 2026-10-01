@@ -49,6 +49,16 @@ it('selects and saves a horizontal bar chart without limiting multiple series', 
   await user.click(screen.getByRole('button', { name: '保存图表任务' }));
   expect(state.startChartTask).toHaveBeenCalledWith(expect.objectContaining({ chartType: 'horizontal_bar', valueColumns: [1, 2] }), expect.any(String));
 });
+it('selects a numeric X column and saves a scatter chart', async () => {
+  const user = userEvent.setup(); render(<ChartTasks />);
+  fireEvent.change(screen.getByLabelText('CSV 数据'), { target: { value: '时间,温度\n1,20\n2,22' } });
+  await user.selectOptions(screen.getByLabelText('图表类型'), 'scatter');
+  expect(screen.getByLabelText('X 轴数值列')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '检查并预览' }));
+  expect(screen.getByRole('img')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '保存图表任务' }));
+  expect(state.startChartTask).toHaveBeenCalledWith(expect.objectContaining({ chartType: 'scatter', categoryColumn: 0, valueColumn: 1 }), expect.any(String));
+});
 
 it('removes a newly selected category from numeric series and rejects an empty selection', async () => {
   const user = userEvent.setup(); render(<ChartTasks />);

@@ -62,3 +62,9 @@ it('exports bounded chart data as a workbook with literal text cells and numeric
   await expect(exportChartXlsx({ title: 'bad', csv: '分类,值\na,=1+1', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '' })).rejects.toThrow('公式');
   await expect(exportChartXlsx({ title: 'bad', csv: '分类,值\n\uFFFF,1', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '' })).rejects.toThrow('XML');
 });
+it('exports the selected scatter X column as a numeric cell', async () => {
+  const bytes = await exportChartXlsx({ title: '散点', csv: 'X,Y\n1.5,2\n3,4', categoryColumn: 0, valueColumn: 1, chartType: 'scatter', unit: '' });
+  const zip = await JSZip.loadAsync(bytes), sheetXml = await zip.file('xl/worksheets/sheet1.xml')!.async('text');
+  expect(sheetXml).toContain('<c r="A2"><v>1.5</v></c>');
+  expect(sheetXml).toContain('<c r="B2"><v>2</v></c>');
+});

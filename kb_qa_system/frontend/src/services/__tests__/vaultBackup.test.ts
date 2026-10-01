@@ -52,9 +52,10 @@ it('preserves validated three-way file merge snapshots in encrypted backups', as
   expect(restored.data.fileEditDraft!.merge).toEqual(version.merge);
 });
 
-it.each(['pie', 'horizontal_bar'] as const)('roundtrips a %s chart and its SVG in an encrypted backup', async chartType => {
+it.each(['pie', 'horizontal_bar', 'scatter'] as const)('roundtrips a %s chart and its SVG in an encrypted backup', async chartType => {
   const source = await vaultBackupFixture();
-  const chart = checkChart({ title: '备份图表', unit: '件', chartType, csv: '类别,数值\n甲,3\n乙,1', categoryColumn: 0, valueColumn: 1 });
+  const csv = chartType === 'scatter' ? 'X,数值\n1,3\n2,1' : '类别,数值\n甲,3\n乙,1';
+  const chart = checkChart({ title: '备份图表', unit: '件', chartType, csv, categoryColumn: 0, valueColumn: 1 });
   const svg = renderChartSvg(chart), task = source.taskRuns![0], artifact = source.artifacts![0];
   task.type = 'chart.generate'; task.chartInput = chart.input;
   artifact.content = svg; artifact.sha256 = await sha256Text(svg); artifact.name = '备份图表.svg';

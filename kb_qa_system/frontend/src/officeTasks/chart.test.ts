@@ -136,6 +136,34 @@ it('renders multi-series horizontal bars with a shared zero baseline and bounded
   expect(doc.documentElement.textContent).toContain('水平条形图');
   expect(doc.documentElement.outerHTML).not.toMatch(/NaN|Infinity/);
 });
+it('renders scatter plots with numeric X and Y axes, separate series, and no connecting lines', () => {
+  const chart = checkChart({ ...input, chartType: 'scatter', csv: '时间,温度,湿度\n1,10,40\n2,30,80\n4,20,50', valueColumns: [1, 2] });
+  expect(chart.categoryLabel).toBe('时间');
+  expect(chart.points.map(point => point.label)).toEqual(['1', '2', '4']);
+  expect(chart.warnings.join(' ')).toContain('真实比例绘制');
+  const doc = new DOMParser().parseFromString(renderChartSvg(chart), 'image/svg+xml');
+  expect(doc.querySelector('parsererror')).toBeNull();
+  expect(doc.querySelectorAll('circle[data-series]')).toHaveLength(6);
+  expect(doc.querySelectorAll('polyline')).toHaveLength(0);
+  expect(doc.querySelector('text')?.textContent).toBe('测试图表');
+  expect(doc.documentElement.textContent).toContain('时间');
+  expect(doc.documentElement.textContent).toContain('散点图');
+  expect(doc.querySelector('circle[data-series="温度"][data-x="1"][data-y="10"]')).toBeTruthy();
+  expect(doc.querySelector('circle[data-series="湿度"][data-x="4"][data-y="50"]')).toBeTruthy();
+  expect(doc.documentElement.outerHTML).not.toMatch(/NaN|Infinity/);
+});
+it('rejects nonnumeric, out-of-range, or overlapping scatter X selections', () => {
+  for (const value of ['', '月一', '1%', '1e999', '1e-10']) {
+    expect(() => checkChart({ ...input, chartType: 'scatter', csv: `X,Y\n${value},2` })).toThrow('X 轴数值');
+  }
+  expect(() => checkChart({ ...input, chartType: 'scatter', csv: 'X,Y\n1,2', categoryColumn: 1, valueColumn: 1 })).toThrow('不能相同');
+});
+it('preserves full numeric precision for scatter coordinates', () => {
+  const chart = checkChart({ ...input, chartType: 'scatter', csv: 'X,Y\n1.123456789,2.123456789', valueColumn: 1 });
+  expect(chart.xValues).toEqual([1.123456789]);
+  const doc = new DOMParser().parseFromString(renderChartSvg(chart), 'image/svg+xml');
+  expect(doc.querySelector('circle[data-series]')?.getAttribute('data-x')).toBe('1.123456789');
+});
 it('supports all-negative, all-zero and categorical line data without invalid geometry', () => {
   for (const csv of ['a,b\nx,0\ny,0', 'a,b\nx,-1\ny,-2', 'a,b\nx,1e-9\ny,1e12']) {
     const svg = renderChartSvg(checkChart({ ...input, csv, chartType: 'line' }));

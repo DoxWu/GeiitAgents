@@ -37,6 +37,9 @@ def test_relay_uses_fixed_tools_and_header_key_with_optional_limit(limit):
             assert req.headers["host"] == "models.example"
             assert req.extensions["sni_hostname"] == "models.example"
             assert [tool["function"]["name"] for tool in data["tools"]] == ["inspect_csv", "render_chart", "create_document"]
+            render_chart = data["tools"][1]["function"]["parameters"]["properties"]
+            assert "scatter" in render_chart["chart_type"]["enum"]
+            assert "numeric X column" in render_chart["category_column"]["description"]
             assert "api_key" not in data
             if limit is None:
                 assert "max_tokens" not in data
