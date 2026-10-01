@@ -732,4 +732,4 @@
 - 界面实现：续跑云端授权与普通新运行授权分离，切换运行记录、连接或模型后自动清除续跑勾选；历史步骤可对失败、取消、中断和非正常完成原因进行“重试此步骤并继续”，恢复的检查点在详情中标记为未重新执行。
 - 本地验证：续跑/备份/界面定向测试 20 项通过；ChatPage、DocumentsPage、DocumentPreview 历史基线定向测试 49 项通过；全量 Vitest **111 个测试文件 / 1065 项通过**；`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`npm run desktop:check`、`git diff --check` 通过；`node scripts/verify-workflows.mjs` 生产 Chromium Web 验收通过。测试中的 ErrorBoundary 日志和 jsdom 导航提示是既有预期输出，不是失败。
 - 构建与版本：开发通道升至 `0.1.0-dev.30`，使用仓库内 Cargo 工具链重新生成未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.30_x64-setup.exe`，8,336,967 字节，SHA-256 `9F941DEF98111EB698F78FD26B3BDA28A464A41D382E14A2C4A60B106B2BA5CB`。未安装、未推送、未部署。
-- 未完成与风险：条件分支/循环/触发器、自动保存草稿、历史分页、低配/最大容量/强杀断电、DOCX 分页和 Windows 原生 WebView2 QA 仍未完成；续跑仍依赖本机保留可验证的检查点/成果，真实供应商未联调。下一步生成 dev.30 安装包并保持本地 `develop/geiit-agents` 提交，后续再处理条件分支或容量验收。
+- 未完成与风险：条件分支/循环/触发器、自动保存草稿、历史分页、低配/最大容量/强杀断电、DOCX 分页和 Windows 原生 WebView2 QA 仍未完成；续跑仍依赖本机保留可验证的检查点/成果，真实供应商未联调。下一步保持本地 `develop/geiit-agents` 提交，后续再处理条件分支或容量验收。
