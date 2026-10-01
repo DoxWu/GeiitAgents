@@ -1,4 +1,4 @@
-import type { TextBatchPlan, TextBatchPreview, TextBatchRule } from '@/fileOrganizer/textBatch';
+import type { TextBatchPlan, TextBatchPreview, TextBatchRule, TextBatchRules } from '@/fileOrganizer/textBatch';
 import { create } from "zustand";
 import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
 import type { VaultBackupSummary } from '@/services/vaultBackup';
@@ -59,7 +59,7 @@ function clearReminderTimer() { clearTimeout(reminderSaveTimer); reminderSaveTim
 
 interface WorkbenchState {
   textBatchPreview: TextBatchPreview | null;
-  prepareFileEditBatch: (directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | null, acknowledged: boolean, restoreBatchId?: string) => Promise<void>;
+  prepareFileEditBatch: (directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | TextBatchRules | null, acknowledged: boolean, restoreBatchId?: string) => Promise<void>;
   commitFileEditBatch: (directory: OrganizerDirectoryHandle, id: string, selected: string[], acknowledged: boolean) => Promise<void>;
   cancelFileEditBatch: () => void;
   personalImportBusy: boolean;

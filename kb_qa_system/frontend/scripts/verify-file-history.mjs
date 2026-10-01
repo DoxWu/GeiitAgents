@@ -50,7 +50,7 @@ try {
     if (!browser) throw new Error('Native debugger unavailable');
     const context = browser.contexts()[0]; page = context.pages()[0] || await context.waitForEvent('page');
   } else {
-    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
+    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--configLoader', 'runner', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
     app.on('error', error => { launchError = error; }); const url = 'http://127.0.0.1:' + port + '/workbench';
     await expect.poll(async () => { if (launchError) throw launchError; try { return (await fetch(url)).ok; } catch { return false; } }, { timeout: 15000 }).toBe(true);
     browser = await chromium.launch({ headless: true }); page = await browser.newPage({ acceptDownloads: true, viewport: { width: 1280, height: 900 } }); await page.goto(url);

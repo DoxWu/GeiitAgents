@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto';
 import { TextEncoder } from 'node:util';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { newWorkflow, newWorkflowNode, validateWorkflow, workflowOrder } from './definition';
-import { prepareWorkflow, runWorkflow } from './runner';
+import { evaluateWorkflowCondition, prepareWorkflow, runWorkflow, WORKFLOW_SKIPPED_RESULT } from './runner';
 import type { ToolCheckpoint } from '@/officeTasks/toolRunner';
 
 beforeEach(() => { vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); });
@@ -67,6 +67,46 @@ it('rejects mixed conditional and ordinary incoming edges', () => {
   expect(() => validateWorkflow({ ...newWorkflow(), nodes: [condition, ordinary, target], edges: [
     { from: condition.id, to: target.id, when: 'true' as const }, { from: ordinary.id, to: target.id },
   ] })).toThrow('不能混用条件分支连线与普通连线');
+});
+
+it.each([true, false])('joins the executed branch and preserves skipped descendants (condition %s)', async selected => {
+  const condition = newWorkflowNode('condition', 0), yes = newWorkflowNode('create_document', 1), no = newWorkflowNode('create_document', 2);
+  const descendant = newWorkflowNode('generate_document', 3), join = newWorkflowNode('create_document', 4);
+  condition.condition = { source: 'reference', operator: 'equals', value: 'yes' };
+  yes.includeInputs = false; yes.text = 'YES CONTENT'; no.includeInputs = false; no.text = 'NO CONTENT'; join.includeInputs = false;
+  const definition = { ...newWorkflow(), nodes: [condition, yes, no, descendant, join], edges: [
+    { from: condition.id, to: yes.id, when: 'true' as const }, { from: condition.id, to: no.id, when: 'false' as const },
+    { from: no.id, to: descendant.id }, { from: yes.id, to: join.id }, { from: no.id, to: join.id },
+  ] }, events: ToolCheckpoint[] = [], model = vi.fn().mockResolvedValue({ content: 'done', model: 'fixture', finishReason: 'stop' });
+  await runWorkflow('task', definition, { reference: selected ? 'yes' : 'no', csv: '' }, new AbortController().signal, model, async e => { events.push(e); });
+  const artifact = events.find(e => e.step.workflowNodeId === join.id && e.artifact)?.artifact;
+  expect(artifact?.content).toContain(selected ? 'YES CONTENT' : 'NO CONTENT');
+  expect(artifact?.content).not.toContain(selected ? 'NO CONTENT' : 'YES CONTENT');
+  expect(artifact?.content).not.toContain(WORKFLOW_SKIPPED_RESULT);
+  expect(model).toHaveBeenCalledTimes(selected ? 0 : 1);
+});
+
+it('restores condition decisions and skipped checkpoints without replaying rejected models', async () => {
+  const condition = newWorkflowNode('condition', 0), no = newWorkflowNode('generate_document', 1), join = newWorkflowNode('generate_document', 2);
+  const definition = { ...newWorkflow(), nodes: [condition, no, join], edges: [
+    { from: condition.id, to: no.id, when: 'false' as const }, { from: no.id, to: join.id },
+  ] }, events: ToolCheckpoint[] = [], model = vi.fn();
+  await expect(runWorkflow('task', definition, { reference: '', csv: '' }, new AbortController().signal, model, async e => { events.push(e); },
+    { completedResults: new Map([[condition.id, 'true'], [no.id, WORKFLOW_SKIPPED_RESULT]]) })).resolves.toContain('跳过 2 个');
+  expect(model).not.toHaveBeenCalled();
+  expect(events).toHaveLength(1); expect(events[0].step.result).toBe(WORKFLOW_SKIPPED_RESULT);
+});
+
+it.each(['', ' ', 'not numeric', 'Infinity'])('does not interpret invalid numeric source %j as a number', source => {
+  expect(evaluateWorkflowCondition({ source: 'reference', operator: 'lte', value: '0' }, { reference: source, csv: '' }, '')).toBe(false);
+});
+it('compares finite numeric values and distinguishes empty from zero', () => {
+  const values = { reference: ' 12.5 ', csv: '' };
+  expect(evaluateWorkflowCondition({ source: 'reference', operator: 'gte', value: '12.5' }, values, '')).toBe(true);
+  expect(evaluateWorkflowCondition({ source: 'reference', operator: 'lt', value: '13' }, values, '')).toBe(true);
+  expect(evaluateWorkflowCondition({ source: 'reference', operator: 'gt', value: '' }, values, '')).toBe(false);
+  expect(evaluateWorkflowCondition({ source: 'previous', operator: 'equals', value: 'previous' }, values, 'previous')).toBe(true);
+  expect(evaluateWorkflowCondition({ source: 'csv', operator: 'not_exists', value: '' }, values, '')).toBe(true);
 });
 
 it('does not impose the model JSON context limit on local-only nodes', async () => {

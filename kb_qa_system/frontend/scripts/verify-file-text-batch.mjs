@@ -59,7 +59,10 @@ async function choose() {
 }
 async function preview() {
   for (const name of ['a.md', 'b.txt', 'c.md']) await page.getByLabel('批量选择文件：' + name, { exact: true }).check();
-  await page.getByLabel('批量查找内容', { exact: true }).fill('old'); await page.getByLabel('批量替换内容（可为空）', { exact: true }).fill('new');
+  await page.getByLabel('批量查找内容', { exact: true }).fill('old'); await page.getByLabel('批量替换内容（可为空）', { exact: true }).fill('draft');
+  if (!(await page.getByLabel('批量查找内容 2', { exact: true }).count())) await page.getByRole('button', { name: '增加替换规则（1/5）', exact: true }).click();
+  await page.getByLabel('批量查找内容 2', { exact: true }).fill('DRAFT'); await page.getByLabel('批量替换内容（可为空） 2', { exact: true }).fill('new');
+  await page.getByLabel('区分大小写 2', { exact: true }).uncheck();
   await page.getByRole('button', { name: '读取并预览批次', exact: true }).click(); await expect(page.getByRole('region', { name: '批量文本预览' })).toBeVisible();
 }
 async function commit(success = true) {
@@ -73,7 +76,7 @@ try {
     for (let i = 0; i < 60; i++) { if (launchError) throw launchError; if (app.exitCode !== null) throw new Error('Native app exited'); try { browser = await chromium.connectOverCDP('http://127.0.0.1:' + port, { timeout: 700 }); break; } catch { await new Promise(r => setTimeout(r, 200)); } }
     if (!browser) throw new Error('Native debugger unavailable'); const context = browser.contexts()[0]; page = context.pages()[0] || await context.waitForEvent('page');
   } else {
-    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
+    app = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--configLoader', 'runner', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: 'ignore' });
     app.on('error', e => { launchError = e; }); const url = 'http://127.0.0.1:' + port + '/workbench';
     await expect.poll(async () => { if (launchError) throw launchError; try { return (await fetch(url)).ok; } catch { return false; } }, { timeout: 15000 }).toBe(true);
     browser = await chromium.launch({ headless: true }); page = await browser.newPage({ viewport: { width: 1280, height: 900 }, acceptDownloads: true }); await page.goto(url);
@@ -115,7 +118,7 @@ try {
   await expect(page.getByLabel('应用批次变更：b.txt', { exact: true })).toBeDisabled(); await commit();
   expect(await page.evaluate(() => window.__qaWriteCount)).toBe(1); for (const name of ['a.md', 'b.txt', 'c.md']) expect(await current(name)).toBe(original);
   await page.screenshot({ path: path.join(run, 'history.png') }); expect(errors).toEqual([]);
-  const result = { passed: true, mode, nativePickers: picker, writes: writesBeforeRefresh + 1, checks: ['all-file preflight rejects external change without writes', 'three-file exact BOM/CRLF replacement', 'actual history JSON bytes', 'whole-batch explicit restore', 'partial final-save quota failure stops subsequent files', 'storage retry does not replay writes', 'refresh keeps partial states', 'read-only inspection', 'partial restore skips unstarted files', ...(native ? [] : ['390px layout'])], pageErrors: errors };
+  const result = { passed: true, mode, nativePickers: picker, writes: writesBeforeRefresh + 1, checks: ['ordered two-rule pipeline with independent case sensitivity', 'all-file preflight rejects external change without writes', 'three-file exact BOM/CRLF replacement', 'actual history JSON bytes', 'whole-batch explicit restore', 'partial final-save quota failure stops subsequent files', 'storage retry does not replay writes', 'refresh keeps partial states', 'read-only inspection', 'partial restore skips unstarted files', ...(native ? [] : ['390px layout'])], pageErrors: errors };
   await writeFile(path.join(run, 'result.json'), JSON.stringify(result, null, 2)); await writeFile(path.join(output, 'phase.json'), JSON.stringify({ complete: true, run })); console.log(JSON.stringify(result));
 } catch (e) { if (page) { await page.screenshot({ path: path.join(run, 'failure.png') }).catch(() => {}); await writeFile(path.join(run, 'failure.txt'), String(e) + '\n' + await page.locator('body').innerText().catch(() => '')); } throw e; }
 finally { await browser?.close(); app?.kill(); }

@@ -11,9 +11,14 @@ const probe = createServer(); await new Promise(resolve => probe.listen(0, '127.
 const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
 const output = path.resolve('../../.tools/reminder-edit-qa'), backend = 'http://127.0.0.1:' + port;
 await mkdir(output, { recursive: true });
+const qaPythonPath = process.env.REMINDER_PYTHONPATH === 'none' ? '' : process.env.REMINDER_PYTHONPATH === undefined
+  ? [path.resolve('../../.tools/python-ops'), process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter)
+  : process.env.REMINDER_PYTHONPATH;
+const childEnv = { ...process.env, REMINDER_QA_PORT: String(port), DEBUG: 'true', DATABASE_URL: 'postgresql+psycopg://fixture@127.0.0.1:1/fixture' };
+if (qaPythonPath) childEnv.PYTHONPATH = qaPythonPath; else delete childEnv.PYTHONPATH;
 const service = spawn('python', ['-c', "import runpy; runpy.run_path('tests/reminder_qa_server.py', run_name='__main__')"], {
   cwd: path.resolve('../backend'), windowsHide: true,
-  env: { ...process.env, REMINDER_QA_PORT: String(port), DEBUG: 'true', DATABASE_URL: 'postgresql+psycopg://fixture@127.0.0.1:1/fixture', PYTHONPATH: [path.resolve('../../.tools/python-ops'), process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter) },
+  env: childEnv,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let serviceOutput = ''; service.stdout.on('data', data => { serviceOutput += data; }); service.stderr.on('data', data => { serviceOutput += data; });

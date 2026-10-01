@@ -176,10 +176,38 @@ try {
   await expect(field('工作流名称')).toHaveValue('合成工作流'); await expect(history).toContainText('已中断');
   await field('选择工作流运行').selectOption(recoveredRun); await expect(history).toContainText('已按依赖顺序完成 4 个步骤');
   await expect(history.locator('ol > li')).toHaveCount(4); await expect(field('选择工作流成果').locator('option')).toHaveCount(3);
+  // Exercise mutually exclusive branches through the actual editor, joining
+  // only the selected branch and preserving the result after refresh.
+  await button('新建工作流').click(); await field('工作流名称').fill('条件汇合验收');
+  await button('添加条件分支').click(); await field('条件比较值').fill('approved');
+  await button('添加整理 Markdown').click(); await field('步骤标题').fill('True branch'); await field('Markdown 正文').fill('TRUE_ONLY');
+  await button('添加整理 Markdown').click(); await field('步骤标题').fill('False branch'); await field('Markdown 正文').fill('FALSE_ONLY');
+  await button('添加整理 Markdown').click(); await field('步骤标题').fill('Join'); await field('Markdown 正文').fill('# Selected result');
+  const branchNodes = await field('前置步骤').locator('option').evaluateAll(nodes => nodes.map(n => n.value));
+  await field('前置步骤').selectOption(branchNodes[1]); await field('后续步骤').selectOption(branchNodes[2]);
+  await expect(button('连接步骤')).toBeDisabled(); await field('分支值').selectOption('true'); await button('连接步骤').click();
+  await field('后续步骤').selectOption(branchNodes[3]); await field('分支值').selectOption('false'); await button('连接步骤').click();
+  await connect(branchNodes[2], branchNodes[4]); await connect(branchNodes[3], branchNodes[4]);
+  await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 1');
+  const branchId = await field('已保存工作流').inputValue();
+  const branchRuns = [];
+  for (const [reference, selected, rejected] of [['approved', 'TRUE_ONLY', 'FALSE_ONLY'], ['rejected', 'FALSE_ONLY', 'TRUE_ONLY']]) {
+    await field('工作流参考材料').fill(reference); await button('手动运行工作流').click();
+    await expect(history).toContainText('跳过 1 个未命中的分支');
+    await expect(history.locator('ol > li')).toHaveCount(4);
+    await field('选择工作流成果').selectOption({ label: 'Join.md' });
+    const joined = (await download('下载成果', 'branch-' + reference + '.md')).toString();
+    expect(joined).toContain(selected); expect(joined).not.toContain(rejected);
+    branchRuns.push(await field('选择工作流运行').inputValue());
+  }
+  await page.reload(); await unlock(); await workflow(); await field('已保存工作流').selectOption(branchId);
+  await field('选择工作流运行').selectOption(branchRuns[0]); await field('选择工作流成果').selectOption({ label: 'Join.md' });
+  const restoredBranch = (await download('下载成果', 'branch-after-reload.md')).toString();
+  expect(restoredBranch).toContain('TRUE_ONLY'); expect(restoredBranch).not.toContain('FALSE_ONLY');
   expect(calls).toHaveLength(8); expect(errors).toEqual([]);
   expect(requests.filter(url => /huggingface|\.onnx(?:\?|$)/.test(url))).toEqual([]);
   if (mode === 'native') expect(requests.filter(url => url.startsWith(upstream))).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'repeated continuation failure then retry without prefix execution', 'partial-node retry using older revision after definition changes', 'original history and isolated continuation artifacts', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore including continuation without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'repeated continuation failure then retry without prefix execution', 'partial-node retry using older revision after definition changes', 'original history and isolated continuation artifacts', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore including continuation without replay', 'true/false branch joins with inactive output excluded and reload without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
   console.log(`Workflow ${mode} QA passed: ${output}`);
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); await writeFile(path.join(output, 'failure.json'), JSON.stringify({ message: String(error), errors }, null, 2)); throw error;

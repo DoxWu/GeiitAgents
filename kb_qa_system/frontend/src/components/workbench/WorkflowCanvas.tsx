@@ -13,7 +13,7 @@ export function WorkflowCanvas({ definition, selected, onSelect, onMove }: {
         <defs><marker id="workflow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>
         {definition.edges.map(edge => {
           const from = definition.nodes.find(n => n.id === edge.from), to = definition.nodes.find(n => n.id === edge.to);
-          return from && to ? <path key={edge.from + ':' + edge.to} d={`M ${from.x + 210} ${from.y + 50} C ${from.x + 250} ${from.y + 50}, ${to.x - 40} ${to.y + 50}, ${to.x} ${to.y + 50}`}
+          return from && to ? <path key={edge.from + ':' + edge.to + ':' + (edge.when || '')} d={`M ${from.x + 210} ${from.y + 50} C ${from.x + 250} ${from.y + 50}, ${to.x - 40} ${to.y + 50}, ${to.x} ${to.y + 50}`}
             fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#workflow-arrow)"><title>{from.title} {edge.when ? `(${edge.when})` : ''} → {to.title}</title></path> : null;
         })}
       </svg>

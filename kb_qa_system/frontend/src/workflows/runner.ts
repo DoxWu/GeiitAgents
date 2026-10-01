@@ -15,6 +15,7 @@ export function evaluateWorkflowCondition(condition: WorkflowCondition, input: W
   if (condition.operator === 'not_contains') return !source.includes(condition.value);
   if (condition.operator === 'equals') return source === condition.value;
   if (condition.operator === 'not_equals') return source !== condition.value;
+  if (!source.trim() || !condition.value.trim()) return false;
   const left = Number(source), right = Number(condition.value);
   if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
   if (condition.operator === 'gt') return left > right;
@@ -56,7 +57,8 @@ export async function runWorkflow(taskId: string, definition: WorkflowDefinition
     const incoming = graph.edges.filter(e => e.to === node.id);
     const enabled = incoming.filter(edge => !skipped.has(edge.from) && results.has(edge.from)
       && (edge.when === undefined || results.get(edge.from) === edge.when));
-    const active = !incoming.length ? true : incoming.some(edge => edge.when !== undefined) ? enabled.length > 0 : enabled.length === incoming.length;
+    // Topological ordering has already resolved every predecessor, including skipped paths.
+    const active = !incoming.length || enabled.length > 0;
     if (!active) {
       const now = new Date().toISOString();
       await checkpoint({ step: { id: crypto.randomUUID(), taskId, workflowNodeId: node.id, tool: toolName(node), status: 'succeeded', startedAt: now, finishedAt: now,

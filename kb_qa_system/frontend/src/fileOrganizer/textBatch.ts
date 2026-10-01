@@ -2,11 +2,14 @@ import type { OrganizerDirectoryHandle } from './apply';
 import { MAX_TEXT_BYTES, assertTextDirectory, assertVersionCapacity, draftText, snapshotText, textFormat, validateTextName, withTextBatch, type FileEditDraft, type FileEditVersion, type Newline, type TextSnapshot } from './textEdit';
 
 export const MAX_BATCH_FILES = 20;
+export const MAX_BATCH_RULES = 5;
 export interface TextBatchRule { find: string; replacement: string; newline: 'keep' | Exclude<Newline, 'mixed'>; caseSensitive?: boolean }
+export type TextBatchRules = TextBatchRule[];
 export interface TextBatchRow { id: string; name: string; matches: number; draft?: FileEditDraft; after?: TextSnapshot; error?: string }
 export interface TextBatchPreview { id: string; directoryName: string; mode: 'replace' | 'restore'; rows: TextBatchRow[] }
 export interface TextBatchPlan extends TextBatchPreview { baseline: string }
 export function validateBatchRule(rule: TextBatchRule) {
+  if (!rule || typeof rule !== 'object' || Array.isArray(rule) || typeof rule.find !== 'string' || typeof rule.replacement !== 'string') throw new Error('替换规则必须包含文本查找和替换内容。');
   if (!rule.find || rule.find.length > 10000 || rule.replacement.length > 10000 || !['keep', 'lf', 'crlf', 'cr'].includes(rule.newline)) throw new Error('查找内容需要 1–10000 个字符，替换内容最多 10000 字符。');
   if (rule.find.includes('\r') || rule.replacement.includes('\r')) throw new Error('查找/替换使用 LF 换行，输出按文件换行设置处理。');
   if (rule.caseSensitive !== undefined && typeof rule.caseSensitive !== 'boolean') throw new Error('大小写选项无效。');
@@ -46,13 +49,31 @@ function replaceLiteral(content: string, find: string, replacement: string, case
   pieces.push(content.slice(last));
   return { content: pieces.join(''), matches: indices.length };
 }
-export async function prepareTextBatch(directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | null, versions: FileEditVersion[], acknowledged: boolean, guard: () => void, restoreBatchId?: string): Promise<TextBatchPlan> {
+export function applyTextBatchRules(content: string, rules: TextBatchRules): { content: string; matches: number } {
+  if (!Array.isArray(rules)) throw new Error(`每批需要 1–${MAX_BATCH_RULES} 条替换规则。`);
+  const validated = normalizeRules(rules)!;
+  return validated.reduce((result, rule) => {
+    const next = replaceLiteral(result.content, rule.find, rule.replacement, rule.caseSensitive !== false);
+    return { content: next.content, matches: result.matches + next.matches };
+  }, { content, matches: 0 });
+}
+function normalizeRules(rule: TextBatchRule | TextBatchRules | null): TextBatchRules | null {
+  if (!rule) return null;
+  const rules = Array.isArray(rule) ? rule : [rule];
+  if (!rules.length || rules.length > MAX_BATCH_RULES) throw new Error(`每批需要 1–${MAX_BATCH_RULES} 条替换规则。`);
+  rules.forEach(validateBatchRule);
+  const newlines = new Set(rules.map(item => item.newline));
+  if (newlines.size > 1) throw new Error('同一批次的多条规则必须使用相同的输出换行格式。');
+  return rules.map(item => ({ ...item }));
+}
+export async function prepareTextBatch(directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchRule | TextBatchRules | null, versions: FileEditVersion[], acknowledged: boolean, guard: () => void, restoreBatchId?: string): Promise<TextBatchPlan> {
   const restoring = restoreBatchId ? versions.filter(v => v.batch?.id === restoreBatchId) : [];
   if (restoreBatchId && !restoring.length) throw new Error('批次记录不存在。');
   const targets = restoreBatchId ? restoring.map(v => v.name) : names;
   if (!targets.length || targets.length > MAX_BATCH_FILES || new Set(targets.map(n => n.toLowerCase())).size !== targets.length) throw new Error('每批请选择 1–20 个不同的 MD/TXT 文件。');
   targets.forEach(validateTextName);
-  if (!restoreBatchId) { if (!rule) throw new Error('缺少替换规则。'); validateBatchRule(rule); }
+  const rules = restoreBatchId ? null : normalizeRules(rule);
+  if (!restoreBatchId && !rules) throw new Error('缺少替换规则。');
   const rows: TextBatchRow[] = [], id = crypto.randomUUID(), baseline = JSON.stringify(versions);
   await withTextBatch(async access => {
     for (const name of targets) {
@@ -67,12 +88,13 @@ export async function prepareTextBatch(directory: OrganizerDirectoryHandle, name
         }
         const format = textFormat(before.text);
         // Literal matching avoids regex backtracking and replacement-token expansion.
-        const replacement = rule ? replaceLiteral(format.content, rule.find, rule.replacement, rule.caseSensitive !== false) : { content: format.content, matches: 1 };
+        const replacement = rules ? applyTextBatchRules(format.content, rules) : { content: format.content, matches: 1 };
         row.matches = replacement.matches;
-        if (rule && !row.matches) { rows.push(row); continue; }
-        if (rule && replacement.content.length > MAX_TEXT_BYTES) throw new Error('替换结果超过单文件 256 KiB 限制。');
+        if (rules && !row.matches) { rows.push(row); continue; }
+        if (rules && replacement.content.length > MAX_TEXT_BYTES) throw new Error('替换结果超过单文件 256 KiB 限制。');
+        const requestedNewline = rules?.[0]?.newline;
         const draft: FileEditDraft = { id: crypto.randomUUID(), editId: crypto.randomUUID(), name, directoryName: directory.name || '所选目录', directoryIdentity: directory.identity, before,
-          ...format, content: rule ? replacement.content : format.content, newline: rule && rule.newline !== 'keep' ? rule.newline : format.newline,
+          ...format, content: rules ? replacement.content : format.content, newline: requestedNewline && requestedNewline !== 'keep' ? requestedNewline : format.newline,
           ...(original ? { restoredFrom: original.id, restoreText: original.before.text } : {}) };
         const after = await snapshotText(draftText(draft), before.identity); guard();
         if (after.sha256 !== before.sha256) { row.draft = draft; row.after = after; }

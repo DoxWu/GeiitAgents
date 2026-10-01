@@ -1,7 +1,7 @@
 import { webcrypto } from 'node:crypto';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { MemoryDirectory } from './testDirectory';
-import { batchVersions, prepareTextBatch, type TextBatchRule } from './textBatch';
+import { applyTextBatchRules, batchVersions, prepareTextBatch, type TextBatchRule } from './textBatch';
 import { MAX_TEXT_BYTES, withTextBatch, writeDirectoryText } from './textEdit';
 
 const rule: TextBatchRule = { find: 'old', replacement: '$& 新🙂', newline: 'keep' };
@@ -21,6 +21,17 @@ it('supports bounded case-insensitive literal replacement without regex expansio
   const invalid = await prepareTextBatch(d, ['a.md'], { find: 'İ', replacement: 'x', newline: 'keep', caseSensitive: false }, [], true, () => {});
   expect(invalid.rows[0].error).toContain('大小写折叠');
 });
+it('applies a bounded ordered rule pipeline and preserves literal replacement text', () => {
+  const result = applyTextBatchRules('Draft: old\nOwner: Alice', [
+    { find: 'old', replacement: 'review', newline: 'keep' },
+    { find: 'Alice', replacement: '$& (team)', newline: 'keep' },
+  ]);
+  expect(result).toEqual({ content: 'Draft: review\nOwner: $& (team)', matches: 2 });
+  expect(() => applyTextBatchRules('x', Array.from({ length: 6 }, () => ({ find: 'x', replacement: 'x', newline: 'keep' })))).toThrow('1–5');
+  expect(() => applyTextBatchRules('x', [
+    { find: 'x', replacement: 'a', newline: 'lf' }, { find: 'a', replacement: 'b', newline: 'crlf' },
+  ])).toThrow('相同的输出换行');
+});
 it('isolates invalid UTF-8, mixed newline and excessive expansion while allowing explicit newline conversion', async () => {
   const d = new MemoryDirectory({ 'a.md': 'old\r\nold\n', 'b.txt': 'x'.repeat(MAX_TEXT_BYTES) });
   d.files.set('bad.txt', new File([new Uint8Array([0xff])], 'bad.txt'));
@@ -28,6 +39,19 @@ it('isolates invalid UTF-8, mixed newline and excessive expansion while allowing
   expect(plan.rows.every(r => r.error && !r.after)).toBe(true);
   const fixed = await prepareTextBatch(d, ['a.md'], { ...rule, newline: 'lf' }, [], true, () => {}); expect(fixed.rows[0].after!.text).toBe('$& 新🙂\n$& 新🙂\n');
   const huge = await prepareTextBatch(d, ['b.txt'], { find: 'x', replacement: 'y'.repeat(10000), newline: 'keep' }, [], true, () => {}); expect(huge.rows[0].error).toContain('256');
+});
+it('rejects inconsistent newline pipelines and malformed rules before reading any file', async () => {
+  const d = new MemoryDirectory({ 'a.md': 'old\r\n' });
+  await expect(prepareTextBatch(d, ['a.md'], [rule, { ...rule, newline: 'lf' }], [], true, () => {})).rejects.toThrow('相同的输出换行');
+  for (const invalid of [null, { ...rule, find: 1 }, { ...rule, replacement: undefined }]) {
+    expect(() => applyTextBatchRules('old', [invalid as unknown as typeof rule])).toThrow('文本查找和替换');
+  }
+  const plan = await prepareTextBatch(d, ['a.md'], [
+    { find: 'old', replacement: 'draft', newline: 'lf' },
+    { find: 'draft', replacement: 'approved', newline: 'lf' },
+  ], [], true, () => {});
+  expect(plan.rows[0].matches).toBe(2);
+  expect(plan.rows[0].after?.text).toBe('approved\n');
 });
 it('rejects invalid selection, changed history and entire-batch capacity before registration', async () => {
   const d = new MemoryDirectory({ 'a.md': 'old', 'b.txt': 'old' }), plan = await prepareTextBatch(d, ['a.md', 'b.txt'], rule, [], true, () => {});

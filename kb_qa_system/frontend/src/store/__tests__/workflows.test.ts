@@ -8,6 +8,7 @@ import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 import { completeModel, completeAccountModel } from '@/services/workbenchModel';
 import { importVaultBackup } from '@/services/vaultBackup';
 import { validateVaultBackup } from '@/services/vaultBackupSchema';
+import { WORKFLOW_SKIPPED_RESULT } from '@/workflows/runner';
 
 vi.mock('@/services/workbenchModel', async original => ({ ...await original<typeof import('@/services/workbenchModel')>(), completeModel: vi.fn(), completeAccountModel: vi.fn() }));
 const profile = { id: 'workflow-model', name: 'fixture', mode: 'local' as const, baseUrl: 'http://127.0.0.1:11434/v1', model: 'fixture-model' };
@@ -160,6 +161,38 @@ it('retries a failed continuation after reload using the original snapshot and c
   await expect(validateVaultBackup(badNode)).rejects.toThrow();
   const cycle = structuredClone(data); cycle.taskRuns!.find(t => t.id === original.id)!.resumedFromTaskId = finalId;
   await expect(validateVaultBackup(cycle)).rejects.toThrow();
+});
+it('roundtrips condition skips in an encrypted backup and resumes a failed join after restore', async () => {
+  const condition = newWorkflowNode('condition', 0), rejected = newWorkflowNode('generate_document', 1);
+  const accepted = newWorkflowNode('create_document', 2), join = newWorkflowNode('generate_document', 3);
+  condition.condition = { source: 'reference', operator: 'contains', value: 'workflow' };
+  accepted.includeInputs = false; accepted.text = 'ACCEPTED PATH'; rejected.text = 'REJECTED PATH';
+  const d = await store.getState().saveWorkflow({ ...newWorkflow(), nodes: [condition, rejected, accepted, join], edges: [
+    { from: condition.id, to: rejected.id, when: 'false' as const }, { from: condition.id, to: accepted.id, when: 'true' as const },
+    { from: rejected.id, to: join.id }, { from: accepted.id, to: join.id },
+  ] });
+  await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockRejectedValueOnce(new Error('join failure'));
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('join failure');
+  const failed = store.getState().taskRuns[0];
+  const backup = (await store.getState().exportWorkbenchBackup('5678', true)).file;
+  const restored = await importVaultBackup(backup, '5678');
+  expect(restored.data.toolRuns?.find(t => t.workflowNodeId === rejected.id)).toMatchObject({ status: 'succeeded', result: WORKFLOW_SKIPPED_RESULT });
+  await store.getState().lock();
+  await store.getState().prepareWorkbenchRestore(backup, '5678', '1234');
+  const restoreId = store.getState().vaultRestorePreview!.id;
+  await store.getState().commitWorkbenchRestore(restoreId);
+  await store.getState().unlock('1234');
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, messages, _s, _c, finish) => {
+    expect(messages[1].content).toContain('ACCEPTED PATH'); expect(messages[1].content).not.toContain('REJECTED PATH');
+    expect(messages[1].content).not.toContain(WORKFLOW_SKIPPED_RESULT); finish?.('stop'); return '# joined';
+  });
+  const resumedId = await store.getState().resumeWorkflow(failed.id, undefined, false);
+  const resumed = store.getState().taskRuns.find(t => t.id === resumedId)!;
+  expect(resumed).toMatchObject({ status: 'succeeded', resumeFromNodeId: join.id });
+  expect(resumed.toolRunIds).toHaveLength(4); expect(completeModel).toHaveBeenCalledTimes(2);
+  expect(store.getState().toolRuns.find(t => t.taskId === resumedId && t.workflowNodeId === rejected.id)?.result).toBe(WORKFLOW_SKIPPED_RESULT);
+  await expect(importVaultBackup((await store.getState().exportWorkbenchBackup('5678', true)).file, '5678')).resolves.toBeDefined();
 });
 it('resolves legacy continuation prefixes without replay and rejects missing prerequisite artifacts', async () => {
   const a = newWorkflowNode('create_document', 0), b = newWorkflowNode('generate_document', 1);

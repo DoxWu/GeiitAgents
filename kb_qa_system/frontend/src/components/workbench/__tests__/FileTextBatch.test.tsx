@@ -19,6 +19,12 @@ async function open() {
   fireEvent.change(screen.getByLabelText('批量查找内容'), { target: { value: 'old' } }); fireEvent.change(screen.getByLabelText('批量替换内容（可为空）'), { target: { value: 'new' } });
   click('读取并预览批次'); await screen.findByRole('region', { name: '批量文本预览' });
 }
+it('supports an ordered second replacement rule in the preview', async () => {
+  render(<FileTextBatch />); click('选择批量编辑目录'); await screen.findByLabelText('批量选择文件：a.md'); fireEvent.click(screen.getByLabelText('批量选择文件：a.md'));
+  fireEvent.change(screen.getByLabelText('批量查找内容'), { target: { value: 'old' } }); fireEvent.change(screen.getByLabelText('批量替换内容（可为空）'), { target: { value: 'Alice' } });
+  click('增加替换规则（1/5）'); fireEvent.change(screen.getByLabelText('批量查找内容 2'), { target: { value: 'Alice' } }); fireEvent.change(screen.getByLabelText('批量替换内容（可为空） 2'), { target: { value: 'review' } });
+  click('读取并预览批次'); await screen.findByRole('region', { name: '批量文本预览' }); expect(screen.getByLabelText('批次完整写入版本')).toHaveValue('review\n');
+});
 it('requires directory and batch confirmation, resets confirmation on selection and previews exact bytes', async () => {
   render(<FileTextBatch />); await open(); expect(screen.queryByLabelText('批量选择文件：skip.json')).not.toBeInTheDocument();
   expect(screen.getByLabelText('批次完整写入版本')).toHaveValue('new\n'); expect(button('确认写入批次')).toBeDisabled();
