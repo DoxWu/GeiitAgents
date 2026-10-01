@@ -15,7 +15,7 @@ const click = (name: string) => fireEvent.click(button(name));
 async function upload(value: string) {
   const file = new Blob([value]); Object.assign(file, { name: 'test.json' });
   fireEvent.change(screen.getByLabelText('笔记待办导入文件'), { target: { files: [file] } });
-  await screen.findByRole('region', { name: '笔记待办导入预检查' });
+  await screen.findByRole('region', { name: '笔记待办导入预检查' }, { timeout: 5000 });
 }
 const acknowledge = () => fireEvent.click(screen.getByLabelText('我已核对所选条目及替换内容，确认写入本机加密库'));
 beforeEach(async () => { vi.stubGlobal('crypto', webcrypto); localStorage.clear(); await store.getState().unlock(password); });

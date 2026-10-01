@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BookOpen, Plus, LockKeyhole, Settings2, FileText, MessageSquare, Send, Square, Download, Trash2, Menu, X, Loader2, ClipboardList } from "lucide-react";
 import { useWorkbenchStore, VAULT_STORAGE_KEY, ACCOUNT_MODEL_ID } from "@/store/workbenchStore";
@@ -11,6 +11,8 @@ import { ThemeToggle } from "@/components/common/ThemeToggle";
 import type { LocalDocument } from "@/types/workbench";
 import { finishLabel } from '@/services/modelStream';
 import "@/styles/workbench.css";
+
+const CHAT_MESSAGE_PAGE_SIZE = 20;
 
 const PersonalItems = lazy(() => import('@/components/workbench/PersonalItems').then(module => ({ default: module.PersonalItems })));
 const FileOrganizer = lazy(() => import('@/components/workbench/FileOrganizer').then(module => ({ default: module.FileOrganizer })));
@@ -31,7 +33,13 @@ export default function WorkbenchPage() {
   const [document, setDocument] = useState<LocalDocument | null>(null);
   const [attach, setAttach] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const previousScrollHeight = useRef<number | null>(null);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(CHAT_MESSAGE_PAGE_SIZE);
   const conversation = state.conversations.find((c) => c.id === state.currentId);
+  const messages = conversation?.messages ?? [];
+  const visibleMessages = messages.slice(-visibleMessageCount);
+  const hiddenMessageCount = messages.length - visibleMessages.length;
   const running = conversation ? state.running[conversation.id] : false;
   const archive = conversation?.kind === 'knowledge-answer';
   const available = state.profiles.length > 0 || Boolean(state.accountModel);
@@ -50,6 +58,13 @@ export default function WorkbenchPage() {
     if (!state.unlocked) { setText(""); setPassword(""); setConfirmation(""); setDocument(null); setAttach(false); return; }
   }, [state.unlocked]);
   useEffect(() => { setText(""); setAttach(false); setError(""); }, [state.currentId]);
+  useEffect(() => { setVisibleMessageCount(CHAT_MESSAGE_PAGE_SIZE); }, [state.currentId, conversation?.messages.length]);
+  useLayoutEffect(() => {
+    if (previousScrollHeight.current === null) return;
+    const element = messageListRef.current;
+    if (element) element.scrollTop += element.scrollHeight - previousScrollHeight.current;
+    previousScrollHeight.current = null;
+  }, [visibleMessageCount]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [conversation?.messages.length, running]);
 
   async function unlock(event: React.FormEvent) {
@@ -135,14 +150,15 @@ export default function WorkbenchPage() {
             <button className="work-icon" title="导出 Markdown" aria-label="导出 Markdown" disabled={!conversation?.messages.length} onClick={download}><Download size={17} /></button>
             <button className="work-icon" title="删除对话" aria-label="删除对话" disabled={!conversation || running} onClick={() => { if (conversation && window.confirm("删除此本机对话？")) state.removeConversation(conversation.id); }}><Trash2 size={17} /></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-8">
+          <div ref={messageListRef} data-testid="chat-message-scroll-region" style={{ overflowAnchor: 'none' }} className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-8">
             <div className="mx-auto max-w-3xl space-y-6">
               {!conversation?.messages.length && <div className="py-16 text-center"><MessageSquare size={32} strokeWidth={1} className="mx-auto mb-4 text-ink-tertiary" /><h1 className="text-xl font-semibold">{conversation?.title || "新对话"}</h1>
                 {!state.profiles.length && <p className="mt-3 text-sm text-ink-secondary">{state.accountLoading ? "正在检查账号模型权限..." : state.accountModel ? "可直接使用账号云端模型。" : authenticated ? state.accountError || "当前账号没有可用的云端模型。" : "登录有权限的账号可使用云端模型，也可以添加自己的连接。"}</p>}
                 {!available && <button className="work-command mx-auto mt-5" onClick={() => setTab("models")}><Plus size={16} />添加模型连接</button>}
                 {authenticated && !state.accountModel && <button className="work-command mx-auto mt-3" disabled={state.accountLoading} onClick={() => void state.refreshAccountModel()}>刷新账号模型</button>}
               </div>}
-              {conversation?.messages.map((message) => <article key={message.id} className="min-w-0 border-b border-line pb-5"><p className="mb-2 text-xs font-medium text-ink-secondary">{message.role === "user" ? "你" : message.model || "助手"}</p><PrivateMarkdown content={message.content} />{message.finishReason && <p className="mt-3 text-xs text-ink-secondary" aria-label="模型停止原因">{finishLabel(message.finishReason)}</p>}</article>)}
+              {hiddenMessageCount > 0 && <div className="flex items-center justify-center gap-3"><button className="work-command" onClick={() => { if (messageListRef.current) previousScrollHeight.current = messageListRef.current.scrollHeight; setVisibleMessageCount(count => count + CHAT_MESSAGE_PAGE_SIZE); }}>加载更早的消息</button><span className="text-xs text-ink-secondary">已显示 {visibleMessages.length} / {messages.length}</span></div>}
+              {visibleMessages.map((message) => <article key={message.id} className="min-w-0 border-b border-line pb-5"><p className="mb-2 text-xs font-medium text-ink-secondary">{message.role === "user" ? "你" : message.model || "助手"}</p><PrivateMarkdown content={message.content} />{message.finishReason && <p className="mt-3 text-xs text-ink-secondary" aria-label="模型停止原因">{finishLabel(message.finishReason)}</p>}</article>)}
               {running && state.streamingContent[conversation?.id ?? ''] && <article className="min-w-0 border-b border-line pb-5" aria-label="流式回答"><p className="mb-2 text-xs font-medium text-ink-secondary">模型输出中</p><PrivateMarkdown content={state.streamingContent[conversation?.id ?? '']} /></article>}
               {running && <p role="status" className="flex items-center gap-2 text-sm text-ink-secondary"><Loader2 size={16} className="animate-spin" />模型处理中...</p>}
               {(error || conversation && state.errors[conversation.id]) && <p role="alert" className="text-sm text-danger">{error || state.errors[conversation!.id]}</p>}
