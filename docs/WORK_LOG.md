@@ -368,4 +368,5 @@
 - 验证：图表、工作流、备份/恢复和 UI 定向 **4 文件 / 78 项通过**；全量 Vitest **118 文件 / 1151 项通过**；`npm run check`、`npm run lint`、生产 Web 构建和 `git diff --check` 通过。扩展 `verify-chart-series.mjs`，构建后 Chromium 实际验证多系列水平条形 SVG/PNG、XLSX 输入、柱形/折线/饼图、加密任务刷新恢复和 390px 无页面溢出；零新增模型/API 请求、零页面异常。水平图 PNG 截图已目视检查。
 - 构建产物：开发通道升至 `0.1.0-dev.51`；仓库 Cargo 回退完成 `desktop:toolchain:test`、`desktop:check` 和 release 打包。未签名 NSIS `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.51_x64-setup.exe`，**8,386,144 字节**，SHA-256 `D7BB21B39C47371D469AE5B4D03C00B63D79EB03DB7D6FC26B19E87B7062F131`。未安装、签名、部署或推送。Web/desktop 构建的既有工作流模块静态/动态导入分包提示不影响产物。
 - 未完成/风险：图表仍不提供散点、时间轴、误差线、图片 OCR/审查或嵌入 DOCX；按输入顺序绘制、不自动聚合。DOCX 分页、PDF/PPTX、工作流触发/循环、模型多模态/专有协议、低配与跨卷/断电、原生 WebView2 和签名升级仍未完成。没有真实模型、邮件或生产数据访问。
-- 下一步：完成 dev.51 桌面包重建和产物校验，然后本地提交；继续向完整目标推进，目标完成并审查远端历史/差异后才推送。
+- Git：功能代码及记录已提交到 `develop/geiit-agents`，提交 `7d97c8b`（`feat: add horizontal chart rendering`）；本地工作树提交后干净。未推送。
+- 下一步：继续补齐办公格式/图片识别、文件历史/冲突处理、待办低配与原生中断验证、工作流循环/触发及模型多模态/专有协议；整体目标和发布前审查完成后，再审查远端差异并普通推送 `agents`。
