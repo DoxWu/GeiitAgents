@@ -23,7 +23,7 @@ import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { assertRunDirectories, undoPlan, type OrganizerRun } from '@/fileOrganizer/history';
 import type { RenamePlan } from '@/fileOrganizer/plan';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
-import type { DocxStyle } from '@/officeTasks/docxStyles';
+import type { DocxFormatOptions, DocxStyle } from '@/officeTasks/docxStyles';
 import { completeToolModel, probeToolCallModel } from '@/services/officeToolModel';
 import { reminderOwner, validateReminderDraft, validateReminderTemplate, type ReminderDraft, type ReminderTemplate } from '@/personal/reminderDraft';
 import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline, type TextSnapshot } from '@/fileOrganizer/textEdit';
@@ -162,7 +162,7 @@ interface WorkbenchState {
   removeTask: (id: string) => Promise<void>;
   saveArtifactVersion: (sourceId: string, content: string) => Promise<string>;
   restoreArtifactVersion: (sourceId: string, expectedLatestId: string) => Promise<string>;
-  exportArtifactDocx: (sourceId: string, style?: DocxStyle) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
+  exportArtifactDocx: (sourceId: string, style?: DocxStyle, format?: DocxFormatOptions) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
   retryStorage: () => Promise<void>;
   answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal, onPreview?: (value: GenerationPreview | null) => void, history?: KnowledgeTurn[]) => Promise<{ content: string; model: string; finishReason: FinishReason }>;
 }
@@ -1368,7 +1368,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
   saveArtifactVersion: (sourceId, content) => appendArtifactVersion(sourceId, { kind: 'edit', content }),
   restoreArtifactVersion: (sourceId, expectedLatestId) => appendArtifactVersion(sourceId, { kind: 'restore', expectedLatestId }),
-  exportArtifactDocx: async (sourceId, style = 'standard') => {
+  exportArtifactDocx: async (sourceId, style = 'standard', format = {}) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const source = get().artifacts.find(item => item.id === sourceId);
     const task = get().taskRuns.find(item => item.id === source?.taskId);
@@ -1379,12 +1379,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const controller = new AbortController(), epoch = generation, toolId = crypto.randomUUID(), now = new Date().toISOString();
     artifactOperations.set(task.id, controller);
     const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new Error('导出已取消或密钥库已锁定。'); };
-    set(state => ({ toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: 'document.export-docx', arguments: JSON.stringify({ style }), status: 'running', sourceArtifactId: source.id, startedAt: now }],
+    set(state => ({ toolRuns: [...state.toolRuns, { id: toolId, taskId: task.id, tool: 'document.export-docx', arguments: JSON.stringify({ style, format }), status: 'running', sourceArtifactId: source.id, startedAt: now }],
       taskRuns: state.taskRuns.map(item => item.id === task.id ? { ...item, toolRunIds: [...item.toolRunIds, toolId] } : item) }));
     try {
       await persist(true); guard();
       const { exportDocx } = await import('@/officeTasks/docxClient'); guard();
-      const result = await exportDocx(documentExportContent(source), task.title, controller.signal, style); guard();
+      const result = await exportDocx(documentExportContent(source), task.title, controller.signal, style, format); guard();
       const hash = await crypto.subtle.digest('SHA-256', result.bytes); guard();
       const sha256 = Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, '0')).join('');
       const safeName = Array.from(source.name.replace(/\.md$/i, '')).map(char => char.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char).join('').slice(0, 100);

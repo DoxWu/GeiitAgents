@@ -35,13 +35,34 @@ it('applies the selected local style without changing Markdown content', async (
   expect(meetingXml).toContain('w:pgSz w:w="11906" w:h="16838"');
   expect(businessStyles).toContain('w:color w:val="1F4E79"');
   expect(meetingStyles).toContain('w:color w:val="0F6B78"');
-  expect(business.converterVersion).toBe('markdown-docx/2:business');
-  expect(meeting.converterVersion).toBe('markdown-docx/2:meeting');
+  expect(business.converterVersion).toBe('markdown-docx/3:business:-,-,-,-,-');
+  expect(meeting.converterVersion).toBe('markdown-docx/3:meeting:-,-,-,-,-');
   expect(await businessZip.file('word/document.xml')!.async('string')).toContain('正文');
+});
+
+it('applies bounded page and typography overrides to the DOCX package', async () => {
+  const result = await markdownToDocx('# 标题\n\n正文', '自定义', 'meeting', {
+    paperSize: 'Letter', fontFamily: 'Arial', fontSize: 14, lineSpacing: 1.5, marginInches: 0.75,
+  });
+  const zip = await JSZip.loadAsync(result.bytes);
+  const document = await zip.file('word/document.xml')!.async('string');
+  const styles = await zip.file('word/styles.xml')!.async('string');
+  expect(document).toContain('w:pgSz w:w="12240" w:h="15840"');
+  expect(document).toContain('w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"');
+  expect(styles).toContain('<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial"');
+  expect(styles).toContain('<w:sz w:val="28"/>');
+  expect(styles).toContain('<w:spacing w:after="140" w:line="360"');
+  expect(result.converterVersion).toBe('markdown-docx/3:meeting:Letter,Arial,14,1.5,0.75');
 });
 
 it('rejects unknown style IDs instead of falling back silently', async () => {
   await expect(markdownToDocx('# 标题', '样式', 'custom' as never)).rejects.toThrow('受支持');
+});
+
+it('rejects unsupported page and typography values', async () => {
+  await expect(markdownToDocx('# 标题', '样式', 'standard', { paperSize: 'Legal' as never })).rejects.toThrow('纸张');
+  await expect(markdownToDocx('# 标题', '样式', 'standard', { fontSize: 999 as never })).rejects.toThrow('字号');
+  await expect(markdownToDocx('# 标题', '样式', 'standard', { extra: true } as never)).rejects.toThrow('未知选项');
 });
 
 it('keeps untrusted HTML, links, images and footnotes inert and explains fidelity limits', async () => {

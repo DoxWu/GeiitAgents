@@ -5,7 +5,7 @@ import { PrivateMarkdown } from './LocalMarkdown';
 import { documentExportContent } from '@/officeTasks/document';
 import { finishLabel } from '@/services/modelStream';
 import { DocumentArtifact } from './DocumentArtifact';
-import type { DocxStyle } from '@/officeTasks/docxStyles';
+import { DEFAULT_DOCX_FORMAT, type DocxFormatOptions, type DocxStyle } from '@/officeTasks/docxStyles';
 import { DocxStyleSelect } from './DocxStyleSelect';
 
 function download(blob: Blob, name: string) {
@@ -16,6 +16,7 @@ export function ToolArtifact({ artifact, versions, running }: { artifact: WorkAr
   const [url, setUrl] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [manageVersions, setManageVersions] = useState(false);
   const [docxStyle, setDocxStyle] = useState<DocxStyle>('standard');
+  const [docxFormat, setDocxFormat] = useState<DocxFormatOptions>(DEFAULT_DOCX_FORMAT);
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -26,7 +27,7 @@ export function ToolArtifact({ artifact, versions, running }: { artifact: WorkAr
   async function docx() {
     setBusy(true); setError('');
     try {
-      const result = await useWorkbenchStore.getState().exportArtifactDocx(artifact.id, docxStyle);
+      const result = await useWorkbenchStore.getState().exportArtifactDocx(artifact.id, docxStyle, docxFormat);
       if (mounted.current) { download(new Blob([result.bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), result.name); setError(result.warnings.join('；')); }
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : '导出失败。'); }
     finally { if (mounted.current) setBusy(false); }
@@ -35,7 +36,7 @@ export function ToolArtifact({ artifact, versions, running }: { artifact: WorkAr
     <h3 className="break-all font-medium">{artifact.name}</h3>
     {artifact.finishReason && <p className="mt-2 text-sm text-ink-secondary">{finishLabel(artifact.finishReason)}</p>}
     <div className="my-3 flex flex-wrap items-end gap-2"><button className="work-command" onClick={() => download(new Blob([artifact.kind === 'markdown' ? documentExportContent(artifact) : artifact.content], { type: artifact.mimeType }), artifact.name)}>下载成果</button>
-      {artifact.kind === 'markdown' && <DocxStyleSelect value={docxStyle} onChange={setDocxStyle} disabled={busy || running} />}
+      {artifact.kind === 'markdown' && <DocxStyleSelect value={docxStyle} onChange={setDocxStyle} format={docxFormat} onFormatChange={setDocxFormat} disabled={busy || running} />}
       {artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} onClick={() => void docx()}>{busy ? '正在导出…' : '导出 Word'}</button>}
       {versions && artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} aria-expanded={manageVersions} onClick={() => setManageVersions(current => !current)}>{manageVersions ? '关闭版本管理' : '编辑与版本管理'}</button>}</div>
     {error && <p role="status" className="text-sm">{error}</p>}

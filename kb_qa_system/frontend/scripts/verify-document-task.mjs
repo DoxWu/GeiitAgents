@@ -9,7 +9,7 @@ import JSZip from 'jszip';
 const output = path.resolve('../../.tools/document-task-qa');
 const liveProvider = process.env.DOCUMENT_TASK_LIVE === '1';
 await mkdir(output, { recursive: true });
-const context = await chromium.launchPersistentContext(path.join(output, 'browser-profile'), { headless: true, acceptDownloads: true, viewport: { width: 1280, height: 900 } });
+const context = await chromium.launchPersistentContext(path.join(output, 'browser-profile-' + Date.now()), { headless: true, acceptDownloads: true, viewport: { width: 1280, height: 900 } });
 const page = await context.newPage();
 for (const old of context.pages()) if (old !== page) await old.close();
 const requests = [], sent = [], errors = [];
@@ -36,13 +36,15 @@ await context.routeWebSocket('**/ws/notifications', () => {});
 await context.route('**/api/v1/**', async route => {
   const endpoint = new URL(route.request().url()).pathname;
   if (endpoint.endsWith('/private-models/account')) return route.fulfill({ json: { available: true, model: 'fixture-document-model' } });
-  if (endpoint.endsWith('/private-models/account/complete')) {
+  if (endpoint.endsWith('/private-models/account/complete/stream')) {
     const body = route.request().postDataJSON();
     sent.push(body);
     const completions = requests.filter(url => url.includes('/private-models/account/complete')).length;
     if (completions > 1) await new Promise(resolve => { releaseSecond = resolve; });
     const result = liveProvider && completions === 1 ? await live(body.messages) : { model: 'fixture-document-model', content: '```markdown\n# 项目周报\n\n## 进展\n\n登录模块已完成。\n\n## 风险\n\n- 安全评审待完成\n```' };
-    try { return await route.fulfill({ json: result }); }
+    const wire = 'data: ' + JSON.stringify({ type: 'chunk', content: result.content }) + '\n\n'
+      + 'data: ' + JSON.stringify({ type: 'done', ...result, finish_reason: 'stop' }) + '\n\n';
+    try { return await route.fulfill({ status: 200, contentType: 'text/event-stream', body: wire }); }
     catch { return; }
   }
   return route.fulfill({ status: 200, json: {} });
@@ -97,6 +99,12 @@ try {
   await expect(page.getByLabel('差异行')).toContainText('安全评审已通过');
   await expect(page.getByRole('region', { name: '版本对比' })).toContainText('新增');
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
+  await page.getByText('页面与字体', { exact: true }).click();
+  await page.getByLabel('Word 纸张').selectOption('A4');
+  await page.getByLabel('Word 字体').selectOption('Arial');
+  await page.getByLabel('Word 字号').selectOption('14');
+  await page.getByLabel('Word 行距').selectOption('1.5');
+  await page.getByLabel('Word 页边距').selectOption('0.75');
   const exportedEvent = page.waitForEvent('download', { timeout: 40000 }).catch(error => error);
   await page.getByRole('button', { name: '导出 DOCX', exact: true }).click();
   const exported = await exportedEvent;
@@ -110,6 +118,11 @@ try {
   const xml = await zip.file('word/document.xml').async('string');
   expect(xml).toContain('安全评审已通过'); expect(xml).toContain('w:tblHeader');
   expect(xml).toContain('w:pStyle w:val="Title"');
+  expect(xml).toContain('w:pgSz w:w="11906" w:h="16838"');
+  expect(xml).toContain('w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"');
+  const stylesXml = await zip.file('word/styles.xml').async('string');
+  expect(stylesXml).toContain('w:ascii="Arial"'); expect(stylesXml).toContain('w:sz w:val="28"');
+  expect(stylesXml).toContain('w:line="360"');
   await expect(page.getByRole('status')).toContainText('未下载或嵌入图片');
   expect(requests.some(url => url.includes('example.test/never-fetch'))).toBe(false);
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
@@ -180,7 +193,7 @@ try {
   await page.getByRole('button', { name: '检查并预览' }).click();
   await expect(page.getByRole('alert')).toContainText('数值缺失或格式无效');
   await expect(page.getByRole('button', { name: '保存图表任务' })).toBeDisabled();
-  await page.getByLabel('选择图表 CSV 文件').setInputFiles({ name: 'chart-fixture.csv', mimeType: 'text/csv', buffer: Buffer.from('季度,营收\n第一季度,120\n第二季度,-20\n第二季度,0') });
+  await page.getByLabel('选择图表 CSV 或 XLSX 文件').setInputFiles({ name: 'chart-fixture.csv', mimeType: 'text/csv', buffer: Buffer.from('季度,营收\n第一季度,120\n第二季度,-20\n第二季度,0') });
   await expect(page.getByLabel('CSV 数据')).toContainText('第二季度,-20');
   await page.getByLabel('图表类型').selectOption('line');
   await page.getByRole('button', { name: '检查并预览' }).click();
@@ -248,5 +261,5 @@ try {
   expect(sent).toHaveLength(2);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'lazy DOCX worker', 'DOCX download and OOXML', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'no external images or model calls during local tools', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
+    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'lazy DOCX worker', 'custom paper/font/size/spacing/margins in downloaded OOXML', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'no external images or model calls during local tools', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
 } finally { releaseSecond?.(); await context.close(); }

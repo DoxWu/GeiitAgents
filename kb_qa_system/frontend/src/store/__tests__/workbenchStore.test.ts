@@ -562,7 +562,7 @@ it('exports the selected old version and stores only provenance and a hash, neve
   vi.mocked(exportDocx).mockResolvedValue({ bytes, warnings: ['test warning'], converterVersion: 'fixture/1' });
   const result = await store.getState().exportArtifactDocx(original.id);
   expect(result).toMatchObject({ bytes, name: expect.stringMatching(/-v1\.docx$/), warnings: ['test warning'] });
-  expect(exportDocx).toHaveBeenCalledWith(documentExportContent(original), documentInput.title, expect.any(AbortSignal), 'standard');
+  expect(exportDocx).toHaveBeenCalledWith(documentExportContent(original), documentInput.title, expect.any(AbortSignal), 'standard', {});
   expect(store.getState().toolRuns.at(-1)).toMatchObject({ tool: 'document.export-docx', status: 'succeeded', sourceArtifactId: original.id, outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/), converterVersion: 'fixture/1' });
   expect(JSON.stringify(store.getState())).not.toContain('synthetic docx bytes');
   await store.getState().lock(); await store.getState().unlock(password);
@@ -575,9 +575,9 @@ it('records the selected DOCX style with the export provenance', async () => {
   const bytes = new TextEncoder().encode('business docx').buffer;
   vi.mocked(exportDocx).mockResolvedValue({ bytes, warnings: [], converterVersion: 'markdown-docx/2:business' });
   await store.getState().exportArtifactDocx(original.id, 'business');
-  expect(exportDocx).toHaveBeenCalledWith(documentExportContent(original), documentInput.title, expect.any(AbortSignal), 'business');
+  expect(exportDocx).toHaveBeenCalledWith(documentExportContent(original), documentInput.title, expect.any(AbortSignal), 'business', {});
   expect(store.getState().toolRuns.at(-1)).toMatchObject({
-    arguments: JSON.stringify({ style: 'business' }), converterVersion: 'markdown-docx/2:business',
+    arguments: JSON.stringify({ style: 'business', format: {} }), converterVersion: 'markdown-docx/2:business',
   });
 });
 

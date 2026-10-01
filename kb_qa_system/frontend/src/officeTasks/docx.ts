@@ -3,15 +3,16 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import type { Root, RootContent, PhrasingContent, List, ListItem } from 'mdast';
-import { isDocxStyle, type DocxStyle } from './docxStyles';
+import { isDocxStyle, validateDocxFormat, type DocxFormatOptions, type DocxStyle } from './docxStyles';
 
-export const DOCX_CONVERTER_VERSION = 'markdown-docx/2';
+export const DOCX_CONVERTER_VERSION = 'markdown-docx/3';
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 export interface DocxResult { bytes: ArrayBuffer; warnings: string[]; converterVersion: string }
 
 // Runs only in the on-demand export Worker. No network, HTML, external relationships or image fetching.
-export async function markdownToDocx(content: string, title: string, style: DocxStyle = 'standard'): Promise<DocxResult> {
+export async function markdownToDocx(content: string, title: string, style: DocxStyle = 'standard', format: DocxFormatOptions = {}): Promise<DocxResult> {
   if (!isDocxStyle(style)) throw new Error('请选择受支持的 DOCX 样式。');
+  const options = validateDocxFormat(format);
   if (!content.trim() || content.length > 200_000 || Array.from(content).some(char => char.charCodeAt(0) < 32 && !'\t\n\r'.includes(char))) throw new Error('DOCX 导出支持最多 200000 字符的有效 Markdown 文本。');
   const root = unified().use(remarkParse).use(remarkGfm).parse(content) as Root;
   let count = 0;
@@ -91,10 +92,14 @@ export async function markdownToDocx(content: string, title: string, style: Docx
   const theme = style === 'business' ? { accent: '1F4E79', paper: { width: 11906, height: 16838, margin: { top: 1417, right: 1276, bottom: 1417, left: 1276 } } }
     : style === 'meeting' ? { accent: '0F6B78', paper: { width: 11906, height: 16838, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }
       : { accent: '000000', paper: { width: 12240, height: 15840, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } };
+  const page = options.paperSize === 'A4' ? { width: 11906, height: 16838 } : options.paperSize === 'Letter' ? { width: 12240, height: 15840 } : theme.paper;
+  const margin = options.marginInches === undefined ? theme.paper.margin : Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, Math.round(options.marginInches! * 1440)]));
+  const font = options.fontFamily ?? 'Calibri';
   const styles = Object.fromEntries(headings.map((key, i) => [key, { run: { color: theme.accent, bold: true, size: [32, 28, 26, 24, 23, 22][i] }, paragraph: { spacing: { before: 240, after: 120 } } }]));
   const doc = new Document({ creator: 'GeiIt Agents', title, description: `${DOCX_CONVERTER_VERSION}:${style}`,
-    styles: { default: { document: { run: { font: { ascii: 'Calibri', hAnsi: 'Calibri', eastAsia: 'Microsoft YaHei' }, size: 22, color: '000000' }, paragraph: { spacing: { after: 140, line: 300 } } }, title: { run: { color: theme.accent, bold: true, size: 40 }, paragraph: { spacing: { after: 240, ...(style === 'meeting' ? { alignment: AlignmentType.CENTER } : {}) } } }, ...styles } },
-    numbering: { config: numbering }, sections: [{ properties: { page: { size: { width: theme.paper.width, height: theme.paper.height }, margin: theme.paper.margin } }, children }] });
+    styles: { default: { document: { run: { font: { ascii: font, hAnsi: font, eastAsia: options.fontFamily ?? 'Microsoft YaHei' }, size: (options.fontSize ?? 11) * 2, color: '000000' }, paragraph: { spacing: { after: 140, line: Math.round((options.lineSpacing ?? 1.25) * 240) } } }, title: { run: { color: theme.accent, bold: true, size: 40 }, paragraph: { spacing: { after: 240, ...(style === 'meeting' ? { alignment: AlignmentType.CENTER } : {}) } } }, ...styles } },
+    numbering: { config: numbering }, sections: [{ properties: { page: { size: { width: page.width, height: page.height }, margin } }, children }] });
   const buffer = await Packer.toArrayBuffer(doc);
-  return { bytes: buffer, warnings: [...warnings], converterVersion: `${DOCX_CONVERTER_VERSION}:${style}` };
+  const formatVersion = [options.paperSize, options.fontFamily, options.fontSize, options.lineSpacing, options.marginInches].map(value => value ?? '-').join(',');
+  return { bytes: buffer, warnings: [...warnings], converterVersion: `${DOCX_CONVERTER_VERSION}:${style}:${formatVersion}` };
 }
