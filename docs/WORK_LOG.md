@@ -757,3 +757,8 @@
 
 - 代码实现：批量字面替换规则新增可选 `caseSensitive`，界面默认区分大小写并允许关闭。仍不执行任意正则或替换变量；大小写折叠保持 UTF-16 偏移一致，否则拒绝。替换前先计数并检查字符增长/匹配次数，再分配结果字符串，避免超大替换触发 `Invalid string length`。
 - 本地验证：文件批次、store 和 UI 定向 **18 项通过**，覆盖不区分大小写、字面 `$&` 保留、长度折叠拒绝和 256 KiB 增长边界。历史批次/恢复/备份结构不变；真实强杀/断电、最大容量/低配、正则、多规则和逐文件定制仍未完成。
+### 2026-10-01 (current batch): Cargo fallback regression and dev.32 rebuild
+- Implementation: `desktop-toolchain.mjs` now prepends the selected valid `CARGO_HOME/bin` to child PATH, including valid custom homes used with relative `CARGO=cargo`; repository `.tools/cargo` and `.tools/rustup` fallback remains active for invalid user environments. Added the explicit Node-only `desktop:toolchain:test` check and raised the development Tauri package to `0.1.0-dev.32`.
+- Local verification: `npm run desktop:toolchain:test`, `npm run desktop:check` with invalid user-level `CARGO_HOME`/`RUSTUP_HOME`, `npm run check`, `npm run lint`, production `vite build`, `git diff --check`, and full Vitest **111 files / 1068 tests passed**. Existing React act, ErrorBoundary, jsdom navigation, and Cargo canonicalize warnings remain expected output.
+- Build artifact: unsigned NSIS `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.32_x64-setup.exe`, 8,339,779 bytes, SHA-256 `49B251B348C990602884CC5BF057D06CBB9E248D0E98B5BFE2E5E0BEA840325A`. Not installed, pushed, or deployed.
+- Unfinished and risks: custom toolchain selection is locally covered but Rustup still emits its upstream canonicalize warning; native WebView2 QA, DOCX pagination, workflow conditions/triggers, storage chunking, low-memory/strong-kill tests, and real providers remain unfinished. Next step is continued local development on `develop/geiit-agents`; do not push yet.

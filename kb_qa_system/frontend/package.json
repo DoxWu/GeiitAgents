@@ -16,7 +16,8 @@
     "desktop:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "desktop:build": "node scripts/build-desktop.mjs dev",
     "desktop:build:release": "node scripts/build-desktop.mjs release",
-    "desktop:check": "node scripts/cargo-check.mjs"
+    "desktop:check": "node scripts/cargo-check.mjs",
+    "desktop:toolchain:test": "node scripts/desktop-toolchain-check.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",

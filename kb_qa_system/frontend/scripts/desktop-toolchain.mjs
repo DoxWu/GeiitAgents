@@ -9,6 +9,7 @@ const localRustupHome = path.join(toolsRoot, 'rustup');
 const localCargoBin = path.join(localCargoHome, 'bin');
 const localCargoExecutable = path.join(localCargoBin, process.platform === 'win32' ? 'cargo.exe' : 'cargo');
 const localRustupToolchains = path.join(localRustupHome, 'toolchains');
+const cargoBinaryName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 
 function configuredCargoExecutable(baseEnv) {
   if (baseEnv.CARGO && path.isAbsolute(baseEnv.CARGO)) return baseEnv.CARGO;
@@ -28,8 +29,13 @@ export function prepareDesktopToolchain(baseEnv = process.env) {
   if (hasLocalCargo && (!env.CARGO_HOME || !hasConfiguredCargo)) env.CARGO_HOME = localCargoHome;
   if (existsSync(localRustupToolchains) && (!env.RUSTUP_HOME || !hasConfiguredRustup)) env.RUSTUP_HOME = localRustupHome;
 
-  if (env.CARGO_HOME === localCargoHome && existsSync(localCargoBin)) {
-    env.PATH = `${localCargoBin}${path.delimiter}${env.PATH ?? ''}`;
+  const selectedCargoHome = env.CARGO_HOME;
+  const selectedCargoBin = selectedCargoHome ? path.join(selectedCargoHome, 'bin') : undefined;
+  // Cargo's relative shim (the usual `CARGO=cargo`) is resolved by the child
+  // process. Put the selected toolchain first so a valid custom home cannot
+  // silently fall through to a different system installation.
+  if (selectedCargoBin && existsSync(path.join(selectedCargoBin, cargoBinaryName))) {
+    env.PATH = `${selectedCargoBin}${path.delimiter}${env.PATH ?? ''}`;
   }
 
   return {
