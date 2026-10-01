@@ -116,7 +116,7 @@ try {
   const modelNode = await field('后续步骤').locator('option').last().getAttribute('value'); await connect(options[3], modelNode);
   await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 2');
   await field('工作流 CSV').fill('月份,销量\n一月,12\n二月,18'); await field('工作流参考材料').fill('仅本次授权的资料');
-  if (mode === 'account') await field('工作流模型').selectOption('$account');
+  if (mode === 'account') await field('工作流默认模型').selectOption('$account');
   async function startModel(name, revision) {
     if (revision) { await button('编辑步骤 4').click(); await field('步骤标题').fill(name); await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 ' + revision); }
     if (['relay', 'account'].includes(mode)) { await expect(button('手动运行工作流')).toBeDisabled(); await page.getByLabel(/允许本次按已保存工作流/).check(); }
@@ -129,7 +129,35 @@ try {
   await startModel('Workflow partial', 3); await finish('Workflow partial', 'length'); await expect(history).toContainText('模型未报告正常完成');
   await field('选择工作流成果').selectOption({ label: 'Workflow partial.md' });
   expect((await download('下载成果', 'partial.md')).toString()).toContain('生成状态');
+  const partialRun = await field('选择工作流运行').inputValue();
   await startModel('Workflow EOF', 4); streams.get('Workflow EOF').response.end(); await expect(history).toContainText('中断');
+  const eofRun = await field('选择工作流运行').inputValue();
+  async function continueRun(name, command) {
+    const sourceId = await field('选择工作流运行').inputValue(), before = calls.length;
+    if (['relay', 'account'].includes(mode)) {
+      await button(command).click(); await expect(page.getByRole('alert')).toContainText('先确认本次授权');
+      expect(calls).toHaveLength(before);
+      await page.getByLabel('确认续跑时重新向云端模型发送步骤内容').check();
+    }
+    await button(command).click(); await expect(page.getByLabel('工作流模型生成预览')).toContainText(name);
+    const continuationId = await field('选择工作流运行').inputValue(); expect(continuationId).not.toBe(sourceId);
+    expect(calls).toHaveLength(before + 1);
+    expect(calls.at(-1).body.messages[1].content).toContain('合成报告');
+    return continuationId;
+  }
+  // A second failure must keep the cloned prefix and allow another retry.
+  const failedContinuation = await continueRun('Workflow EOF', '从失败步骤继续');
+  streams.get('Workflow EOF').response.end(); await expect(history).toContainText('中断');
+  const recoveredRun = await continueRun('Workflow EOF', '重试此步骤并继续');
+  await finish('Workflow EOF', 'stop'); await expect(history).toContainText('已按依赖顺序完成 4 个步骤');
+  await expect(history.locator('ol > li')).toHaveCount(4); await expect(field('选择工作流成果').locator('option')).toHaveCount(3);
+  await field('选择工作流成果').selectOption({ label: 'Workflow EOF.md' });
+  expect((await download('下载成果', 'continued.md')).toString()).toContain('Workflow EOF');
+  await field('选择工作流运行').selectOption(eofRun); await expect(history).toContainText('中断');
+  await field('选择工作流运行').selectOption(failedContinuation); await expect(history).toContainText('中断');
+  await field('选择工作流运行').selectOption(partialRun);
+  await continueRun('Workflow partial', '重试此步骤并继续'); await finish('Workflow partial', 'stop');
+  await expect(history).toContainText('已按依赖顺序完成 4 个步骤');
   await startModel('Workflow stop', 5); await button('停止工作流').click(); await expect.poll(() => streams.get('Workflow stop').closed).toBe(true); await expect(history).toContainText('已取消');
   await startModel('Workflow lock', 6); await button('锁定本机密钥库').click(); await expect.poll(() => streams.get('Workflow lock').closed).toBe(true);
   await unlock(); await workflow(); await expect(history).toContainText('已中断'); await expect(history).toContainText('2 个成果');
@@ -146,10 +174,12 @@ try {
   await page.getByLabel(/我已核对备份内容/).check(); await button('确认恢复工作台').click(); await expect(page.getByText(/恢复已完成/)).toBeVisible();
   await page.getByRole('tab', { name: '对话', exact: true }).click(); await unlock(); await workflow(); await field('已保存工作流').selectOption(workflowId);
   await expect(field('工作流名称')).toHaveValue('合成工作流'); await expect(history).toContainText('已中断');
-  expect(calls).toHaveLength(5); expect(errors).toEqual([]);
+  await field('选择工作流运行').selectOption(recoveredRun); await expect(history).toContainText('已按依赖顺序完成 4 个步骤');
+  await expect(history.locator('ol > li')).toHaveCount(4); await expect(field('选择工作流成果').locator('option')).toHaveCount(3);
+  expect(calls).toHaveLength(8); expect(errors).toEqual([]);
   expect(requests.filter(url => /huggingface|\.onnx(?:\?|$)/.test(url))).toEqual([]);
   if (mode === 'native') expect(requests.filter(url => url.startsWith(upstream))).toEqual([]);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: true, mode, requests: calls.length, checks: ['canvas pointer/keyboard movement', 'fork/join and cycle rejection', 'XLSX sheet import into encrypted workflow input', 'local tools and actual Markdown/DOCX downloads', 'strict incremental model, partial, EOF, stop, lock', 'repeated continuation failure then retry without prefix execution', 'partial-node retry using older revision after definition changes', 'original history and isolated continuation artifacts', 'per-run cloud consent', 'encrypted definitions/revisions/run snapshots', 'backup restore including continuation without replay', 'no embedding downloads'], docx: 'download XML only; no pagination', errors }, null, 2));
   console.log(`Workflow ${mode} QA passed: ${output}`);
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {}); await writeFile(path.join(output, 'failure.json'), JSON.stringify({ message: String(error), errors }, null, 2)); throw error;

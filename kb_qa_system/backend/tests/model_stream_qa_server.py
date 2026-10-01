@@ -60,6 +60,11 @@ def me():
     return user
 
 
+@app.get("/api/v1/private-models/account")
+def account():
+    return {"available": True, "model": "native-chat"}
+
+
 @app.get("/api/v1/{path:path}")
 def other(path: str):
     return {}
