@@ -20,6 +20,30 @@ it('exports Chinese, formatting, ordered lists, repeated table headers and liter
   expect(result.warnings).toEqual([]);
 });
 
+it('applies the selected local style without changing Markdown content', async () => {
+  const standard = await markdownToDocx('# 标题\n\n正文', '样式', 'standard');
+  const business = await markdownToDocx('# 标题\n\n正文', '样式', 'business');
+  const meeting = await markdownToDocx('# 标题\n\n正文', '样式', 'meeting');
+  const standardZip = await JSZip.loadAsync(standard.bytes), businessZip = await JSZip.loadAsync(business.bytes), meetingZip = await JSZip.loadAsync(meeting.bytes);
+  const standardXml = await standardZip.file('word/document.xml')!.async('string');
+  const businessXml = await businessZip.file('word/document.xml')!.async('string');
+  const meetingXml = await meetingZip.file('word/document.xml')!.async('string');
+  const businessStyles = await businessZip.file('word/styles.xml')!.async('string');
+  const meetingStyles = await meetingZip.file('word/styles.xml')!.async('string');
+  expect(standardXml).toContain('w:pgSz w:w="12240" w:h="15840"');
+  expect(businessXml).toContain('w:pgSz w:w="11906" w:h="16838"');
+  expect(meetingXml).toContain('w:pgSz w:w="11906" w:h="16838"');
+  expect(businessStyles).toContain('w:color w:val="1F4E79"');
+  expect(meetingStyles).toContain('w:color w:val="0F6B78"');
+  expect(business.converterVersion).toBe('markdown-docx/2:business');
+  expect(meeting.converterVersion).toBe('markdown-docx/2:meeting');
+  expect(await businessZip.file('word/document.xml')!.async('string')).toContain('正文');
+});
+
+it('rejects unknown style IDs instead of falling back silently', async () => {
+  await expect(markdownToDocx('# 标题', '样式', 'custom' as never)).rejects.toThrow('受支持');
+});
+
 it('keeps untrusted HTML, links, images and footnotes inert and explains fidelity limits', async () => {
   const result = await markdownToDocx('# 安全\n\n[网站](https://example.test?q=1) ![示意图](https://example.test/a.png)\n\n<script>alert(1)</script>\n\n[引用][r]\n\n[r]: https://example.test/ref\n\n文本[^n]\n\n[^n]: 备注', '安全');
   const zip = await JSZip.loadAsync(result.bytes);

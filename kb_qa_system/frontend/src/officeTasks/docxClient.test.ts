@@ -14,7 +14,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 it('terminates the worker after a successful transferable result', async () => {
   const pending = exportDocx('# local', 'title', new AbortController().signal);
   const result = { ok: true, bytes: new ArrayBuffer(3), converterVersion: 'fixture', warnings: [] };
-  expect(FakeWorker.latest.postMessage).toHaveBeenCalledWith({ content: '# local', title: 'title' });
+  expect(FakeWorker.latest.postMessage).toHaveBeenCalledWith({ content: '# local', title: 'title', style: 'standard' });
   FakeWorker.latest.onmessage!({ data: result });
   await expect(pending).resolves.toEqual(result);
   expect(FakeWorker.latest.terminate).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0);

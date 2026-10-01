@@ -6,6 +6,8 @@ import type { WorkArtifact } from '@/types/workbench';
 import { ArtifactComparison } from './ArtifactComparison';
 import { documentExportContent } from '@/officeTasks/document';
 import { finishLabel } from '@/services/modelStream';
+import type { DocxStyle } from '@/officeTasks/docxStyles';
+import { DocxStyleSelect } from './DocxStyleSelect';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -23,6 +25,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [docxStyle, setDocxStyle] = useState<DocxStyle>('standard');
   const [comparing, setComparing] = useState(false);
   const [restorePlan, setRestorePlan] = useState<{ sourceId: string; latestId: string; sourceVersion: number; nextVersion: number } | null>(null);
   const mounted = useRef(false);
@@ -43,7 +46,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
   async function exportWord() {
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await store.exportArtifactDocx(artifact.id);
+      const result = await store.exportArtifactDocx(artifact.id, docxStyle);
       if (mounted.current && useWorkbenchStore.getState().unlocked) {
         download(new Blob([result.bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), result.name);
         setNotice(['已生成所选版本的 DOCX。', ...result.warnings].join(' '));
@@ -80,6 +83,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
     </div>
     <div className="mt-3 flex flex-wrap gap-2">
       <button className="work-command" disabled={busy || editing} onClick={() => download(new Blob([documentExportContent(artifact)], { type: 'text/markdown;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.md`)}><Download size={16} />下载 Markdown</button>
+      <DocxStyleSelect value={docxStyle} onChange={setDocxStyle} disabled={busy || editing} />
       <button className="work-command" disabled={busy || editing} onClick={() => void exportWord()}><Download size={16} />{busy && !editing ? '正在导出…' : '导出 DOCX'}</button>
       <button className="work-command" disabled={busy || editing} onClick={() => void exportHtml()}><FileCode2 size={16} />导出 HTML</button>
       {!editing && <button className="work-command" disabled={busy || artifact.id !== ordered[0].id} onClick={() => { setDraft(artifact.content); setEditing(true); setSelected(artifact.id); setNotice(''); setError(''); setRestorePlan(null); setComparing(false); }}><Pencil size={16} />编辑新版本</button>}
