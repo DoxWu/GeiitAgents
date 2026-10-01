@@ -48,6 +48,8 @@ export interface TaskRun {
   error?: string;
   toolRunIds: string[];
   artifactIds: string[];
+  resumedFromTaskId?: string;
+  resumeFromNodeId?: string;
 }
 
 export interface ToolRun {

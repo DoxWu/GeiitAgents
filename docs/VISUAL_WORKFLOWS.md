@@ -43,3 +43,10 @@
 `frontend/scripts/verify-workflows.mjs` 提供 Web、`--relay`、`--account`、`--native` 实际页面验收，隔离 origin / WebView 数据，动态端口。检查拖动/键盘布局、三节点分叉汇合、环路拒绝、实际 Markdown/DOCX 下载、刷新恢复，再增加模型节点检查增量/正常结束/输出上限/EOF/停止/锁库，以及实际加密备份下载、预检查、整体恢复后不重放。每模式 5 次合成生成 HTTP 请求，纯本地阶段零模型请求。云端模式使用实际 FastAPI 路由/HTTP 传输，认证/选模/上游为 fixture；不代表线上登录、真实供应商或计费验收。原生结果、构建摘要和最终通过状态以 [工作记录](WORK_LOG.md) 为准。
 
 尚未实现：条件表达式/分支选择、循环、定时/事件触发、断线续跑、单节点重试、任意插件工具、定义单独导入/导出、自动保存未提交画布草稿、画布缩放/自动布局、历史分页。缺失部分保留在路线中；不将首版称为完整自动化平台。低配、最大容量、强杀/断电、真实供应商及 DOCX 分页仍需后续验收。
+## Resume and retry (2026-10-01)
+
+Failed, interrupted, or cancelled workflow runs can create a new continuation run from history. The default resumes at the first incomplete step; a failed step can also be selected for retry. Completed checkpoints and artifacts are restored as inputs without repeating their model or tool calls. The continuation receives new task, tool-run, and artifact IDs while the original history remains unchanged.
+
+Continuation always uses the original workflow revision and input snapshot. Cloud model steps require fresh consent. Missing prerequisite checkpoints or artifacts reject the continuation before any model request.
+
+The older limitation list above predates this change; single-step retry and continuation are now available through run history. Other listed limits remain unchanged.

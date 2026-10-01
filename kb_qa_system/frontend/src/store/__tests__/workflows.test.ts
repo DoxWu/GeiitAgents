@@ -102,6 +102,28 @@ it('stops on partial model output and keeps its artifact in portable backups', a
   const backup = await store.getState().exportWorkbenchBackup('5678', false);
   expect((await importVaultBackup(backup.file, '5678')).data.artifacts?.[0].finishReason).toBe('length');
 });
+it('resumes a failed workflow from saved checkpoints without rerunning completed nodes', async () => {
+  const inspect = newWorkflowNode('inspect_csv', 0), generate = newWorkflowNode('generate_document', 1), create = newWorkflowNode('create_document', 2);
+  const d = await store.getState().saveWorkflow({ ...newWorkflow(), name: 'resumable', nodes: [inspect, generate, create], edges: [{ from: inspect.id, to: generate.id }, { from: generate.id, to: create.id }] });
+  await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockRejectedValueOnce(new Error('temporary model failure'));
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('temporary model failure');
+  const failed = store.getState().taskRuns[0];
+  expect(failed.status).toBe('failed');
+  expect(store.getState().toolRuns.filter(tool => tool.taskId === failed.id && tool.status === 'succeeded')).toHaveLength(1);
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, _m, _s, _chunk, finish) => { finish?.('stop'); return '# resumed'; });
+  const resumedId = await store.getState().resumeWorkflow(failed.id, undefined, false);
+  const resumed = store.getState().taskRuns.find(task => task.id === resumedId)!;
+  expect(resumed.resumedFromTaskId).toBe(failed.id);
+  expect(resumed.resumeFromNodeId).toBe(generate.id);
+  expect(resumed.status).toBe('succeeded');
+  expect(vi.mocked(completeModel)).toHaveBeenCalledTimes(2);
+  expect(resumed.toolRunIds).toHaveLength(2);
+  expect(new Set(resumed.toolRunIds).size).toBe(2);
+  expect(resumed.artifactIds.every(id => !failed.artifactIds.includes(id))).toBe(true);
+  const restored = await importVaultBackup((await store.getState().exportWorkbenchBackup('5678', false)).file, '5678');
+  expect(restored.data.taskRuns?.find(task => task.id === resumedId)?.resumedFromTaskId).toBe(failed.id);
+});
 it('blocks execution when initial run record cannot persist', async () => {
   const d = await definition(true); await store.getState().saveProfile(profile, 'fixture-key');
   vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new DOMException('quota'); });

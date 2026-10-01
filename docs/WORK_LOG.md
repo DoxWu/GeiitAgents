@@ -708,3 +708,20 @@
 - [本地库首版实现与本次验证](LOCAL_KNOWLEDGE_BASE_IMPLEMENTATION_2026-09-20.md)
 - [备份与恢复 API](BACKUP_RECOVERY_API.md)
 - [Sealos 恢复、备份与告警](../kb_qa_system/docs/SEALOS_RECOVERY_AND_BACKUP.md)
+### 2026-10-01：Cargo 环境复用、dev.27 安装包与工作流续跑
+
+- 代码实现：新增 `frontend/scripts/desktop-toolchain.mjs`，统一发现仓库内 `.tools/cargo`、`.tools/rustup` 并注入子进程 PATH；`build-desktop.mjs` 与 `desktop:check` 共用该入口。即使调用环境没有 `cargo`、`CARGO_HOME` 或 `RUSTUP_HOME`，也会使用仓库内 Cargo。新增 `cargo-check.mjs`，不修改系统级 PATH。
+- 代码实现：工作流运行支持从失败/中断/取消记录创建新续跑任务。保存的成功检查点会恢复为前置结果，失败步骤或用户指定步骤重新执行；新任务记录 `resumedFromTaskId`/`resumeFromNodeId`，不覆盖原任务、不复用旧成果 ID。云端步骤续跑仍需重新授权。
+- 代码实现：备份 schema 接受并校验续跑关联字段；运行历史增加“从失败步骤继续”和“重试此步骤并继续”入口。
+- 本地验证：清空 `CARGO_HOME`/`RUSTUP_HOME` 后 `npm run desktop:check` 通过；定向工作流、续跑与界面测试 32 项通过；新增续跑回归覆盖前置步骤不重复调用和新成果隔离。待完成全量前端测试、TypeScript、ESLint 和生产 Web 构建复核。
+- 构建产物：开发通道升至 `0.1.0-dev.27`，`npm run desktop:build` 成功生成未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.27_x64-setup.exe`，8,332,070 字节，SHA-256 `719A2DD1A1F0E3F3F332A31288CDE602E38531FB0DC2D5A2269987828809B988`。未安装、未推送、未部署；Windows WebView2 原生验收仍未完成。
+- 未完成与风险：条件分支、定时/事件触发、自动保存草稿、历史分页、强杀/断电和低配验收仍未实现；续跑依赖本机仍保留前置检查点/成果，云端授权与真实供应商未联调。下一步先跑全量质量门禁，再决定是否补充续跑 UI 的浏览器验收。
+### 2026-10-01（补充）：续跑代码纳入 dev.28
+
+- 构建产物：续跑实现完成后将开发通道升至 `0.1.0-dev.28` 并重新执行 `npm run desktop:build`。未签名 NSIS 位于 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.28_x64-setup.exe`，8,334,853 字节，SHA-256 `EBFCCC51D8E870319F6AF92A979F5CCF59699A51950740AF2F65C86779FCF7ED`。
+- 本地验证：全量 Vitest **111 个测试文件 / 1062 项通过**；`npm run check`、`npm run lint`、`npx vite build --configLoader runner`、`git diff --check` 通过。测试中的 React act 和错误边界日志为既有预期输出，无失败项。
+- 线上与发布：未安装、未推送远程仓库、未部署 Sealos；Windows WebView2 原生调试仍报告 `Native debugger unavailable`，因此不记录为原生验收通过。
+### 2026-10-01（最终构建）：续跑备份校验修复纳入 dev.29
+
+- 构建产物：开发通道升至 `0.1.0-dev.29`，重新生成未签名 NSIS：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.29_x64-setup.exe`，8,334,344 字节，SHA-256 `2E8D96198162AE3BD875C3BEF054D8E19A56A6701135489562D2E7C95529D14D`。
+- 本地验证：schema 修复后的全量 Vitest 仍为 **111 个测试文件 / 1062 项通过**；续跑加密备份导入回归通过；dev.29 桌面构建成功。未安装、未推送、未部署。

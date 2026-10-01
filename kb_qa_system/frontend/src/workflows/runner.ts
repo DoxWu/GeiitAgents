@@ -5,6 +5,10 @@ import type { FinishReason } from '@/services/modelStream';
 import type { ToolRun, WorkArtifact } from '@/types/workbench';
 import { validateWorkflow, validateWorkflowInput, workflowOrder, type WorkflowDefinition, type WorkflowInput } from './definition';
 
+export interface WorkflowResumeOptions {
+  completedResults?: Map<string, string>;
+}
+
 export function prepareWorkflow(definition: WorkflowDefinition, input: WorkflowInput) {
   const graph = validateWorkflow(definition), values = validateWorkflowInput(input);
   // Reject static CSV/chart errors before a model is charged or a task is created.
@@ -16,12 +20,13 @@ export function prepareWorkflow(definition: WorkflowDefinition, input: WorkflowI
 }
 export async function runWorkflow(taskId: string, definition: WorkflowDefinition, input: WorkflowInput, signal: AbortSignal,
   model: (input: DocumentTaskInput, node: WorkflowDefinition['nodes'][number]) => Promise<{ content: string; model: string; finishReason: FinishReason }>,
-  checkpoint: (event: ToolCheckpoint) => Promise<void>): Promise<string> {
+  checkpoint: (event: ToolCheckpoint) => Promise<void>, options: WorkflowResumeOptions = {}): Promise<string> {
   const prepared = prepareWorkflow(definition, input), graph = prepared.definition, values = prepared.input;
-  const results = new Map<string, string>();
+  const results = new Map(options.completedResults ?? []);
   const guard = () => { if (signal.aborted) throw new DOMException('工作流已停止', 'AbortError'); };
   for (const node of workflowOrder(graph)) {
     guard();
+    if (results.has(node.id)) continue;
     const sources = graph.edges.filter(e => e.to === node.id).map(e => ({ step: graph.nodes.find(n => n.id === e.from)!.title, output: results.get(e.from)! }));
     const context = JSON.stringify({ ...(node.includeInputs ? { reference: values.reference, csv: values.csv } : {}), previousSteps: sources });
     if (node.kind === 'generate_document' && context.length > 100000) throw new Error('前置步骤结果超过 100000 字符，请拆分工作流；不会静默截断。');

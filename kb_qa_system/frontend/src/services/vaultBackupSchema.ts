@@ -35,7 +35,7 @@ const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn:
 const workflow: Check = value => { validateWorkflow(value); };
 const workflowInput: Check = value => { validateWorkflowInput(value); };
 const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), summary: optional(str(1_000_000)),
-  title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50) });
+  title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50), resumedFromTaskId: optional(id), resumeFromNodeId: optional(id) });
 const finishReason = optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown'));
 const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('model.complete', 'document.edit', 'document.restore', 'document.export-docx', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document'),
   callId: optional(id), arguments: optional(str(1_000_000)), result: optional(str(1_000_000)), sourceArtifactId: optional(id), previousArtifactId: optional(id), outputArtifactId: optional(id), outputSha256: optional(hash), outputName: optional(str(300)), converterVersion: optional(str(100)), warnings: optional(arr(str(10000), 100)), status, model: optional(str(1000)), startedAt: date, finishedAt: optional(date), error: optional(str(100000)) });
@@ -95,11 +95,13 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     for (const t of data.reminderTemplates ?? []) validateReminderTemplate(t);
     const tasks = new Map((data.taskRuns ?? []).map(t => [t.id, t])), artifacts = new Map((data.artifacts ?? []).map(a => [a.id, a])), tools = new Map((data.toolRuns ?? []).map(t => [t.id, t]));
     for (const t of tasks.values()) {
+      if (t.resumedFromTaskId && (!tasks.has(t.resumedFromTaskId) || t.resumedFromTaskId === t.id || tasks.get(t.resumedFromTaskId)!.type !== 'workflow.run')) fail();
+      if (t.resumeFromNodeId && !t.resumedFromTaskId) fail();
       if ((t.type === 'workflow.run') !== Boolean(t.workflow)) fail();
       if (t.workflow) {
         const steps = t.toolRunIds.map(id => tools.get(id)).filter(step => step?.workflowNodeId);
         if (new Set(steps.map(step => step!.workflowNodeId)).size !== steps.length) fail();
-        if (t.status === 'succeeded' && (steps.length !== t.workflow.definition.nodes.length || steps.some(step => step!.status !== 'succeeded'))) fail();
+        if (t.status === 'succeeded' && ((!t.resumedFromTaskId && steps.length !== t.workflow.definition.nodes.length) || !steps.length || steps.some(step => step!.status !== 'succeeded'))) fail();
       }
       if (new Set(t.artifactIds).size !== t.artifactIds.length || new Set(t.toolRunIds).size !== t.toolRunIds.length) fail();
       if (t.artifactIds.some(id => artifacts.get(id)?.taskId !== t.id) || t.toolRunIds.some(id => tools.get(id)?.taskId !== t.id)) fail();

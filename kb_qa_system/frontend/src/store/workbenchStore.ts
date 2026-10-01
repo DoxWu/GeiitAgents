@@ -12,7 +12,7 @@ import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/a
 import { buildDocumentMessages, documentExportContent, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import { generationPreview, type GenerationPreview } from '@/services/generationPreview';
 import type { FinishReason } from '@/services/modelStream';
-import type { WorkflowDefinition, WorkflowInput } from '@/workflows/definition';
+import { workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
 import type { ChartInput } from '@/officeTasks/chart';
 import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
 import { inputFromDraft, validatePersonalDraft, type PersonalDraft } from '@/personal/itemDraft';
@@ -72,7 +72,8 @@ interface WorkbenchState {
   workflows: WorkflowDefinition[];
   saveWorkflow: (definition: WorkflowDefinition) => Promise<WorkflowDefinition>;
   removeWorkflow: (id: string, revision: number) => Promise<void>;
-  startWorkflow: (id: string, revision: number, input: WorkflowInput, profileId: string, allowCloud: boolean) => Promise<string>;
+  startWorkflow: (id: string, revision: number, input: WorkflowInput, profileId: string, allowCloud: boolean, resume?: { sourceTaskId: string; fromNodeId?: string }) => Promise<string>;
+  resumeWorkflow: (taskId: string, fromNodeId: string | undefined, allowCloud: boolean) => Promise<string>;
   vaultTransferBusy: boolean;
   vaultRestorePreview: { id: string; replacing: boolean; summary: VaultBackupSummary } | null;
   exportWorkbenchBackup: (password: string, includeKeys: boolean) => Promise<{ file: Blob; summary: VaultBackupSummary }>;
@@ -1096,7 +1097,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set(state => ({ workflows: state.workflows.filter(item => item.id !== id) }));
     await persist(true);
   },
-  startWorkflow: async (definitionId, revision, input, profileId, allowCloud) => {
+  startWorkflow: async (definitionId, revision, input, profileId, allowCloud, resume) => {
     const epoch = generation;
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     // Snapshot caller input before imports/awaits; definitions cannot mutate a live run.
@@ -1106,6 +1107,40 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const definition = get().workflows.find(item => item.id === definitionId);
     if (!definition || definition.revision !== revision) throw new Error('工作流未保存或修订已变化，请保存/重新载入后运行。');
     const frozen = prepareWorkflow(definition, frozenInput);
+    const source = resume ? get().taskRuns.find(task => task.id === resume.sourceTaskId) : undefined;
+    if (resume && (!source || !source.workflow || !['failed', 'interrupted', 'cancelled'].includes(source.status))) {
+      throw new Error('仅失败、中断或取消的工作流可以继续运行。');
+    }
+    if (resume && source?.workflow && (source.workflow.definition.id !== frozen.definition.id || source.workflow.definition.revision !== frozen.definition.revision
+      || JSON.stringify(source.workflow.input) !== JSON.stringify(frozen.input))) {
+      throw new Error('续跑必须使用原工作流修订和原始输入快照。');
+    }
+    const completedResults = new Map<string, string>();
+    let resumeNodeId = resume?.fromNodeId;
+    if (resume && source) {
+      const ordered = workflowOrder(frozen.definition);
+      const firstIncomplete = ordered.find(node => {
+        const step = get().toolRuns.find(tool => tool.taskId === source.id && tool.workflowNodeId === node.id);
+        return !step || step.status !== 'succeeded' || Boolean(step.finishReason && step.finishReason !== 'stop');
+      });
+      resumeNodeId = resumeNodeId || firstIncomplete?.id;
+      if (!resumeNodeId) throw new Error('原工作流没有可续跑的步骤。');
+      const resumeIndex = ordered.findIndex(node => node.id === resumeNodeId);
+      if (resumeIndex < 0) throw new Error('续跑步骤不存在于原工作流快照中。');
+      for (const node of ordered.slice(0, resumeIndex)) {
+        const step = get().toolRuns.find(tool => tool.taskId === source.id && tool.workflowNodeId === node.id);
+        if (!step || step.status !== 'succeeded' || Boolean(step.finishReason && step.finishReason !== 'stop') || !step.result) {
+          throw new Error('续跑步骤的前置检查点不完整，无法安全跳过。');
+        }
+        let result = step.result;
+        if (step.outputArtifactId) {
+          const artifact = get().artifacts.find(item => item.id === step.outputArtifactId && item.taskId === source.id);
+          if (!artifact) throw new Error('续跑所需的前置成果已丢失。');
+          if (artifact.kind === 'markdown') result = artifact.content;
+        }
+        completedResults.set(node.id, result);
+      }
+    }
     const modelNodes = frozen.definition.nodes.filter(node => node.kind === 'generate_document');
     const usesModel = modelNodes.length > 0;
     const routes = new Map(modelNodes.map(node => {
@@ -1127,7 +1162,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     controllers.set(token, controller); if ([...routes.values()].some(route => route.account)) accountRequests.add(token);
     const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('工作流已停止或密钥库已锁定', 'AbortError'); };
     set(state => ({ taskRuns: [{ id, type: 'workflow.run', workflow: frozen, title: definition.name, profileId: usesModel ? profileId : '',
-      instruction: '手动运行已保存工作流', status: 'running', createdAt: now, updatedAt: now, toolRunIds: [], artifactIds: [] }, ...state.taskRuns] }));
+      instruction: resume ? '从已保存检查点继续运行工作流' : '手动运行已保存工作流', status: 'running', createdAt: now, updatedAt: now, toolRunIds: [], artifactIds: [],
+      ...(source ? { resumedFromTaskId: source.id, ...(resumeNodeId ? { resumeFromNodeId: resumeNodeId } : {}) } : {}) }, ...state.taskRuns] }));
     const timeout = setTimeout(() => controller.abort(), 12 * 60000);
     try {
       await persist(true); guard();
@@ -1156,7 +1192,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
           taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, updatedAt: new Date().toISOString(),
             toolRunIds: task.toolRunIds.includes(step.id) ? task.toolRunIds : [...task.toolRunIds, step.id], artifactIds: artifact ? [...task.artifactIds, artifact.id] : task.artifactIds } : task) }));
         await persist(true); guard();
-      });
+      }, { completedResults });
       guard();
       set(state => ({ taskRuns: state.taskRuns.map(task => task.id === id ? { ...task, status: 'succeeded', summary, updatedAt: new Date().toISOString() } : task) }));
       await persist(true); guard(); return id;
@@ -1170,6 +1206,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       }
       throw error;
     } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); }
+  },
+  resumeWorkflow: async (taskId, fromNodeId, allowCloud) => {
+    const source = get().taskRuns.find(task => task.id === taskId);
+    if (!source?.workflow) throw new Error('找不到可续跑的工作流记录。');
+    return get().startWorkflow(source.workflow.definition.id, source.workflow.definition.revision, source.workflow.input,
+      source.profileId, allowCloud, { sourceTaskId: taskId, ...(fromNodeId ? { fromNodeId } : {}) });
   },
   cancelTask: (id) => { controllers.get(`task:${id}`)?.abort(); },
   startChartTask: async (input, requestId) => {
