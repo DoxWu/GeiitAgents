@@ -135,6 +135,7 @@ export interface WorkArtifact {
 export interface VaultData {
   workflows?: import('@/workflows/definition').WorkflowDefinition[];
   workflowDraft?: import('@/workflows/definition').WorkflowDefinition | null;
+  workflowSchedules?: import('@/workflows/schedule').WorkflowSchedule[];
   fileEditDraft?: import('@/fileOrganizer/textEdit').FileEditDraft | null;
   fileEditVersions?: import('@/fileOrganizer/textEdit').FileEditVersion[];
   personalDrafts?: import('@/personal/itemDraft').PersonalDraft[];

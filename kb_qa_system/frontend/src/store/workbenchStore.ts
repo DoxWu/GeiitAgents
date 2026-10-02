@@ -17,6 +17,7 @@ import { buildDocumentMessages, documentExportContent, normalizeDocumentMarkdown
 import { generationPreview, type GenerationPreview } from '@/services/generationPreview';
 import type { FinishReason } from '@/services/modelStream';
 import { validateWorkflow, workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
+import { isDue, nextIntervalAt, scheduleEvent, validateWorkflowSchedule, type WorkflowSchedule } from '@/workflows/schedule';
 import type { ChartInput } from '@/officeTasks/chart';
 import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
 import { inputFromDraft, validatePersonalDraft, type PersonalDraft } from '@/personal/itemDraft';
@@ -52,6 +53,9 @@ let reminderSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let reminderDraftVersion = 0;
 let workflowDraftTimer: ReturnType<typeof setTimeout> | undefined;
 let workflowDraftVersion = 0;
+let workflowScheduleTimer: ReturnType<typeof setInterval> | undefined;
+let workflowSchedulePolling = false;
+const workflowSchedulesInFlight = new Map<string, symbol>();
 let personalSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let personalDraftVersion = 0;
 function clearPersonalTimer() { clearTimeout(personalSaveTimer); personalSaveTimer = undefined; }
@@ -65,6 +69,7 @@ function requireReminderOwner(owner: string) {
 }
 function clearReminderTimer() { clearTimeout(reminderSaveTimer); reminderSaveTimer = undefined; }
 function clearWorkflowDraftTimer() { clearTimeout(workflowDraftTimer); workflowDraftTimer = undefined; }
+function clearWorkflowScheduleTimer() { clearInterval(workflowScheduleTimer); workflowScheduleTimer = undefined; }
 
 interface WorkbenchState {
   textBatchPreview: TextBatchPreview | null;
@@ -79,6 +84,7 @@ interface WorkbenchState {
   cancelPersonalImport: () => void;
   retryPersonalImport: () => Promise<void>;
   workflows: WorkflowDefinition[];
+  workflowSchedules: WorkflowSchedule[];
   workflowDraft: WorkflowDefinition | null;
   workflowDraftSaving: boolean;
   stageWorkflowDraft: (definition: WorkflowDefinition) => boolean;
@@ -87,6 +93,10 @@ interface WorkbenchState {
   removeWorkflow: (id: string, revision: number) => Promise<void>;
   startWorkflow: (id: string, revision: number, input: WorkflowInput, profileId: string, allowCloud: boolean, resume?: { sourceTaskId: string; fromNodeId?: string }) => Promise<string>;
   resumeWorkflow: (taskId: string, fromNodeId: string | undefined, allowCloud: boolean) => Promise<string>;
+  saveWorkflowSchedule: (schedule: WorkflowSchedule) => Promise<WorkflowSchedule>;
+  removeWorkflowSchedule: (id: string) => Promise<void>;
+  triggerWorkflowEvent: (eventName: string) => Promise<void>;
+  runWorkflowSchedule: (id: string, allowCloud: boolean) => Promise<string>;
   vaultTransferBusy: boolean;
   vaultRestorePreview: { id: string; replacing: boolean; summary: VaultBackupSummary } | null;
   exportWorkbenchBackup: (password: string, includeKeys: boolean) => Promise<{ file: Blob; summary: VaultBackupSummary }>;
@@ -240,7 +250,61 @@ async function persist(required = false) {
 
 function vaultSnapshot(): VaultData {
   const state = useWorkbenchStore.getState();
-  return { workflows: state.workflows, workflowDraft: state.workflowDraft, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
+  return { workflows: state.workflows, workflowDraft: state.workflowDraft, workflowSchedules: state.workflowSchedules, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
+}
+
+async function pollWorkflowSchedules() {
+  const state = useWorkbenchStore.getState();
+  if (workflowSchedulePolling || !state.unlocked || !vault) return;
+  workflowSchedulePolling = true;
+  try {
+    const now = new Date();
+    for (const schedule of state.workflowSchedules) {
+      if (!isDue(schedule, now) || workflowSchedulesInFlight.has(schedule.id)) continue;
+      const definition = state.workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
+      if (!definition) {
+        useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, status: 'error', lastError: '工作流修订已不存在，请重新配置触发器。', updatedAt: now.toISOString() } : item) }));
+        continue;
+      }
+      const cloud = definition.nodes.some(node => node.kind === 'generate_document'
+        && (node.profileId === ACCOUNT_MODEL_ID || state.profiles.find(profile => profile.id === (node.profileId || schedule.profileId))?.mode === 'relay'));
+      if (cloud) {
+        useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, status: 'awaiting-authorization', lastError: '云端步骤需要本次明确授权；未自动重放。', updatedAt: now.toISOString() } : item) }));
+        await persist();
+        continue;
+      }
+      await executeWorkflowSchedule(schedule.id, false);
+    }
+  } finally { workflowSchedulePolling = false; }
+}
+
+async function executeWorkflowSchedule(id: string, allowCloud: boolean): Promise<string> {
+  const state = useWorkbenchStore.getState();
+  if (!state.unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+  const schedule = state.workflowSchedules.find(item => item.id === id);
+  if (!schedule) throw new Error('找不到工作流触发器。');
+  const workflow = state.workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
+  if (!workflow) throw new Error('触发器引用的工作流修订不存在。');
+  if (workflowSchedulesInFlight.has(id)) throw new Error('触发器运行中，请先等待或停止工作流。');
+  const token = Symbol(id);
+  workflowSchedulesInFlight.set(id, token);
+  const now = new Date();
+  useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: 'awaiting-device', updatedAt: now.toISOString() } : item) }));
+  await persist(true);
+  try {
+    const runId = await state.startWorkflow(schedule.workflowId, schedule.workflowRevision, schedule.input, schedule.profileId, allowCloud);
+    const finished = new Date();
+    useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: 'enabled', lastRunAt: finished.toISOString(), nextRunAt: item.kind === 'interval' ? nextIntervalAt(item, finished) : undefined, lastError: undefined, updatedAt: finished.toISOString() } : item) }));
+    await persist(true);
+    return runId;
+  } catch (error) {
+    const failed = new Date().toISOString();
+    useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: 'error', lastError: error instanceof Error ? error.message : '自动触发失败。', updatedAt: failed } : item) }));
+    await persist();
+    throw error;
+  } finally {
+    if (workflowSchedulesInFlight.get(id) === token) workflowSchedulesInFlight.delete(id);
+  }
 }
 
 function eraseMemory() {
@@ -259,7 +323,9 @@ function eraseMemory() {
   vault?.lock();
   vault = null;
   clearWorkflowDraftTimer();
-  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+  clearWorkflowScheduleTimer();
+  workflowSchedulesInFlight.clear();
+  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], workflowSchedules: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -762,7 +828,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
   },
-  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
+  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -803,9 +869,16 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       error: '客户端在工具调用完成前关闭或锁定。' } : tool);
     const organizerRuns = (data.organizerRuns ?? []).map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, updatedAt: unlockedAt, error: '操作中断，文件可能已部分变更；请核对目录和暂存副本，勿直接重新执行。' } : run);
     const fileEditVersions = (data.fileEditVersions ?? []).map(r => r.status === 'running' ? { ...r, status: 'interrupted' as const, updatedAt: unlockedAt, error: '写入期间中断，文件可能已经变更；请先核验，不自动重放。' } : r);
-    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
+    const workflowSchedules = (data.workflowSchedules ?? []).map(item => validateWorkflowSchedule(item));
+    const recoveredSchedules = workflowSchedules.map(schedule => schedule.enabled && schedule.status === 'enabled'
+      && schedule.nextRunAt && Date.parse(schedule.nextRunAt) <= Date.now()
+      ? { ...schedule, status: 'awaiting-device' as const, updatedAt: unlockedAt } : schedule);
+    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], workflowSchedules: recoveredSchedules, workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], reminderDraftSaving: false, organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
+    if (recoveredSchedules.some((item, index) => item !== workflowSchedules[index])) await persist();
+    clearWorkflowScheduleTimer();
+    workflowScheduleTimer = setInterval(() => { void pollWorkflowSchedules().catch(() => {}); }, 30_000);
   },
   lock: async () => {
     get().cancelVaultTransfer(); get().cancelPersonalImport(); get().cancelFileEditBatch();
@@ -816,7 +889,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const lockingVault = vault;
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
-    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+    clearWorkflowScheduleTimer();
+    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
@@ -1189,6 +1263,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const { validateWorkflow } = await import('@/workflows/definition');
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
     const clean = validateWorkflow(frozen), previous = get().workflows.find(item => item.id === clean.id);
+    if (get().workflowSchedules.some(item => item.workflowId === clean.id)) throw new Error('请先删除此工作流的触发器，再修改修订。');
     if ((previous?.revision ?? 0) !== clean.revision) throw new Error('工作流已在其他编辑器中更新，请重新载入后修改。');
     if (!previous && get().workflows.length >= 30) throw new Error('最多保存 30 个工作流。');
     if (clean.revision >= 1000000) throw new Error('工作流修订已达上限，请另存为新工作流。');
@@ -1203,6 +1278,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   removeWorkflow: async (id, revision) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     if (get().workflows.find(item => item.id === id)?.revision !== revision) throw new Error('工作流已变化，请重新载入。');
+    if (get().workflowSchedules.some(item => item.workflowId === id)) throw new Error('请先删除此工作流的触发器。');
     if (get().workflowDraft?.id === id) { workflowDraftVersion++; clearWorkflowDraftTimer(); }
     set(state => ({ workflows: state.workflows.filter(item => item.id !== id),
       ...(state.workflowDraft?.id === id ? { workflowDraft: null, workflowDraftSaving: false } : {}) }));
@@ -1349,6 +1425,38 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!source?.workflow) throw new Error('找不到可续跑的工作流记录。');
     return get().startWorkflow(source.workflow.definition.id, source.workflow.definition.revision, source.workflow.input,
       source.profileId, allowCloud, { sourceTaskId: taskId, ...(fromNodeId ? { fromNodeId } : {}) });
+  },
+  saveWorkflowSchedule: async schedule => {
+    const epoch = generation;
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const clean = validateWorkflowSchedule(schedule), workflow = get().workflows.find(item => item.id === clean.workflowId);
+    if (!workflow || workflow.revision !== clean.workflowRevision) throw new Error('触发器引用的工作流修订不存在，请重新保存配置。');
+    if (!get().workflowSchedules.some(item => item.id === clean.id) && get().workflowSchedules.length >= 30) throw new Error('最多保存 30 个触发器。');
+    if (workflowSchedulesInFlight.has(clean.id)) throw new Error('触发器运行中，请先等待或停止工作流。');
+    const { prepareWorkflow } = await import('@/workflows/runner');
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
+    prepareWorkflow(workflow, clean.input);
+    if (clean.profileId && clean.profileId !== ACCOUNT_MODEL_ID && !get().profiles.some(item => item.id === clean.profileId)) throw new Error('触发器默认模型连接不存在。');
+    const saved = { ...clean, updatedAt: new Date().toISOString(), status: clean.enabled ? 'enabled' as const : 'paused' as const,
+      nextRunAt: clean.enabled ? (clean.kind === 'interval' ? clean.nextRunAt ?? nextIntervalAt(clean) : clean.nextRunAt) : undefined };
+    set(state => ({ workflowSchedules: [...state.workflowSchedules.filter(item => item.id !== saved.id), saved] }));
+    await persist(true); return saved;
+  },
+  removeWorkflowSchedule: async id => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (workflowSchedulesInFlight.has(id)) throw new Error('触发器运行中，请先等待或停止工作流。');
+    set(state => ({ workflowSchedules: state.workflowSchedules.filter(item => item.id !== id) }));
+    await persist(true);
+  },
+  triggerWorkflowEvent: async eventName => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const now = new Date();
+    set(state => ({ workflowSchedules: state.workflowSchedules.map(item => scheduleEvent(item, eventName, now)) }));
+    await persist(true);
+    await pollWorkflowSchedules();
+  },
+  runWorkflowSchedule: async (id, allowCloud) => {
+    return executeWorkflowSchedule(id, allowCloud);
   },
   cancelTask: (id) => { controllers.get(`task:${id}`)?.abort(); },
   startChartTask: async (input, requestId) => {
