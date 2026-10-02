@@ -661,3 +661,9 @@
 - Sealos preflight 门禁已本地提交为 `4a23acc`，工作树在推送前干净，模板/ready 行为和差异检查通过。
 - 已执行普通 `git fetch agents --prune`、远程差异检查和 `git push agents develop/geiit-agents`；GitHub 443 再次不可达，推送未完成。
 - 远程仍保持已成功的模板提交 `cb65340`；未强推、未修改 `main`。网络恢复后一次普通推送即可同步 `4a23acc` 及之前的文档提交。
+### 2026-10-03：部署准备目标完成审计
+
+- 完成目标审计：部署选型推荐、CI 容器构建门禁、Sealos Kustomize 应用模板、PVC/Secret 占位样例和 Windows PowerShell preflight 均已落地；已明确 Sealos 首发架构、Railway 备选限制、资源规格、发布顺序、备份恢复、回滚和目标环境验收门禁。
+- 当前本地证据：工作树干净；`git diff --check` 通过；`preflight.ps1 -Mode template` 通过；`kubectl kustomize` 渲染出 2 个 Deployment、2 个 Service、2 个 PVC，并包含 `/live`、`/ready` 探针。此前本批已验证前端 check/lint/build、桌面工具链、Cargo、Compose 配置、CI YAML 和 Railway JSON。
+- 完成边界：当前达到“可以准备 staging/首发部署”的状态，不宣称已完成 Sealos/生产部署。真实 Secret、Git SHA 镜像、目标 PostgreSQL/pgvector、Redis、PVC、域名 HTTPS、provider、邮件、备份恢复和告警仍需在目标环境执行。
+- Git：本地最新提交为 `6ca72ed`，远程 `agents/develop/geiit-agents` 仍为已成功推送的 `cb65340`；本地新增文档/门禁提交因 GitHub 443 波动暂未同步。未修改 `main`，未强推。
