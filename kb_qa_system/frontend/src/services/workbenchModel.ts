@@ -1,6 +1,6 @@
 import { apiClient, getStoredTokens } from "@/api/client";
 import { API_BASE_URL } from "@/utils/constants";
-import type { ModelProfile } from "@/types/workbench";
+import type { ModelMessageContent, ModelProfile } from "@/types/workbench";
 import { finishReason, readModelResponse, type FinishReason } from './modelStream';
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
@@ -38,7 +38,7 @@ export function requirePrivateRelay(apiKey: string): void {
 
 export async function completeModel(
   profile: ModelProfile, apiKey: string,
-  messages: { role: string; content: string }[], signal: AbortSignal,
+  messages: { role: string; content: ModelMessageContent }[], signal: AbortSignal,
   onChunk?: (chunk: string) => void,
   onFinish?: (reason: FinishReason) => void,
 ): Promise<string> {
@@ -114,7 +114,7 @@ export async function getAccountModel(signal: AbortSignal): Promise<{ model: str
 }
 
 export async function completeAccountModel(
-  messages: { role: string; content: string }[], signal: AbortSignal,
+  messages: { role: string; content: ModelMessageContent }[], signal: AbortSignal,
   onChunk?: (chunk: string) => void,
   onFinish?: (reason: FinishReason) => void,
 ): Promise<{ content: string; model: string }> {

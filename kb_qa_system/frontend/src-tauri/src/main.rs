@@ -16,7 +16,32 @@ struct Requests(Mutex<HashMap<String, oneshot::Sender<()>>>);
 #[derive(Deserialize, Serialize)]
 struct Message {
     role: String,
-    content: String,
+    content: serde_json::Value,
+}
+
+fn valid_message_content(content: &serde_json::Value) -> bool {
+    let Some(parts) = content.as_array() else {
+        return content.as_str().is_some_and(|text| text.len() <= 400_000);
+    };
+    if parts.is_empty() || parts.len() > 4
+        || parts[0].as_object().is_none_or(|part| part.len() != 2 || part.get("type") != Some(&serde_json::json!("text")))
+        || !parts[0]["text"].as_str().is_some_and(|text| text.len() <= 400_000)
+    { return false; }
+    let mut images = 0;
+    parts.iter().skip(1).all(|part| {
+        if part.as_object().is_none_or(|value| value.len() != 2 || value.get("type") != Some(&serde_json::json!("image_url")))
+            || part["image_url"].as_object().is_none_or(|value| value.len() != 1)
+        { return false; }
+        images += 1;
+        let Some(url) = part["image_url"]["url"].as_str() else { return false; };
+        let Some((header, data)) = url.split_once(",") else { return false; };
+        if !data.is_ascii() { return false; }
+        let padding = data.bytes().rev().take_while(|byte| *byte == b'=').count();
+        ["data:image/png;base64", "data:image/jpeg;base64", "data:image/webp;base64"].contains(&header)
+            && !data.is_empty() && data.len() <= 2_100_000 && data.len() % 4 == 0 && padding <= 2
+            && !data[..data.len() - padding].contains('=')
+            && data.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"+/=".contains(&byte))
+    }) && images <= 3
 }
 
 #[derive(Serialize, Debug)]
@@ -49,8 +74,8 @@ async fn run_local_completion(
     if request_id.is_empty() || request_id.len() > 100 || model.trim().is_empty() || model.chars().count() > 200 || model.chars().any(|c| c.is_control())
         || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c)) || max_tokens.is_some_and(|value| !(1..=2147483647).contains(&value))
         || messages.is_empty() || messages.len() > 100
-        || messages.iter().any(|m| !["user", "assistant", "system"].contains(&m.role.as_str()) || m.content.len() > 400000)
-        || messages.iter().map(|m| m.content.len()).sum::<usize>() > 800000
+        || messages.iter().any(|m| !["user", "assistant", "system"].contains(&m.role.as_str()) || !valid_message_content(&m.content))
+        || serde_json::to_vec(&messages).map_or(true, |body| body.len() > 6 * 1024 * 1024)
     { return Err("Invalid model request".into()); }
     let (cancel, cancelled) = oneshot::channel();
     {

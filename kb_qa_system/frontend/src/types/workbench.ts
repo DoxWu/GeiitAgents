@@ -33,9 +33,25 @@ export interface WorkMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  images?: WorkImage[];
   createdAt: string;
   model?: string;
 }
+
+export interface WorkImage {
+  name: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  dataUrl: string;
+  bytes: number;
+}
+
+export interface ModelImagePart {
+  type: 'text' | 'image_url';
+  text?: string;
+  image_url?: { url: string };
+}
+
+export type ModelMessageContent = string | ModelImagePart[];
 
 export interface WorkConversation {
   kind?: 'knowledge-answer';

@@ -41,6 +41,18 @@ it('roundtrips an incomplete encrypted workflow draft without promoting it to a 
   expect(restored.data.workflows).toBeUndefined();
 });
 
+it('roundtrips bounded conversation images in encrypted backups and rejects spoofed image data', async () => {
+  const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+  const data: VaultData = { profiles: [], conversations: [{ id: 'conversation', title: 'Chart review', profileId: '', updatedAt: new Date().toISOString(), messages: [
+    { id: 'message', role: 'user', content: 'Check the chart', images: [image], createdAt: new Date().toISOString() },
+  ] }] };
+  const { file } = await exportVaultBackup(data, '1234');
+  expect((await importVaultBackup(file, '1234')).data.conversations[0].messages[0].images).toEqual([image]);
+  const invalid = structuredClone(data);
+  invalid.conversations[0].messages[0].images![0].dataUrl = 'data:image/png;base64,AAAAAAAAAAA=';
+  await expect(validateVaultBackup(invalid)).rejects.toThrow('备份内容无效');
+});
+
 it('preserves validated three-way file merge snapshots in encrypted backups', async () => {
   const source = await vaultBackupFixture(), version = source.fileEditVersions![0];
   version.merge = {

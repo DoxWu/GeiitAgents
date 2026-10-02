@@ -8,6 +8,7 @@ import { validateReminderDraft, validateReminderTemplate } from '@/personal/remi
 import { textBytes, validateDraft, validateTextName, MAX_VERSION_BYTES } from '@/fileOrganizer/textEdit';
 import { validFileName } from '@/fileOrganizer/plan';
 import { validateWorkflow, validateWorkflowInput } from '@/workflows/definition';
+import { MAX_CONVERSATION_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE, validateWorkImage } from './workbenchImages';
 
 type Check = (value: unknown) => void;
 const fail = (): never => { throw new Error('备份内容无效、超限或版本不兼容，当前工作台未更改。'); };
@@ -31,8 +32,9 @@ const status = one('running', 'succeeded', 'failed', 'cancelled', 'interrupted')
 const capabilityEvidence = obj({ state: one('unknown', 'supported', 'unsupported'), testedAt: optional(date), fingerprint: optional(hash), value: optional(num(2147483647, 1)) });
 const capabilities = obj({ text: optional(capabilityEvidence), toolCalls: optional(capabilityEvidence), vision: optional(capabilityEvidence), contextWindow: optional(capabilityEvidence), maxOutputTokens: optional(capabilityEvidence) });
 const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local'), baseUrl: str(2048, 1), model: str(400, 1), maxTokens: optional(num(2147483647, 1)), textTestedAt: optional(date), toolTestedAt: optional(date), capabilities: optional(capabilities), apiKey: str(4096) });
+const workImage = obj({ name: str(240), mimeType: one('image/png', 'image/jpeg', 'image/webp'), dataUrl: str(2_100_000, 1), bytes: num(1_500_000, 1) });
 const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: str(1000), profileId: str(200), updatedAt: date,
-  messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
+  messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), images: optional(arr(workImage, MAX_IMAGES_PER_MESSAGE)), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
 const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)) };
 const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'horizontal_bar', 'line', 'pie', 'scatter'), unit: str(20) });
 const workflow: Check = value => { validateWorkflow(value); };
@@ -100,7 +102,13 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
         if (evidence.state === 'unknown' && evidence.value !== undefined) fail();
       }
     }
-    for (const c of data.conversations) unique(c.messages);
+    let workImageBytes = 0;
+    for (const c of data.conversations) {
+      unique(c.messages);
+      const images = c.messages.flatMap(message => message.images ?? []);
+      for (const image of images) { validateWorkImage(image); workImageBytes += image.bytes; }
+    }
+    if (workImageBytes > MAX_CONVERSATION_IMAGE_BYTES) fail();
     for (const p of data.personalItems ?? []) validatePersonalInput(p);
     for (const d of data.personalDrafts ?? []) { validatePersonalDraft(d); if (d.input.kind === 'todo' && (!d.input.status || !d.input.priority || d.input.dueAt === undefined)) fail(); }
     for (const d of data.reminderDrafts ?? []) validateReminderDraft(d);

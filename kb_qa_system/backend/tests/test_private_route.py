@@ -75,12 +75,16 @@ def test_authenticated_route_validation_no_cache_and_key_header():
         assert response.headers["cache-control"] == "no-store"
         assert response.json() == {"content": "done", "model": "test"}
         assert completion.await_args.args[1] == "fixture-private-key"
+        image_content = [{"type": "text", "text": "Check this chart"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}]
+        image_body = {"base_url": body["base_url"], "model": body["model"], "messages": [{"role": "user", "content": image_content}]}
+        assert client.post(url, json=image_body, headers={"X-Model-Api-Key": "fixture-private-key"}).status_code == 200
+        assert completion.await_args.args[0].messages[0].content == image_content
         invalid = client.post(url, json={**body, "api_key": "fixture-private-key"})
         assert invalid.status_code == 422
         assert "fixture-private-key" not in invalid.text
-        oversized = client.post(url, content=b"x" * (1024 * 1024 + 1))
+        oversized = client.post(url, content=b"x" * (6 * 1024 * 1024 + 1))
         assert oversized.status_code == 413
-        assert completion.await_count == 1
+        assert completion.await_count == 2
 
     async def private_chunks(data, api_key, completion):
         assert api_key == "fixture-private-key"
@@ -113,8 +117,12 @@ def test_authenticated_route_validation_no_cache_and_key_header():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
         assert response.json()["content"] == "cloud reply"
+        image_content = [{"type": "text", "text": "Check this chart"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}]
+        response = client.post(account_url + "/complete", json={"messages": [{"role": "user", "content": image_content}]})
+        assert response.status_code == 200
+        assert account_completion.await_args.args[0].messages[0].content == image_content
         assert client.post(account_url + "/complete", json=body).status_code == 422
-        assert account_completion.await_count == 1
+        assert account_completion.await_count == 2
 
     async def account_chunks(data, completion):
         yield "账号"

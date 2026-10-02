@@ -1,5 +1,6 @@
 """Behavior tests for the request-scoped relay; no database or provider calls."""
 import asyncio
+import base64
 import json
 import socket
 from unittest.mock import AsyncMock, patch
@@ -18,6 +19,27 @@ def payload(**changes):
         "base_url": "https://models.example/v1", "model": "test-model",
         "messages": [{"role": "user", "content": "hello"}], **changes,
     })
+
+
+def test_multimodal_request_accepts_bounded_png_and_rejects_mime_spoofing():
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
+    data = payload(messages=[{"role": "user", "content": [
+        {"type": "text", "text": "inspect this chart"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}},
+    ]}])
+    assert data.messages[0].content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    with pytest.raises(ValidationError):
+        payload(messages=[{"role": "user", "content": [
+            {"type": "text", "text": "inspect"},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{png}"}},
+        ]}])
+
+
+def test_multimodal_request_rejects_extra_fields_and_too_many_images():
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
+    image = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}}
+    with pytest.raises(ValidationError):
+        payload(messages=[{"role": "user", "content": [{"type": "text", "text": "inspect"}, image, image, image, image]}])
 
 
 def test_resolves_once_and_pins_ip_with_original_tls_hostname():

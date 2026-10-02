@@ -64,7 +64,7 @@ it('persists a reported output limit alongside text through vault reload', async
 
 it("routes concurrent replies back to their own conversations", async () => {
   const pending = new Map<string, (value: string) => void>();
-  vi.mocked(completeModel).mockImplementation((_p, _key, messages) => new Promise((resolve) => pending.set(messages[0].content, resolve)));
+  vi.mocked(completeModel).mockImplementation((_p, _key, messages) => new Promise((resolve) => pending.set(String(messages[0].content), resolve)));
   const a = store.getState().newConversation(); const runA = store.getState().send(a, "task A");
   const b = store.getState().newConversation(); const runB = store.getState().send(b, "task B");
   await vi.waitFor(() => expect(pending.size).toBe(2));
@@ -74,6 +74,30 @@ it("routes concurrent replies back to their own conversations", async () => {
   expect(store.getState().conversations.find((c) => c.id === b)?.messages.map((m) => m.content)).toEqual(["task B", "answer B"]);
   expect(JSON.stringify(store.getState())).not.toContain("fixture-key");
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain("fixture-key");
+});
+
+it('keeps image attachments encrypted at rest and sends OpenAI-compatible parts to a local model', async () => {
+  const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+  vi.mocked(completeModel).mockResolvedValue('The chart rises.');
+  const id = store.getState().newConversation();
+  await store.getState().send(id, 'Describe this chart', [image]);
+  const conversation = store.getState().conversations.find(item => item.id === id)!;
+  expect(conversation.messages[0].images).toEqual([image]);
+  expect(vi.mocked(completeModel).mock.calls.at(-1)?.[2][0].content).toEqual([
+    { type: 'text', text: 'Describe this chart' },
+    { type: 'image_url', image_url: { url: image.dataUrl } },
+  ]);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(image.dataUrl);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().conversations.find(item => item.id === id)?.messages[0].images).toEqual([image]);
+});
+
+it('requires a fresh opt-in before a cloud model receives any image history', async () => {
+  const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+  await store.getState().saveProfile({ ...profile, id: 'relay', name: 'relay', mode: 'relay', baseUrl: 'https://models.example/v1' }, 'fixture-key');
+  const id = store.getState().newConversation('relay');
+  await expect(store.getState().send(id, 'Describe this chart', [image])).rejects.toThrow('需重新明确授权');
+  expect(completeModel).not.toHaveBeenCalled();
 });
 
 it("ignores late responses after locking and recovers the saved user message", async () => {

@@ -8,6 +8,8 @@ import { completeModel, completeAccountModel, getAccountModel, validateProfile, 
 import { discoverModels, type ModelCatalog, type ModelEndpoint } from '@/services/modelDiscovery';
 import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConversation, WorkMessage } from "@/types/workbench";
+import type { WorkImage } from '@/types/workbench';
+import { MAX_CONVERSATION_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE, validateWorkImage } from '@/services/workbenchImages';
 import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages, type KnowledgeTurn } from '@/localKnowledge/answer';
 import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/answerArtifact';
@@ -152,7 +154,7 @@ interface WorkbenchState {
   rename: (id: string, title: string) => void;
   removeConversation: (id: string) => void;
   setProfile: (id: string, profileId: string) => void;
-  send: (id: string, text: string) => Promise<void>;
+  send: (id: string, text: string, images?: WorkImage[], allowCloudImages?: boolean) => Promise<void>;
   cancel: (id: string) => void;
   saveKnowledgeAnswer: (answer: KnowledgeAnswerArtifact) => Promise<string>;
   startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
@@ -922,14 +924,22 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set((state) => ({ conversations: state.conversations.map((c) => c.id === id ? { ...c, profileId } : c) }));
     void persist();
   },
-  send: async (id, text) => {
-    if (!get().unlocked || get().running[id] || !text.trim()) return;
+  send: async (id, text, images = [], allowCloudImages = false) => {
+    if (!get().unlocked || get().running[id] || (!text.trim() && !images.length)) return;
     const conversation = get().conversations.find((item) => item.id === id);
     const profile = get().profiles.find((item) => item.id === conversation?.profileId);
     const secret = secrets.find((item) => item.id === profile?.id);
     const useAccount = conversation?.profileId === ACCOUNT_MODEL_ID || (!conversation?.profileId && !get().profiles.length);
     if (!conversation) throw new Error("请先新建对话。");
     if (conversation.kind === 'knowledge-answer') throw new Error('来源快照是只读记录，请新建对话。');
+    if (images.length > MAX_IMAGES_PER_MESSAGE) throw new Error('每条消息最多附加 3 张图片。');
+    images.forEach(validateWorkImage);
+    const historyImageBytes = conversation.messages.flatMap(message => message.images ?? []).reduce((total, image) => total + image.bytes, 0);
+    const vaultImageBytes = get().conversations.flatMap(item => item.messages.flatMap(message => message.images ?? [])).reduce((total, image) => total + image.bytes, 0);
+    const newImageBytes = images.reduce((total, image) => total + image.bytes, 0);
+    if (vaultImageBytes + newImageBytes > MAX_CONVERSATION_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 4 MiB，请先删除不再需要的旧对话。');
+    const isCloud = useAccount || profile?.mode === 'relay';
+    if (isCloud && (historyImageBytes > 0 || newImageBytes > 0) && !allowCloudImages) throw new Error('云端发送包含本对话中的图片，需重新明确授权。');
     if (useAccount) {
       if (!get().accountModel || !useAuthStore.getState().isAuthenticated || get().accountModel?.userId !== useAuthStore.getState().user?.id) throw new Error("当前账号没有可用的云端模型，请登录有权限的账号或添加模型连接。");
     } else if (!profile || !secret) throw new Error("请先选择已保存的模型连接。");
@@ -937,7 +947,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (text.length > 100000 || conversation.messages.length >= 98 || conversation.messages.reduce((n, m) => n + m.content.length, text.length) > 200000) {
       throw new Error("对话内容已达上限，请新建对话或缩短材料。");
     }
-    const userMessage: WorkMessage = { id: crypto.randomUUID(), role: "user", content: text.trim(), createdAt: new Date().toISOString() };
+    const userMessage: WorkMessage = { id: crypto.randomUUID(), role: "user", content: text.trim(), ...(images.length ? { images } : {}), createdAt: new Date().toISOString() };
     const messages = [...conversation.messages, userMessage];
     const controller = new AbortController();
     controllers.set(id, controller);
@@ -945,13 +955,16 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const epoch = generation;
     const timeout = setTimeout(() => controller.abort(), 120_000);
     set((state) => ({
-      conversations: state.conversations.map((c) => c.id === id ? { ...c, profileId: useAccount ? ACCOUNT_MODEL_ID : c.profileId, messages, title: c.messages.length ? c.title : text.trim().slice(0, 28), updatedAt: userMessage.createdAt } : c),
+      conversations: state.conversations.map((c) => c.id === id ? { ...c, profileId: useAccount ? ACCOUNT_MODEL_ID : c.profileId, messages, title: c.messages.length ? c.title : (text.trim() || '图片检查').slice(0, 28), updatedAt: userMessage.createdAt } : c),
       running: { ...state.running, [id]: true }, streamingContent: { ...state.streamingContent, [id]: "" }, errors: { ...state.errors, [id]: "" },
     }));
     await persist();
     try {
       if (epoch !== generation || controller.signal.aborted) return;
-      const input = messages.map(({ role, content }) => ({ role, content }));
+      const input = messages.map(({ role, content, images: attachments }) => ({
+        role,
+        content: attachments?.length ? [{ type: 'text' as const, text: content }, ...attachments.map(image => ({ type: 'image_url' as const, image_url: { url: image.dataUrl } }))] : content,
+      }));
       const onChunk = (chunk: string) => {
         if (epoch !== generation || controller.signal.aborted || !get().unlocked || controllers.get(id) !== controller) return;
         set(state => ({ streamingContent: { ...state.streamingContent, [id]: (state.streamingContent[id] ?? '') + chunk } }));

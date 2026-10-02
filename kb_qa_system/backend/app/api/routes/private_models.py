@@ -24,13 +24,13 @@ def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
-async def read_payload(request: Request, schema):
+async def read_payload(request: Request, schema, max_bytes: int = 1024 * 1024):
     # Manual validation avoids echoing secret-bearing input through global validation errors.
     try:
         payload = bytearray()
         async for chunk in request.stream():
             payload.extend(chunk)
-            if len(payload) > 1024 * 1024:
+            if len(payload) > max_bytes:
                 raise HTTPException(413, "请求内容过大。", headers=NO_STORE)
         return schema.model_validate_json(payload)
     except (ValidationError, ValueError):
@@ -76,7 +76,7 @@ async def model_list(request: Request):
     Depends(get_current_active_user), Depends(rate_limit("private_model", per_minute=20)),
 ])
 async def complete(request: Request):
-    data = await read_payload(request, PrivateCompletion)
+    data = await read_payload(request, PrivateCompletion, 6 * 1024 * 1024)
     api_key = request.headers.get("x-model-api-key", "")
     try:
         result = await complete_private(data, api_key)
@@ -89,7 +89,7 @@ async def complete(request: Request):
     Depends(get_current_active_user), Depends(rate_limit("private_model", per_minute=20)),
 ])
 async def complete_stream(request: Request):
-    data = await read_payload(request, PrivateCompletion)
+    data = await read_payload(request, PrivateCompletion, 6 * 1024 * 1024)
     api_key = request.headers.get("x-model-api-key", "")
 
     async def events():
@@ -117,7 +117,7 @@ async def account_status(user=Depends(get_current_active_user)):
 async def account_complete(request: Request, user=Depends(get_current_active_user)):
     if not can_use_account_model(user):
         raise HTTPException(403, "当前账号无权使用云端模型。")
-    data = await read_payload(request, AccountCompletion)
+    data = await read_payload(request, AccountCompletion, 6 * 1024 * 1024)
     try:
         return JSONResponse(await complete_account(data), headers=NO_STORE)
     except PrivateModelError as exc:
@@ -128,7 +128,7 @@ async def account_complete(request: Request, user=Depends(get_current_active_use
 async def account_complete_stream(request: Request, user=Depends(get_current_active_user)):
     if not can_use_account_model(user):
         raise HTTPException(403, "当前账号无权使用云端模型。")
-    data = await read_payload(request, AccountCompletion)
+    data = await read_payload(request, AccountCompletion, 6 * 1024 * 1024)
 
     async def events():
         content = []
