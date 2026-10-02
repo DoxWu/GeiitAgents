@@ -95,6 +95,7 @@ interface WorkbenchState {
   resumeWorkflow: (taskId: string, fromNodeId: string | undefined, allowCloud: boolean) => Promise<string>;
   saveWorkflowSchedule: (schedule: WorkflowSchedule) => Promise<WorkflowSchedule>;
   removeWorkflowSchedule: (id: string) => Promise<void>;
+  toggleWorkflowSchedule: (id: string, enabled: boolean) => Promise<void>;
   triggerWorkflowEvent: (eventName: string) => Promise<void>;
   runWorkflowSchedule: (id: string, allowCloud: boolean) => Promise<string>;
   vaultTransferBusy: boolean;
@@ -256,18 +257,23 @@ function vaultSnapshot(): VaultData {
 async function pollWorkflowSchedules() {
   const state = useWorkbenchStore.getState();
   if (workflowSchedulePolling || !state.unlocked || !vault) return;
+  const epoch = generation;
   workflowSchedulePolling = true;
   try {
     const now = new Date();
     for (const schedule of state.workflowSchedules) {
+      if (epoch !== generation || !useWorkbenchStore.getState().unlocked) return;
       if (!isDue(schedule, now) || workflowSchedulesInFlight.has(schedule.id)) continue;
       const definition = state.workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
       if (!definition) {
         useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, status: 'error', lastError: '工作流修订已不存在，请重新配置触发器。', updatedAt: now.toISOString() } : item) }));
         continue;
       }
-      const cloud = definition.nodes.some(node => node.kind === 'generate_document'
-        && (node.profileId === ACCOUNT_MODEL_ID || state.profiles.find(profile => profile.id === (node.profileId || schedule.profileId))?.mode === 'relay'));
+      const cloud = definition.nodes.some(node => {
+        if (node.kind !== 'generate_document') return false;
+        const routeId = node.profileId || schedule.profileId;
+        return routeId === ACCOUNT_MODEL_ID || state.profiles.find(profile => profile.id === routeId)?.mode === 'relay';
+      });
       if (cloud) {
         useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, status: 'awaiting-authorization', lastError: '云端步骤需要本次明确授权；未自动重放。', updatedAt: now.toISOString() } : item) }));
         await persist();
@@ -281,6 +287,7 @@ async function pollWorkflowSchedules() {
 async function executeWorkflowSchedule(id: string, allowCloud: boolean): Promise<string> {
   const state = useWorkbenchStore.getState();
   if (!state.unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+  const epoch = generation;
   const schedule = state.workflowSchedules.find(item => item.id === id);
   if (!schedule) throw new Error('找不到工作流触发器。');
   const workflow = state.workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
@@ -290,16 +297,19 @@ async function executeWorkflowSchedule(id: string, allowCloud: boolean): Promise
   workflowSchedulesInFlight.set(id, token);
   const now = new Date();
   useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: 'awaiting-device', updatedAt: now.toISOString() } : item) }));
-  await persist(true);
   try {
+    await persist(true);
+    if (epoch !== generation || !useWorkbenchStore.getState().unlocked) throw new DOMException('工作流触发期间密钥库已锁定。', 'AbortError');
     const runId = await state.startWorkflow(schedule.workflowId, schedule.workflowRevision, schedule.input, schedule.profileId, allowCloud);
+    if (epoch !== generation || !useWorkbenchStore.getState().unlocked) throw new DOMException('工作流触发期间密钥库已锁定。', 'AbortError');
     const finished = new Date();
-    useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: 'enabled', lastRunAt: finished.toISOString(), nextRunAt: item.kind === 'interval' ? nextIntervalAt(item, finished) : undefined, lastError: undefined, updatedAt: finished.toISOString() } : item) }));
+    useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: item.enabled ? 'enabled' : 'paused', lastRunAt: finished.toISOString(), nextRunAt: item.enabled && item.kind === 'interval' ? nextIntervalAt(item, finished) : undefined, lastError: item.enabled ? undefined : item.lastError, updatedAt: finished.toISOString() } : item) }));
     await persist(true);
     return runId;
   } catch (error) {
+    if (epoch !== generation || !useWorkbenchStore.getState().unlocked) throw error;
     const failed = new Date().toISOString();
-    useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id ? { ...item, status: 'error', lastError: error instanceof Error ? error.message : '自动触发失败。', updatedAt: failed } : item) }));
+    useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === id && item.enabled ? { ...item, status: 'error', lastError: error instanceof Error ? error.message : '自动触发失败。', updatedAt: failed } : item) }));
     await persist();
     throw error;
   } finally {
@@ -810,6 +820,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (existing && existing.kind !== clean.kind) throw new Error('不能更改记录类型。');
     if (!existing && get().personalItems.length >= 500) throw new Error('最多保留 500 条笔记和待办，请导出并删除不需要的记录。');
     const now = new Date().toISOString(), epoch = generation;
+    const completedTodo = clean.kind === 'todo' && clean.status === 'done' && !(existing?.kind === 'todo' && existing.status === 'done');
     const item: PersonalItem = { ...clean, id, revision: expectedRevision + 1, createdAt: existing?.createdAt ?? now, updatedAt: now,
       completedAt: clean.kind === 'todo' && clean.status === 'done' ? existing?.completedAt ?? now : null };
     if (draftEditId) personalDraftVersion++;
@@ -817,6 +828,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       ...(draftEditId ? { personalDrafts: state.personalDrafts.filter(draft => draft.id !== id || draft.editId !== draftEditId), personalDraftSaving: true } : {}) }));
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看保存结果。');
+    if (completedTodo) void get().triggerWorkflowEvent('todo.completed').catch(() => {});
     return item;
   },
   removePersonalItem: async (id, expectedRevision) => {
@@ -917,6 +929,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       throw new Error("此连接仍有运行中的对话。");
     }
     if (get().workflows.some(workflow => workflow.nodes.some(node => node.profileId === id))
+      || get().workflowSchedules.some(schedule => schedule.profileId === id)
       || get().taskRuns.some(task => task.status === 'running' && (task.profileId === id || task.workflow?.definition.nodes.some(node => node.profileId === id)))) {
       throw new Error('此连接仍被已保存或运行中的工作流引用。');
     }
@@ -1263,13 +1276,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const { validateWorkflow } = await import('@/workflows/definition');
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
     const clean = validateWorkflow(frozen), previous = get().workflows.find(item => item.id === clean.id);
-    if (get().workflowSchedules.some(item => item.workflowId === clean.id)) throw new Error('请先删除此工作流的触发器，再修改修订。');
     if ((previous?.revision ?? 0) !== clean.revision) throw new Error('工作流已在其他编辑器中更新，请重新载入后修改。');
     if (!previous && get().workflows.length >= 30) throw new Error('最多保存 30 个工作流。');
     if (clean.revision >= 1000000) throw new Error('工作流修订已达上限，请另存为新工作流。');
     const saved = { ...clean, name: clean.name.trim(), revision: clean.revision + 1, updatedAt: new Date().toISOString() };
     if (get().workflowDraft?.id === saved.id) { workflowDraftVersion++; clearWorkflowDraftTimer(); }
     set(state => ({ workflows: [...state.workflows.filter(item => item.id !== saved.id), saved],
+      workflowSchedules: state.workflowSchedules.map(item => item.workflowId === saved.id ? { ...item, enabled: false, status: 'paused' as const, nextRunAt: undefined, lastError: '工作流已保存新修订，请重新确认触发器输入和模型连接。', updatedAt: saved.updatedAt } : item),
       ...(state.workflowDraft?.id === saved.id ? { workflowDraft: null, workflowDraftSaving: false } : {}) }));
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定。');
@@ -1446,6 +1459,21 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     if (workflowSchedulesInFlight.has(id)) throw new Error('触发器运行中，请先等待或停止工作流。');
     set(state => ({ workflowSchedules: state.workflowSchedules.filter(item => item.id !== id) }));
+    await persist(true);
+  },
+  toggleWorkflowSchedule: async (id, enabled) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const schedule = get().workflowSchedules.find(item => item.id === id);
+    if (!schedule) throw new Error('找不到工作流触发器。');
+    if (workflowSchedulesInFlight.has(id)) throw new Error('触发器运行中，请先等待或停止工作流。');
+    const workflow = get().workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
+    if (!workflow) throw new Error('触发器引用的工作流修订不存在，请重新保存配置。');
+    const now = new Date().toISOString();
+    set(state => ({ workflowSchedules: state.workflowSchedules.map(item => item.id === id ? {
+      ...item, enabled, status: enabled ? 'enabled' as const : 'paused' as const,
+      nextRunAt: enabled && item.kind === 'interval' ? item.nextRunAt ?? nextIntervalAt(item) : enabled ? item.nextRunAt : undefined,
+      lastError: enabled ? undefined : item.lastError, updatedAt: now,
+    } : item) }));
     await persist(true);
   },
   triggerWorkflowEvent: async eventName => {

@@ -52,6 +52,37 @@ it('enforces explicit cloud consent and account permissions before recording a r
   await expect(store.getState().startWorkflow(d.id, d.revision, input, ACCOUNT_MODEL_ID, true)).rejects.toThrow('权限');
   expect(store.getState().taskRuns).toHaveLength(0); expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
 });
+
+it('runs a local event trigger once and preserves cloud authorization as pending', async () => {
+  const localNode = newWorkflowNode('create_document', 0);
+  const local = await store.getState().saveWorkflow({ ...newWorkflow(), name: 'todo local event', nodes: [localNode] });
+  await store.getState().saveWorkflowSchedule({ id: 'local-event', workflowId: local.id, workflowRevision: local.revision, kind: 'event', eventName: 'todo.completed', input, profileId: '', enabled: true, status: 'enabled', updatedAt: new Date().toISOString() });
+  await store.getState().triggerWorkflowEvent('todo.completed');
+  expect(store.getState().taskRuns[0]).toMatchObject({ type: 'workflow.run', status: 'succeeded' });
+  expect(store.getState().workflowSchedules.find(item => item.id === 'local-event')).toMatchObject({ status: 'enabled', nextRunAt: undefined });
+  await store.getState().toggleWorkflowSchedule('local-event', false);
+  await store.getState().triggerWorkflowEvent('todo.completed');
+  expect(store.getState().taskRuns).toHaveLength(1);
+
+  const modelNode = newWorkflowNode('generate_document', 0); modelNode.profileId = 'event-relay';
+  const cloud = await store.getState().saveWorkflow({ ...newWorkflow(), name: 'todo cloud event', nodes: [modelNode] });
+  await store.getState().saveProfile({ ...profile, id: 'event-relay', mode: 'relay', baseUrl: 'https://fixture.example/v1' }, 'relay-key');
+  await store.getState().saveWorkflowSchedule({ id: 'cloud-event', workflowId: cloud.id, workflowRevision: cloud.revision, kind: 'event', eventName: 'todo.completed', input, profileId: 'event-relay', enabled: true, status: 'enabled', updatedAt: new Date().toISOString() });
+  await store.getState().triggerWorkflowEvent('todo.completed');
+  expect(store.getState().taskRuns).toHaveLength(1);
+  expect(store.getState().workflowSchedules.find(item => item.id === 'cloud-event')).toMatchObject({ status: 'awaiting-authorization', lastError: expect.stringContaining('明确授权') });
+});
+
+it('pauses scheduled workflows when a new workflow revision is saved', async () => {
+  const node = newWorkflowNode('create_document', 0);
+  const saved = await store.getState().saveWorkflow({ ...newWorkflow(), nodes: [node] });
+  await store.getState().saveWorkflowSchedule({ id: 'revision-event', workflowId: saved.id, workflowRevision: saved.revision, kind: 'event', eventName: 'todo.completed', input, profileId: '', enabled: true, status: 'enabled', updatedAt: new Date().toISOString() });
+  const revised = await store.getState().saveWorkflow({ ...saved, name: 'changed' });
+  expect(revised.revision).toBe(2);
+  expect(store.getState().workflowSchedules[0]).toMatchObject({ enabled: false, status: 'paused', workflowRevision: 1 });
+  await expect(store.getState().triggerWorkflowEvent('todo.completed')).resolves.toBeUndefined();
+  expect(store.getState().taskRuns).toHaveLength(0);
+});
 it('routes model steps independently and requires consent when any selected route is cloud', async () => {
   const d = await definition(true), second = newWorkflowNode('generate_document', 1);
   second.profileId = 'workflow-relay';

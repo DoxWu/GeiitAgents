@@ -94,6 +94,13 @@ try {
   const box = await handle.boundingBox(); await page.mouse.move(box.x + 30, box.y + 6); await page.mouse.down(); await page.mouse.move(box.x + 70, box.y + 146, { steps: 5 }); await page.mouse.up();
   await handle.press('ArrowRight'); await button('保存工作流').click(); await expect(page.getByRole('status')).toContainText('修订 1');
   const workflowId = await field('已保存工作流').inputValue();
+  await field('工作流 CSV').fill('月份,销量\n一月,12\n二月,18');
+  await field('触发间隔分钟').fill('60'); await button('添加触发器').click();
+  await expect(page.getByText(/每 60 分钟 · 已启用/)).toBeVisible();
+  await button('暂停').click(); await expect(page.getByText(/每 60 分钟 · 已暂停/)).toBeVisible();
+  await button('恢复').click(); await expect(page.getByText(/每 60 分钟 · 已启用/)).toBeVisible();
+  await page.getByRole('button', { name: '删除', exact: true }).click();
+  await expect(page.getByText(/每 60 分钟/)).toHaveCount(0);
   const portableEvent = page.waitForEvent('download'); await button('导出定义').click();
   const portableDownload = await portableEvent, portablePath = path.join(output, 'workflow-definition.json'); await portableDownload.saveAs(portablePath);
   const portableText = await readFile(portablePath, 'utf8'), portable = JSON.parse(portableText);

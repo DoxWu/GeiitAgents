@@ -11,6 +11,7 @@ import { exportWorkflowDefinition, importWorkflowDefinition, MAX_WORKFLOW_FILE_B
 import type { WorkflowScheduleKind } from '@/workflows/schedule';
 
 const statuses: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
+const scheduleStatuses = { enabled: '已启用', paused: '已暂停', 'awaiting-device': '待设备', 'awaiting-authorization': '待授权', error: '需处理' } as const;
 const RUNS_PER_PAGE = 10;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export function Workflows() {
@@ -219,7 +220,19 @@ export function Workflows() {
       <div className="grid gap-3 sm:grid-cols-[auto_1fr_auto]"><select aria-label="触发器类型" className="work-input" value={scheduleKind} onChange={e => setScheduleKind(e.target.value as WorkflowScheduleKind)}><option value="interval">定时</option><option value="event">事件</option></select>
         {scheduleKind === 'interval' ? <label className="work-label">间隔（分钟）<input aria-label="触发间隔分钟" className="work-input" type="number" min={5} max={43200} value={scheduleMinutes} onChange={e => setScheduleMinutes(e.target.value)} /></label> : <label className="work-label">事件名称<input aria-label="触发事件名称" className="work-input" maxLength={100} value={scheduleEvent} onChange={e => setScheduleEvent(e.target.value)} /></label>}
         <button className="work-command self-end" disabled={!draft.revision || busy} onClick={() => void addSchedule()}>添加触发器</button></div>
-      <ul className="space-y-2">{(store.workflowSchedules ?? []).filter(item => item.workflowId === draft.id).map(item => { const itemCloud = draft.nodes.some(node => node.kind === 'generate_document' && (node.profileId === ACCOUNT_MODEL_ID || store.profiles.find(profile => profile.id === (node.profileId || item.profileId))?.mode === 'relay')); return <li key={item.id} className="flex flex-wrap items-center gap-2 rounded border border-line p-3 text-sm"><span>{item.kind === 'interval' ? `每 ${item.intervalMinutes} 分钟` : `事件：${item.eventName}`} · {item.status}{item.nextRunAt ? ` · 下次 ${new Date(item.nextRunAt).toLocaleString()}` : ''}</span>{itemCloud && (item.status === 'awaiting-authorization' || item.status === 'error') && <label className="flex items-center gap-1"><input type="checkbox" checked={Boolean(scheduleConsent[item.id])} onChange={e => setScheduleConsent({ ...scheduleConsent, [item.id]: e.target.checked })} />本次云端授权</label>} {(item.status === 'awaiting-device' || item.status === 'awaiting-authorization' || item.status === 'error') && <button className="work-command" disabled={itemCloud && !scheduleConsent[item.id]} onClick={() => void store.runWorkflowSchedule(item.id, Boolean(scheduleConsent[item.id])).then(() => setNotice('已按当前触发器创建运行记录。')).catch(e => setError(e instanceof Error ? e.message : '无法执行触发器。'))}>现在运行</button>}<button className="work-command" onClick={() => void store.removeWorkflowSchedule(item.id).catch(e => setError(e instanceof Error ? e.message : '无法删除触发器。'))}>删除</button></li>; })}</ul>
+      <ul className="space-y-2">{(store.workflowSchedules ?? []).filter(item => item.workflowId === draft.id).map(item => {
+        const itemCloud = draft.nodes.some(node => {
+          if (node.kind !== 'generate_document') return false;
+          const routeId = node.profileId || item.profileId;
+          return routeId === ACCOUNT_MODEL_ID || store.profiles.find(profile => profile.id === routeId)?.mode === 'relay';
+        });
+        const needsManual = item.status === 'awaiting-device' || item.status === 'awaiting-authorization' || item.status === 'error';
+        return <li key={item.id} className="flex flex-wrap items-center gap-2 rounded border border-line p-3 text-sm"><span>{item.kind === 'interval' ? `每 ${item.intervalMinutes} 分钟` : `事件：${item.eventName}`} · {scheduleStatuses[item.status]}{item.nextRunAt ? ` · 下次 ${new Date(item.nextRunAt).toLocaleString()}` : ''}</span>
+          {itemCloud && (item.status === 'awaiting-authorization' || item.status === 'error') && <label className="flex items-center gap-1"><input type="checkbox" checked={Boolean(scheduleConsent[item.id])} onChange={e => setScheduleConsent({ ...scheduleConsent, [item.id]: e.target.checked })} />本次云端授权</label>}
+          {needsManual && <button className="work-command" disabled={itemCloud && !scheduleConsent[item.id]} onClick={() => void store.runWorkflowSchedule(item.id, Boolean(scheduleConsent[item.id])).then(() => setNotice('已按当前触发器创建运行记录。')).catch(e => setError(e instanceof Error ? e.message : '无法执行触发器。'))}>现在运行</button>}
+          {item.status === 'enabled' || item.status === 'paused' ? <button className="work-command" onClick={() => void store.toggleWorkflowSchedule(item.id, item.status === 'paused').catch(e => setError(e instanceof Error ? e.message : '无法修改触发器。'))}>{item.status === 'enabled' ? '暂停' : '恢复'}</button> : null}
+          <button className="work-command" onClick={() => void store.removeWorkflowSchedule(item.id).catch(e => setError(e instanceof Error ? e.message : '无法删除触发器。'))}>删除</button></li>;
+      })}</ul>
     </section>
     {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
     {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}
