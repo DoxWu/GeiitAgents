@@ -6,8 +6,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 const output = path.resolve('../../.tools/local-answer-qa');
 const mockOnly = process.env.LOCAL_ANSWER_MOCK === '1';
+const browserProfile = process.env.LOCAL_ANSWER_PROFILE
+  ? path.resolve(process.env.LOCAL_ANSWER_PROFILE)
+  : path.resolve('../../.tools/local-knowledge-qa/browser-profile');
 await mkdir(output, { recursive: true });
-const context = await chromium.launchPersistentContext(path.resolve('../../.tools/local-knowledge-qa/browser-profile'), { headless: true, viewport: { width: 1200, height: 1000 } });
+const context = await chromium.launchPersistentContext(browserProfile, { headless: true, viewport: { width: 1200, height: 1000 } });
 const page = await context.newPage();
 for (const old of context.pages()) if (old !== page) await old.close();
 const errors = [], sent = [];
@@ -52,7 +55,9 @@ try {
     localStorage.clear();
     localStorage.setItem('kb_auth_tokens', JSON.stringify({ access_token: 'synthetic-test-session', refresh_token: 'synthetic-test-session' }));
     localStorage.setItem('kb_auth_user', JSON.stringify({ id: 101, username: 'synthetic-test-user', email: 'test@example.test', is_active: true, is_superuser: false, user_type: 'regular' }));
-    await new Promise((resolve, reject) => { const r = indexedDB.deleteDatabase('geiit-local-knowledge-v1'); r.onsuccess = resolve; r.onerror = reject; });
+    for (const database of ['geiit-local-knowledge-v1', 'geiit-private-vault-v1']) {
+      await new Promise((resolve, reject) => { const r = indexedDB.deleteDatabase(database); r.onsuccess = resolve; r.onerror = reject; });
+    }
   });
   await page.reload();
   console.log('Fixture session initialized.');
@@ -102,7 +107,7 @@ try {
   expect(JSON.parse(sent[0].messages[1].content).sources).toHaveLength(1);
   await expect(generate).toBeDisabled(); // no consent reuse
   await page.getByLabel('本地检索问题').fill('尚未重新检索的问题');
-  await expect(answer.getByText('问题：报销需要哪些材料，何时提交？')).toBeVisible();
+  await expect(answer.getByText('问题：报销需要哪些材料，何时提交？', { exact: true })).toBeVisible();
   const downloadEvent = page.waitForEvent('download');
   await answer.getByRole('button', { name: '导出回答 Markdown' }).click();
   const download = await downloadEvent;

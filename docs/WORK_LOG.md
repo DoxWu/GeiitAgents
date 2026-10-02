@@ -549,3 +549,14 @@
 - 构建产物：开发通道升至 `0.1.0-dev.66`，使用项目隔离 Cargo/Rust 工具链完成 release/NSIS。最终未签名安装包：`kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.66_x64-setup.exe`，**9,178,413 字节**，SHA-256 `79DD282972FF7F5CBA0F493183436930D9178BF7A68D0748C45CA9F63820A104`。未安装、签名、部署或推送。
 - 未完成/风险：触发器仍是客户端生命周期内的本机调度，关闭客户端期间无法执行；真实供应商、邮件、原生 WebView2、8 GB/大容量、跨物理卷/断电、循环工作流、PDF/OCR、专有模型协议仍未完成。Cargo 全量 `fmt --check` 的既有排版差异未批量格式化。未调用真实 API Key、真实模型、真实邮件或生产数据库。
 - Git：本轮修改与本记录待提交到本地 `develop/geiit-agents`；旧 `main` 不变，远程 `agents` 不推送。整体功能目标和发布前远程检查完成前保持开发分支。
+
+### 2026-10-02：Cargo 环境问题复核、实时本地回答隔离验收与 dev.66 重建
+
+- Cargo/构建：在不依赖全局 Cargo 的普通 PowerShell 环境中重新运行 `npm run desktop:toolchain:test`、`npm run desktop:check`、`npm run check` 和 `npm run lint`，全部通过。项目继续使用仓库 `.tools/cargo` 与 `.tools/rustup` 回退；没有修改全局 PATH、HOME、ACL，也没有安装全局 Rust。随后按当前源码重新执行 `npm run desktop:build`，release 与 NSIS 均成功。
+- 安装包：最终未签名包为 `kb_qa_system/frontend/src-tauri/target-dev/release/bundle/nsis/GeiIt Agents Dev_0.1.0-dev.66_x64-setup.exe`，**9,179,349 字节**，SHA-256 `F65770A91ED85AC07EFA4364CEDC3092B5E6696E70F4E7F0D9EDD6526A161AB1`。只完成构建和摘要校验，未安装、签名、部署或推送。
+- 本地知识库验收：为实时回答脚本增加可选 `LOCAL_ANSWER_PROFILE` 浏览器 profile，并在测试初始化时同时清理本地知识库与工作台密钥库数据库，避免持久 profile 污染。使用隔离 profile 重跑后，真实 `Xenova/multilingual-e5-small` CPU/WASM 检索、本地文档索引、显式云端片段授权、回答导出、加密独立记录、锁库刷新恢复和只读不重放闭环通过；mock 生成结果写入 `.tools/local-answer-qa/mock-result.json`。脚本选择器还修复为精确匹配，避免“问题”和“当前问题”文本重复导致假失败。
+- 真实 provider 边界：在同一隔离 profile 下使用 `backend/.env` 的配置 fallback 进行真实生成时，后端 provider 返回 `PermissionError`；脚本只记录安全类别，不输出密钥、URL 或供应商响应。故本轮不能宣称真实账号模型回答通过，产品闭环以真实 E5 检索 + mock 生成验收通过，provider 权限仍待后续授权/配置后重跑。
+- 回归：前端全量 **126 个测试文件 / 1226 项通过**；`verify-document-task.mjs --web` 结果文件确认通过，包含真实 backend complete_private 的合成 provider 场景、加密任务/成果、导出、恢复和 390px 检查。测试中的 jsdom 导航、ErrorBoundary 和文档 store stderr 为既有预期输出。
+- 未完成/风险：真实供应商权限、邮件、原生 WebView2、低配/大容量、跨物理卷/断电、循环工作流、PDF/OCR、专有模型协议和签名升级仍未完成。Cargo 全量 `fmt --check` 仍有历史排版差异，本轮没有批量格式化无关 Rust 文件。未访问生产服务或数据库。
+- Git：本轮只修改本地回答验收脚本与本工作记录，待提交到 `develop/geiit-agents`；旧 `main` 不变，远程 `agents` 尚未 fetch/push。完成整体目标和远程差异/凭据检查后再普通推送，禁止强推。
+- 下一步：继续补齐剩余核心风险的可验证验收；发布前复核远程分支、提交差异和凭据后，再决定是否推送。
