@@ -1,11 +1,11 @@
-import { AlignmentType, BorderStyle, Document, HeadingLevel, LevelFormat, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, type IRunOptions } from 'docx';
+import { AlignmentType, BorderStyle, Document, HeadingLevel, LevelFormat, Packer, Paragraph, Table, TableCell, TableLayoutType, TableRow, TextRun, WidthType, type IRunOptions } from 'docx';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import type { Root, RootContent, PhrasingContent, List, ListItem } from 'mdast';
 import { isDocxStyle, validateDocxFormat, type DocxFormatOptions, type DocxStyle } from './docxStyles';
 
-export const DOCX_CONVERTER_VERSION = 'markdown-docx/3';
+export const DOCX_CONVERTER_VERSION = 'markdown-docx/4';
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 export interface DocxResult { bytes: ArrayBuffer; warnings: string[]; converterVersion: string }
 
@@ -13,6 +13,12 @@ export interface DocxResult { bytes: ArrayBuffer; warnings: string[]; converterV
 export async function markdownToDocx(content: string, title: string, style: DocxStyle = 'standard', format: DocxFormatOptions = {}): Promise<DocxResult> {
   if (!isDocxStyle(style)) throw new Error('请选择受支持的 DOCX 样式。');
   const options = validateDocxFormat(format);
+  const theme = style === 'business' ? { accent: '1F4E79', paper: { width: 11906, height: 16838, margin: { top: 1417, right: 1276, bottom: 1417, left: 1276 } } }
+    : style === 'meeting' ? { accent: '0F6B78', paper: { width: 11906, height: 16838, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }
+      : { accent: '000000', paper: { width: 12240, height: 15840, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } };
+  const page = options.paperSize === 'A4' ? { width: 11906, height: 16838 } : options.paperSize === 'Letter' ? { width: 12240, height: 15840 } : theme.paper;
+  const margin = options.marginInches === undefined ? theme.paper.margin : Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, Math.round(options.marginInches! * 1440)]));
+  const contentWidth = page.width - margin.left - margin.right;
   if (!content.trim() || content.length > 200_000 || Array.from(content).some(char => char.charCodeAt(0) < 32 && !'\t\n\r'.includes(char))) throw new Error('DOCX 导出支持最多 200000 字符的有效 Markdown 文本。');
   const root = unified().use(remarkParse).use(remarkGfm).parse(content) as Root;
   let count = 0;
@@ -54,7 +60,7 @@ export async function markdownToDocx(content: string, title: string, style: Docx
         if (child.type === 'list') return list(child, depth + 1);
         if (child.type !== 'paragraph') return blocks([child]);
         const marker = first; first = false;
-        return [new Paragraph({ children: [...(marker && item.checked != null ? [text(item.checked ? '[x] ' : '[ ] ')] : []), ...inline(child.children)],
+        return [new Paragraph({ widowControl: true, children: [...(marker && item.checked != null ? [text(item.checked ? '[x] ' : '[ ] ')] : []), ...inline(child.children)],
           ...(marker ? node.ordered ? { numbering: { reference, level: depth } } : { bullet: { level: depth } } : { indent: { left: 360 * (depth + 1) } }) })];
       });
     });
@@ -62,8 +68,8 @@ export async function markdownToDocx(content: string, title: string, style: Docx
   function blocks(nodes: RootContent[]): (Paragraph | Table)[] {
     return nodes.flatMap((node): (Paragraph | Table)[] => {
       switch (node.type) {
-        case 'paragraph': return [new Paragraph({ children: inline(node.children) })];
-        case 'heading': return [new Paragraph({ children: inline(node.children), heading: node === root.children[0] && node.depth === 1 ? HeadingLevel.TITLE : [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6][node.depth - 1], keepNext: true })];
+        case 'paragraph': return [new Paragraph({ widowControl: true, children: inline(node.children) })];
+        case 'heading': return [new Paragraph({ widowControl: true, children: inline(node.children), heading: node === root.children[0] && node.depth === 1 ? HeadingLevel.TITLE : [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6][node.depth - 1], keepNext: true })];
         case 'list': return list(node, 0);
         case 'blockquote': warnings.add('引用内容按普通段落保留。'); return blocks(node.children);
         case 'code': return node.value.split('\n').map(line => new Paragraph({ children: [text(line || ' ', { font: 'Consolas', size: 20 })], spacing: { after: 0, line: 260 }, shading: { fill: 'F2F2F2' } }));
@@ -75,12 +81,14 @@ export async function markdownToDocx(content: string, title: string, style: Docx
           const columns = node.children[0]?.children.length ?? 0;
           if (!columns || columns > 8 || node.children.length * columns > 2000) throw new Error('DOCX 表格最多 8 列、2000 个单元格，请拆分后导出。');
           const border = { style: BorderStyle.SINGLE, size: 4, color: 'D9D9D9' };
-          return [new Table({ width: { size: 9360, type: WidthType.DXA }, columnWidths: Array(columns).fill(Math.floor(9360 / columns)),
+          // Keep the grid and cells inside the actual page's writing area.
+          const columnWidths = Array.from({ length: columns }, (_, i) => Math.floor(contentWidth / columns) + (i < contentWidth % columns ? 1 : 0));
+          return [new Table({ width: { size: contentWidth, type: WidthType.DXA }, columnWidths, layout: TableLayoutType.FIXED,
             borders: { top: border, bottom: border, left: border, right: border, insideHorizontal: border, insideVertical: border },
             rows: node.children.map((row, rowIndex) => new TableRow({ tableHeader: rowIndex === 0,
-              children: Array.from({ length: columns }, (_, index) => new TableCell({ width: { size: Math.floor(9360 / columns), type: WidthType.DXA },
+              children: Array.from({ length: columns }, (_, index) => new TableCell({ width: { size: columnWidths[index], type: WidthType.DXA },
                 margins: { top: 90, bottom: 90, left: 100, right: 100 }, shading: rowIndex === 0 ? { fill: 'F2F2F2' } : undefined,
-                children: [new Paragraph({ children: inline(row.children[index]?.children ?? [], { bold: rowIndex === 0 }), spacing: { after: 40 }, alignment: node.align?.[index] === 'right' ? AlignmentType.RIGHT : node.align?.[index] === 'center' ? AlignmentType.CENTER : AlignmentType.LEFT })] })) })),
+                children: [new Paragraph({ widowControl: true, children: inline(row.children[index]?.children ?? [], { bold: rowIndex === 0 }), spacing: { after: 40 }, alignment: node.align?.[index] === 'right' ? AlignmentType.RIGHT : node.align?.[index] === 'center' ? AlignmentType.CENTER : AlignmentType.LEFT })] })) })),
           }), new Paragraph({ children: [] })];
         }
         default: throw new Error(`暂不支持 Markdown 节点：${node.type}`);
@@ -89,11 +97,6 @@ export async function markdownToDocx(content: string, title: string, style: Docx
   }
   const children = blocks(root.children);
   const headings = ['heading1', 'heading2', 'heading3', 'heading4', 'heading5', 'heading6'];
-  const theme = style === 'business' ? { accent: '1F4E79', paper: { width: 11906, height: 16838, margin: { top: 1417, right: 1276, bottom: 1417, left: 1276 } } }
-    : style === 'meeting' ? { accent: '0F6B78', paper: { width: 11906, height: 16838, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }
-      : { accent: '000000', paper: { width: 12240, height: 15840, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } };
-  const page = options.paperSize === 'A4' ? { width: 11906, height: 16838 } : options.paperSize === 'Letter' ? { width: 12240, height: 15840 } : theme.paper;
-  const margin = options.marginInches === undefined ? theme.paper.margin : Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, Math.round(options.marginInches! * 1440)]));
   const font = options.fontFamily ?? 'Calibri';
   const styles = Object.fromEntries(headings.map((key, i) => [key, { run: { color: theme.accent, bold: true, size: [32, 28, 26, 24, 23, 22][i] }, paragraph: { spacing: { before: 240, after: 120 } } }]));
   const doc = new Document({ creator: 'GeiIt Agents', title, description: `${DOCX_CONVERTER_VERSION}:${style}`,

@@ -17,6 +17,7 @@ it('exports Chinese, formatting, ordered lists, repeated table headers and liter
   expect(numbering).toContain('w:start w:val="3"'); expect(numbering).toContain('w:numFmt w:val="decimal"');
   const styles = await zip.file('word/styles.xml')!.async('string');
   expect(styles).toContain('Microsoft YaHei'); expect(styles).toContain('w:color w:val="000000"');
+  expect(xml).toContain('<w:widowControl/>');
   expect(result.warnings).toEqual([]);
 });
 
@@ -35,8 +36,8 @@ it('applies the selected local style without changing Markdown content', async (
   expect(meetingXml).toContain('w:pgSz w:w="11906" w:h="16838"');
   expect(businessStyles).toContain('w:color w:val="1F4E79"');
   expect(meetingStyles).toContain('w:color w:val="0F6B78"');
-  expect(business.converterVersion).toBe('markdown-docx/3:business:-,-,-,-,-');
-  expect(meeting.converterVersion).toBe('markdown-docx/3:meeting:-,-,-,-,-');
+  expect(business.converterVersion).toBe('markdown-docx/4:business:-,-,-,-,-');
+  expect(meeting.converterVersion).toBe('markdown-docx/4:meeting:-,-,-,-,-');
   expect(await businessZip.file('word/document.xml')!.async('string')).toContain('正文');
 });
 
@@ -52,7 +53,29 @@ it('applies bounded page and typography overrides to the DOCX package', async ()
   expect(styles).toContain('<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial"');
   expect(styles).toContain('<w:sz w:val="28"/>');
   expect(styles).toContain('<w:spacing w:after="140" w:line="360"');
-  expect(result.converterVersion).toBe('markdown-docx/3:meeting:Letter,Arial,14,1.5,0.75');
+  expect(result.converterVersion).toBe('markdown-docx/4:meeting:Letter,Arial,14,1.5,0.75');
+});
+
+it.each([
+  ['standard', undefined, undefined, 9360],
+  ['business', undefined, undefined, 9354],
+  ['meeting', undefined, undefined, 9026],
+  ['standard', 'A4', 1.5, 7586],
+  ['business', 'Letter', 0.5, 10800],
+] as const)('fits tables inside %s page margins (%s, %s)', async (style, paperSize, marginInches, expectedWidth) => {
+  const result = await markdownToDocx('| 编号 | 工作说明 | 状态 |\n| --- | --- | --- |\n| 1 | 长说明自动换行，不扩张列宽。 | 待确认 |', '表格', style, { paperSize, marginInches });
+  const zip = await JSZip.loadAsync(result.bytes);
+  const doc = new DOMParser().parseFromString(await zip.file('word/document.xml')!.async('string'), 'application/xml');
+  const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const value = (node: Element, name: string) => node.getAttributeNS(ns, name);
+  expect(value(doc.getElementsByTagNameNS(ns, 'tblW')[0], 'w')).toBe(String(expectedWidth));
+  const widths = Array.from(doc.getElementsByTagNameNS(ns, 'gridCol')).map(node => Number(value(node, 'w')));
+  expect(widths.reduce((sum, width) => sum + width, 0)).toBe(expectedWidth);
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+  expect(value(doc.getElementsByTagNameNS(ns, 'tblLayout')[0], 'type')).toBe('fixed');
+  const cells = Array.from(doc.getElementsByTagNameNS(ns, 'tcW')).map(node => Number(value(node, 'w')));
+  expect(cells).toEqual([...widths, ...widths]);
+  expect(doc.getElementsByTagNameNS(ns, 'trHeight')).toHaveLength(0);
 });
 
 it('rejects unknown style IDs instead of falling back silently', async () => {
