@@ -6,13 +6,14 @@
 
 ## 当前结论
 
-用户最初要求的核心范围已经完成：办公工具、笔记/待办、文件整理、模型配置与体验，以及历史前端全量失败处理均已有代码、测试和浏览器验收证据。当前剩余事项主要是低配与故障环境验收、真实供应商联调、格式能力扩展和发布工程，不应重新实现已经完成的核心模块。
+用户最初要求的核心范围已经完成：办公工具、笔记/待办、文件整理、模型配置与体验，以及历史前端全量失败处理均已有代码、测试和浏览器验收证据。当前处于“核心功能完成、发布前审查”阶段；性能、运行时数据保护、故障恢复、真实供应商/邮件联调和发布验证仍是未完成的工程目标，不能因为核心里程碑完成就自动视为可选。
 
-当前工作树干净，开发分支已推送到远程：
+当前工作树干净。核心代码基线已推送到远程，但本接手文档及其后续工作记录提交尚未推送：
 
     本地分支：develop/geiit-agents
     远程：agents/develop/geiit-agents
-    接手前基线提交：2dd4ac2 docs: record remote development push
+    远程已同步基线：2dd4ac2 docs: record remote development push
+    本地领先提交：cfb89be、e81acbe、8865069（接手文档及其工作记录修订）
     旧 main：未修改
     远程地址：https://github.com/DoxWu/GeiitAgents.git
 
@@ -24,7 +25,7 @@
 
 安装包只代表当前源码已完成 Windows NSIS 构建，不代表已签名、安装升级、部署或生产验收。
 
-本接手文档已在本地提交 `cfb89be`，随后工作记录同步提交为 `e81acbe`。截至 2026-10-03，GitHub 连接两次返回无法连接 443，因此远程分支仍停在 `2dd4ac2`；网络恢复后执行普通 `git push agents develop/geiit-agents` 即可，不要强推。
+本接手文档已在本地提交 `cfb89be`，随后工作记录同步提交为 `e81acbe`，当前修订为 `8865069`。截至 2026-10-03，GitHub 连接两次返回无法连接 443，因此远程分支仍停在 `2dd4ac2`；网络恢复后先检查差异，再执行普通 `git push agents develop/geiit-agents`，不要强推。
 
 ## 已完成范围和证据
 
@@ -44,22 +45,29 @@
 - 前端：126 个测试文件、1226 项通过。
 - 后端：在项目隔离依赖和仓库临时目录下 608 项通过、16 项跳过。跳过项依赖真实 PostgreSQL/外部运维资源；不是代码失败。
 - Rust/Tauri：20 项通过。普通沙箱曾因 Windows 临时目录 ACL 失败，受控权限和仓库隔离临时目录下通过。
-- 本地知识库实时回答：真实 E5/WASM 检索、索引、授权、导出、加密归档和刷新恢复通过；回答生成使用 mock 通过。使用 backend/.env fallback 的真实 provider 返回 PermissionError，没有输出密钥、URL 或供应商响应，不能宣称真实 provider 已通过。
+- 本地知识库实时回答：真实 E5/WASM 检索、索引、授权、导出、加密归档和刷新恢复通过；回答生成使用 mock 通过。使用 backend/.env fallback 的 live helper 返回 `PermissionError`，但 helper 会捕获导入、文件读取和 provider 异常，且浏览器进程使用 `.tools/python-ops` 的隔离依赖；因此目前只能确认“live helper 失败”，依赖/文件 ACL 与 provider 权限的具体来源尚未判定。没有输出密钥、URL 或供应商响应，不能宣称真实 provider 已通过。
+- 证据日期：上述前端、后端、Rust 和 E5 结果是 2026-10-02 的历史验证；2026-10-03 只复核了安装包摘要和文档/Git 状态，没有重跑这些测试。
 
 ## 剩余任务：按优先级接续
 
 ### P0：新对话建议先做
 
-1. 重新确认真实模型 provider 权限
+1. 诊断并重新确认真实模型 provider 的 live helper 环境
 
-当前唯一明确的真实环境阻塞是 provider 返回 PermissionError。如果用户提供了已确认可用的模型权限或修正配置，使用新浏览器 profile 重跑：
+当前可复现现象是 live helper 返回 `PermissionError`，但根因未确认。先在本地诊断 Python helper 的导入、依赖目录 ACL、配置读取和 provider 调用边界，再决定是否需要用户修正模型权限。不要直接把异常归因于供应商。
+
+脚本固定打开 `http://127.0.0.1:1423/workbench`，运行前需在另一个终端从 `kb_qa_system/frontend` 启动对应页面，例如：
+
+    npm run dev -- --host 127.0.0.1 --port 1423
+
+页面可访问后，使用新 profile 重跑：
 
     cd kb_qa_system/frontend
     $env:LOCAL_ANSWER_PROVIDER = 'configured-fallback'
-    $env:LOCAL_ANSWER_PROFILE = (Join-Path (Resolve-Path '../../.tools').Path ('local-answer-qa-profile-' + [DateTimeOffset]::Now.ToUnixTimeMilliseconds()))
+    $env:LOCAL_ANSWER_PROFILE = Join-Path (Resolve-Path '../../.tools').Path ('local-answer-qa-profile-' + [DateTimeOffset]::Now.ToUnixTimeMilliseconds())
     node scripts/verify-local-answer-live.mjs
 
-不打印或提交 backend/.env 内容。若仍为权限错误，只在工作记录写安全类别和供应商权限未满足，不把 mock 结果写成真实模型验收。
+新 profile 没有 E5 权重缓存时需要可用网络或预置缓存；历史上空 profile 曾因初始化失败，而已有缓存 profile 通过。不得使用个人 profile，因为脚本会删除本地知识库和工作台密钥库两个 IndexedDB 数据库。不打印或提交 backend/.env 内容；若仍失败，只记录安全类别、依赖/ACL 或 provider 的已证实边界，不把 mock 结果写成真实模型验收。
 
 2. 补做 Windows 原生 WebView2 实际验收
 
@@ -71,7 +79,7 @@
     node scripts/verify-native-stream.mjs
     node scripts/verify-workbench-backup.mjs --native
 
-如果出现 Native debugger unavailable，先记录为 WebView2/CDP/会话环境问题；不要用 Chromium Web 验收替代原生验收，也不要把 Rust 单元测试扩大成完整原生 UI 验收。
+如果出现 Native debugger unavailable，先记录为 WebView2/CDP/会话环境问题；不要用 Chromium Web 验收替代原生验收，也不要把 Rust 单元测试扩大成完整原生 UI 验收。`verify-native-organizer.mjs` 会等待真实 Windows 目录选择器，需人工选择脚本打印的测试目录，并非完全无人值守。
 
 3. 确认当前安装包是否只需开发包
 
@@ -90,14 +98,15 @@
 2. 更多 Word/LibreOffice 组合和工作流导出入口的真实分页验收。Word 已有英文/中文合成样本 33 页证据，不能扩展到所有字体、模板或 LibreOffice。
 3. 真实视觉模型、Ollama/LM Studio 多模态兼容性和专有模型协议。当前能力登记依赖显式探测，不根据模型名称推断。
 4. 工作流循环和任意插件工具。现有工作流有固定工具白名单、条件分支和续跑，循环与插件权限模型尚未实现。
-5. 关闭客户端后仍执行的服务器端工作流/提醒调度。当前工作流触发器只在客户端开启且密钥库解锁时运行；关闭或锁库后变为待设备/待授权，这是当前安全设计，不是隐藏的后台调度。
-6. 真实邮件供应商、Celery、PostgreSQL 并发和 Sealos/PVC/异地备份联调。用户此前要求先不以部署资源阻塞应用改造，因此这些项目保持后置。
+5. 关闭客户端后仍执行的服务器端工作流。当前工作流触发器只在客户端开启且密钥库解锁时运行；关闭或锁库后变为待设备/待授权，这是当前安全设计，不是隐藏的后台调度。服务端提醒的持久调度代码已经存在，不要把“提醒后台实现”写成待开发项。
+6. 真实邮件供应商、Celery、PostgreSQL 并发和 Sealos/PVC/异地备份联调。现有服务端提醒调度需要做真实基础设施验证；用户此前要求先不以部署资源阻塞应用改造，因此这些项目保持后置。
 
 ### P3：维护工作
 
 - 逐文件处理历史 Rust cargo fmt --check 差异；不应为此批量格式化无关文件。
 - 代码签名、安装器升级/卸载、多平台迁移和正式发布流程。
 - 清理或在文档开头标注更早日期的“尚未实现”描述。历史日志不能改写，但当前入口文档必须避免误导。
+- `docs/LOCAL_KNOWLEDGE_ANSWERS.md` 的早期历史段落仍写有真实供应商成功描述；在下一次文档整理时应明确以最新 WORK_LOG 和本接手文档为准，并修正过期表述。
 
 ## 尚未决定、需要新对话确认的事项
 
@@ -106,6 +115,16 @@
 - 工作流是否需要客户端关闭后继续运行；若需要，应设计服务端任务、授权和密钥生命周期，不能直接复用当前本机触发器。
 - 真实 provider 应使用哪一家、是否有可用模型权限；不要在没有明确权限时反复调用或记录响应。
 - 是否进入正式发布工程（签名、升级、安装测试），还是继续保持开发分支迭代。
+
+## 关键代码位置和验收标准
+
+- 本地知识库与回答：`kb_qa_system/frontend/src/localKnowledge/`、`kb_qa_system/frontend/src/services/vaultBackup.ts`、`kb_qa_system/frontend/scripts/verify-local-answer-live.mjs`。
+- 模型与 provider：`kb_qa_system/frontend/src/services/modelDiscovery.ts`、`kb_qa_system/frontend/src/services/modelStream.ts`、`kb_qa_system/backend/app/core/model_provider/`、`kb_qa_system/backend/app/services/private_model.py`。
+- 工作流调度：`kb_qa_system/frontend/src/workflows/`、`kb_qa_system/frontend/src/store/workbenchStore.ts`（以及对应 workflow store 测试）。
+- 备份、恢复、迁移和告警：`kb_qa_system/backend/app/ops/backup.py`、`kb_qa_system/backend/app/ops/recovery.py`、`kb_qa_system/backend/app/ops/alerts.py`、`kb_qa_system/backend/app/tasks/reminder_tasks.py`、`kb_qa_system/backend/alembic/`。
+- 原生文件能力：`kb_qa_system/frontend/src-tauri/src/organizer.rs` 及 `kb_qa_system/frontend/src-tauri/permissions/`。
+
+完成下一批工作至少应能回答：代码路径是否已接入、对应测试是否本次重跑、是否走 Chromium 合成 provider/真实 provider/原生 WebView2、是否生成构建产物、是否仍未做线上部署。性能任务需给出设备内存、语料规模、冷/热缓存、P50/P95、峰值内存和失败恢复结果；备份任务需给出校验、恢复预检查、幂等与告警结果；真实 provider 失败只保留安全类别和可复现边界。
 
 ## 新对话启动步骤
 
@@ -130,7 +149,8 @@
     $repo = (Resolve-Path '.').Path
     $ops = (Resolve-Path '../../.tools/python-ops').Path
     $provider = (Resolve-Path '../../.tools/python-tools-provider').Path
-    $tmp = (Resolve-Path '../../.tools/pytest-backend-next').Path
+    $toolsRoot = (Resolve-Path '../../.tools').Path
+    $tmp = Join-Path $toolsRoot 'pytest-backend-next'
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     $env:PYTHONPATH = "$repo;$ops;$provider"
     $env:DEBUG = 'False'
@@ -140,7 +160,8 @@ Windows 原生 Rust 测试建议使用项目工具链和仓库临时目录，并
 
     cd kb_qa_system/frontend
     . ./scripts/Use-ProjectRustToolchain.ps1
-    $tmp = (Resolve-Path '../../.tools/rust-native-next').Path
+    $toolsRoot = (Resolve-Path '../../.tools').Path
+    $tmp = Join-Path $toolsRoot 'rust-native-next'
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     $env:TEMP = $tmp
     $env:TMP = $tmp
@@ -159,4 +180,3 @@ Windows 原生 Rust 测试建议使用项目工具链和仓库临时目录，并
 ## 可直接复制给新对话的开场
 
 请先阅读 docs/WORK_HANDOFF_2026-10-03.md、docs/WORK_LOG.md 和根目录 AGENTS.md。当前核心办公助手目标已经完成，分支是 develop/geiit-agents，远程为 agents/develop/geiit-agents，不要重做已完成模块。请从接手文档的 P0/P1 剩余任务开始，先确认当前工作树和远程状态；所有新工作完成后更新 docs/WORK_LOG.md，不要记录凭据，也不要把合成 provider 验收写成真实供应商验收。
-

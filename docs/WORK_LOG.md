@@ -581,3 +581,11 @@
 - 新增 [WORK_HANDOFF_2026-10-03.md](WORK_HANDOFF_2026-10-03.md)，压缩记录当前分支、远程、构建包、核心模块证据、剩余任务优先级、未决决策、恢复命令和验收规则，供新的 Codex 对话直接接续。
 - 当前结论未改变：核心办公助手目标已完成；剩余工作是 provider 权限、原生 WebView2、低配/容量/断电、OCR/复杂格式、真实邮件/部署联调、工作流循环和正式发布工程等可选或环境相关事项。
 - 接手文档本地提交为 `cfb89be`。本轮两次普通 `git push agents develop/geiit-agents` 均因当前环境连接 GitHub 443 失败，远程仍停在前一提交 `2dd4ac2`；没有强推或修改 `agents/main`。网络恢复后只需普通推送该提交，并重新核对远程 SHA。
+
+### 2026-10-03：接手文档准确性复核与后续任务清单修订
+
+- 文档修订：更新 `docs/WORK_HANDOFF_2026-10-03.md`，明确核心基线已在远程而接手文档提交仍在本地；补充 2026-10-02 历史验证与 2026-10-03 未重跑测试的日期边界，并加入关键代码位置、后续验收标准和恢复命令。
+- 状态纠正：将 live helper 的 `PermissionError` 记录为“依赖/文件 ACL 与 provider 权限来源未判定”，不再直接归因于供应商；补充 1423 页面启动前置条件、隔离 profile/E5 缓存要求、原生目录选择器需要人工操作，以及后端/Cargo 临时目录的可创建命令。
+- 范围纠正：说明性能、运行时数据保护、故障恢复和发布验证仍是未完成工程目标；明确服务端提醒持久调度代码已经存在，真实邮件/Celery/PostgreSQL/Sealos 联调仍待验证；标记 `LOCAL_KNOWLEDGE_ANSWERS.md` 中旧的真实 provider 描述需要后续整理。
+- 本地验证：阅读并交叉核对接手文档、工作记录、live helper 和 package scripts；`git diff --check` 通过。没有重跑前端、后端、Rust、E5、WebView2 或真实 provider 测试，没有访问生产服务，也没有读取或记录凭据。
+- Git：本批只修改接手文档和本工作记录，待提交到本地 `develop/geiit-agents`；远程 `agents/develop/geiit-agents` 仍停在 `2dd4ac2`，不自动推送、不修改 `main`。下一步由新对话从 P0/P1 清单开始，并在每批工作后继续更新本文件。
