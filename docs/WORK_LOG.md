@@ -615,3 +615,8 @@
 - 新增 `container-build` job，依赖后端测试和前端生产构建，使用 Docker Buildx 只构建后端/前端生产镜像，不推送、不读取发布凭据；后端显式使用 `INSTALL_LOCAL_ML=false`，前端使用同源 `/api/v1` 构建参数。
 - 本地验证：YAML 解析通过，工作流包含开发分支触发和容器构建 job，`git diff --check` 通过。本机无 Docker daemon，因此未在本机执行镜像构建；该门禁将在 GitHub Actions 或其他有 Docker daemon 的 CI 环境执行。
 - Git：本批改动待提交到 `develop/geiit-agents`，不修改 `main`；按用户规则完成大模块后尝试普通推送。
+### 2026-10-03：CI 模块推送尝试
+
+- CI 发布容器门禁模块已本地提交为 `904e00b`，工作树在推送前干净，差异检查通过。
+- 已执行普通 `git fetch agents --prune`、远程差异检查和 `git push agents develop/geiit-agents`；GitHub 443 连接失败，推送未完成。
+- 未使用强制推送，未修改 `main`，未读取或写入任何发布凭据。网络恢复后按普通推送流程重试。
