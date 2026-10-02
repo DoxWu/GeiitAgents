@@ -27,6 +27,7 @@ import type { RenamePlan } from '@/fileOrganizer/plan';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
 import type { DocxFormatOptions, DocxStyle } from '@/officeTasks/docxStyles';
 import { completeToolModel, probeToolCallModel } from '@/services/officeToolModel';
+import { probeVisionModel } from '@/services/visionCapability';
 import { reminderOwner, validateReminderDraft, validateReminderTemplate, type ReminderDraft, type ReminderTemplate } from '@/personal/reminderDraft';
 import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, readDirectoryText, snapshotText, textFormat, validateDraft, writeDirectoryText, type FileEditDraft, type FileEditVersion, type Newline, type TextSnapshot } from '@/fileOrganizer/textEdit';
 
@@ -148,6 +149,7 @@ interface WorkbenchState {
   removeProfile: (id: string) => Promise<void>;
   testProfile: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileToolSupport: (id: string, signal?: AbortSignal) => Promise<void>;
+  testProfileVision: (id: string, signal?: AbortSignal) => Promise<boolean>;
   discoverProfileModels: (input: ModelEndpoint, apiKey: string, clearKey: boolean, signal: AbortSignal) => Promise<ModelCatalog>;
   newConversation: (profileId?: string) => string;
   select: (id: string) => void;
@@ -898,6 +900,26 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       if (epoch === generation && secrets.find(item => item.id === id) === updated) { secrets = secrets.map(item => item.id === id ? current : item); set({ profiles: publicProfiles() }); }
       throw error;
     }
+  },
+  testProfileVision: async (id, signal) => {
+    const profile = get().profiles.find(item => item.id === id), secret = secrets.find(item => item.id === id);
+    if (!profile || !secret) throw new Error('请先保存模型连接。');
+    const epoch = generation, testedSecret = secret.apiKey;
+    const supported = await modelCheck(profile.mode, signal, requestSignal => probeVisionModel(profile, secret.apiKey, requestSignal));
+    const current = secrets.find(item => item.id === id), currentPublic = get().profiles.find(item => item.id === id);
+    if (epoch !== generation || !get().unlocked || !vault || current?.apiKey !== testedSecret || !currentPublic
+      || currentPublic.mode !== profile.mode || currentPublic.baseUrl !== profile.baseUrl || currentPublic.model !== profile.model || currentPublic.maxTokens !== profile.maxTokens) {
+      throw new DOMException('连接配置已改变，测试结果未保存。', 'AbortError');
+    }
+    const testedAt = new Date().toISOString(), fingerprint = await modelCapabilityFingerprint(profile, testedSecret);
+    const updated = { ...current, capabilities: { ...current.capabilities, vision: { state: supported ? 'supported' as const : 'unsupported' as const, testedAt, fingerprint } } };
+    secrets = secrets.map(item => item.id === id ? updated : item); set({ profiles: publicProfiles() });
+    try { await persist(true); }
+    catch (error) {
+      if (epoch === generation && secrets.find(item => item.id === id) === updated) { secrets = secrets.map(item => item.id === id ? current : item); set({ profiles: publicProfiles() }); }
+      throw error;
+    }
+    return supported;
   },
   newConversation: (profileId) => {
     if (!get().unlocked) return "";

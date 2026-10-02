@@ -8,7 +8,7 @@ import type { ModelCatalog } from '@/services/modelDiscovery';
 vi.mock('@/store/workbenchStore', async () => {
   const { create } = await import('zustand');
   return { useWorkbenchStore: create(() => ({ profiles: [], accountModel: null, accountLoading: false, accountError: null,
-    saveProfile: vi.fn(), removeProfile: vi.fn(), discoverProfileModels: vi.fn(), testProfile: vi.fn(), testProfileToolSupport: vi.fn(), refreshAccountModel: vi.fn() })) };
+    saveProfile: vi.fn(), removeProfile: vi.fn(), discoverProfileModels: vi.fn(), testProfile: vi.fn(), testProfileToolSupport: vi.fn(), testProfileVision: vi.fn(), refreshAccountModel: vi.fn() })) };
 });
 vi.mock('@/store/authStore', async () => {
   const { create } = await import('zustand');
@@ -112,8 +112,23 @@ it('shows separately verified tool support and clears it when the edited model c
 it('shows explicit unknown statuses for capabilities that have no compatible probe', () => {
   store.setState({ profiles: [{ id: 'saved', name: 'Saved', baseUrl: 'http://127.0.0.1:1234/v1', model: 'chat', hasKey: true, mode: 'local', capabilities: { vision: { state: 'unknown' }, contextWindow: { state: 'unknown' } } }] });
   render(<ModelConnections />); fireEvent.click(screen.getByLabelText('编辑 Saved'));
-  expect(screen.getByText(/图片输入：未知（未探测）；上下文长度：未知（未探测）/)).toBeInTheDocument();
+  expect(screen.getByText(/图片输入：未验证；上下文长度：未知（未探测）/)).toBeInTheDocument();
   expect(screen.getByText(/最大输出上限：未配置（服务商上限未知）/)).toBeInTheDocument();
+});
+
+it('runs an explicit synthetic visual probe and persists its assessed result', async () => {
+  const profile = { id: 'saved', name: 'Saved', baseUrl: 'http://127.0.0.1:1234/v1', model: 'chat', hasKey: true, mode: 'local' as const };
+  store.setState({ profiles: [profile] });
+  vi.mocked(store.getState().testProfileVision).mockImplementation(async id => {
+    expect(id).toBe('saved');
+    store.setState({ profiles: [{ ...profile, capabilities: { vision: { state: 'supported', testedAt: '2026-10-02T00:00:00.000Z', fingerprint: 'a'.repeat(64) } } }] });
+    return true;
+  });
+  render(<ModelConnections />); fireEvent.click(screen.getByLabelText('编辑 Saved'));
+  expect(screen.getByText(/只发送本机生成的两排随机色块/)).toBeInTheDocument();
+  fireEvent.click(screen.getByText('测试图片理解'));
+  await screen.findByText('模型正确识别了随机色块，图片输入验证通过。');
+  expect(screen.getByText(/^图片输入：最近测试通过/)).toBeInTheDocument();
 });
 
 it('shows only the authorized account model with explicit permission refresh', () => {

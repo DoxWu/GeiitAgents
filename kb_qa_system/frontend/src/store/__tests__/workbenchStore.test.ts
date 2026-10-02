@@ -10,6 +10,7 @@ import type { ModelProfile } from "@/types/workbench";
 import type { SearchHit } from '@/localKnowledge/core';
 import { createAnswerArtifact } from '@/localKnowledge/answerArtifact';
 import { documentExportContent } from '@/officeTasks/document';
+import { probeVisionModel } from '@/services/visionCapability';
 import { exportDocx } from '@/officeTasks/docxClient';
 import { checkChart, renderChartSvg, type ChartInput } from '@/officeTasks/chart';
 import { validateVaultBackup } from '@/services/vaultBackupSchema';
@@ -18,6 +19,7 @@ import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
 vi.mock('@/officeTasks/docxClient', () => ({ exportDocx: vi.fn() }));
 vi.mock('@/services/modelDiscovery', () => ({ discoverModels: vi.fn() }));
 vi.mock('@/services/officeToolModel', () => ({ completeToolModel: vi.fn(), probeToolCallModel: vi.fn() }));
+vi.mock('@/services/visionCapability', () => ({ probeVisionModel: vi.fn() }));
 
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
@@ -98,6 +100,17 @@ it('requires a fresh opt-in before a cloud model receives any image history', as
   const id = store.getState().newConversation('relay');
   await expect(store.getState().send(id, 'Describe this chart', [image])).rejects.toThrow('需重新明确授权');
   expect(completeModel).not.toHaveBeenCalled();
+});
+
+it('stores a successful vision probe only for the unchanged connection and restores it from encryption', async () => {
+  vi.mocked(probeVisionModel).mockResolvedValue(true);
+  await expect(store.getState().testProfileVision('p1')).resolves.toBe(true);
+  const tested = store.getState().profiles.find(item => item.id === 'p1')!;
+  expect(tested.capabilities?.vision).toMatchObject({ state: 'supported', fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().profiles.find(item => item.id === 'p1')?.capabilities?.vision).toMatchObject({ state: 'supported' });
+  await store.getState().saveProfile({ ...profile, model: 'other-model' }, 'fixture-key');
+  expect(store.getState().profiles.find(item => item.id === 'p1')?.capabilities?.vision).toBeUndefined();
 });
 
 it("ignores late responses after locking and recovers the saved user message", async () => {

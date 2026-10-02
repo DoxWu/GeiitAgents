@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Plus, Save, PlugZap, Trash2, Pencil, X } from 'lucide-react';
+import { Plus, Save, PlugZap, Trash2, Pencil, X, Eye } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
 import type { ModelCapabilityEvidence, ModelProfile } from '@/types/workbench';
@@ -29,11 +29,11 @@ export function ModelConnections() {
   const [draft, setDraft] = useState(empty);
   const [apiKey, setApiKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
-  const [operation, setOperation] = useState<'save' | 'test' | 'tool-test' | 'list' | null>(null);
+  const [operation, setOperation] = useState<'save' | 'test' | 'tool-test' | 'vision-test' | 'list' | null>(null);
   const [message, setMessage] = useState('');
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const active = useRef<AbortController | null>(null);
-  const busy = operation === 'save' || operation === 'test' || operation === 'tool-test';
+  const busy = operation === 'save' || operation === 'test' || operation === 'tool-test' || operation === 'vision-test';
   const existing = profiles.find(p => p.id === draft.id);
   const dirty = Boolean(apiKey || clearKey || !existing || (['name', 'baseUrl', 'model', 'mode', 'maxTokens'] as const).some(key => draft[key] !== existing[key]));
 
@@ -48,7 +48,7 @@ export function ModelConnections() {
 
   function reset(config: Draft = empty()) { invalidate(); setDraft(config); setApiKey(''); setClearKey(false); }
   function editConnection(change: Partial<Draft>) { invalidate(); setDraft({ ...draft, ...change }); }
-  async function action(kind: 'save' | 'test' | 'tool-test' | 'list', callback: (signal: AbortSignal) => Promise<() => void>) {
+  async function action(kind: 'save' | 'test' | 'tool-test' | 'vision-test' | 'list', callback: (signal: AbortSignal) => Promise<() => void>) {
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     setOperation(kind); setMessage('');
@@ -114,15 +114,20 @@ export function ModelConnections() {
       <div className="rounded-lg border border-line p-3 text-xs text-ink-secondary">
         <p>文本调用：{!dirty ? capabilityLabel(existing?.capabilities?.text, existing?.textTestedAt) : '未验证'}</p>
         <p>工具调用：{!dirty ? capabilityLabel(existing?.capabilities?.toolCalls, existing?.toolTestedAt) : '未验证'}</p>
-        <p>图片输入：{!dirty ? unknownCapability(existing?.capabilities?.vision) : '未知（配置已修改）'}；上下文长度：{!dirty ? unknownCapability(existing?.capabilities?.contextWindow) : '未知（配置已修改）'}；最大输出上限：{draft.maxTokens ? `${draft.maxTokens.toLocaleString()}（服务商支持性未知）` : '未配置（服务商上限未知）'}。</p>
+        <p>图片输入：{!dirty ? capabilityLabel(existing?.capabilities?.vision) : '未验证（配置已修改）'}；上下文长度：{!dirty ? unknownCapability(existing?.capabilities?.contextWindow) : '未知（配置已修改）'}；最大输出上限：{draft.maxTokens ? `${draft.maxTokens.toLocaleString()}（服务商支持性未知）` : '未配置（服务商上限未知）'}。</p>
         <p>保存后可测试文本调用，会发送一条短消息，服务商可能计费。</p>
         <p>工具调用测试会要求模型返回固定的 `inspect_csv` 空参数调用；不执行工具或发送文件，但服务商可能计费。</p>
+        <p>图片测试只发送本机生成的两排随机色块，不读取用户文件；云端服务可能计费。</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="work-command bg-brand text-white" type="submit" disabled={Boolean(operation)}><Save size={16} />{operation === 'save' ? '处理中...' : '保存连接'}</button>
         <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('test', async signal => { await useWorkbenchStore.getState().testProfile(draft.id, signal); return () => { setMessage('模型文本调用成功，验证时间已加密保存。'); }; })}><PlugZap size={16} />测试连接</button>
         <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('tool-test', async signal => { await useWorkbenchStore.getState().testProfileToolSupport(draft.id, signal); return () => { setMessage('模型已按 inspect_csv 契约返回工具调用，验证时间已加密保存。'); }; })}><PlugZap size={16} />测试工具调用</button>
-        {(operation === 'list' || operation === 'test' || operation === 'tool-test') && <button className="work-command" type="button" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消请求</button>}
+        <button className="work-command" type="button" disabled={Boolean(operation) || dirty} onClick={() => void action('vision-test', async signal => {
+          const supported = await useWorkbenchStore.getState().testProfileVision(draft.id, signal);
+          return () => { setMessage(supported ? '模型正确识别了随机色块，图片输入验证通过。' : '模型未能按预期识别随机色块，已记录为未通过。'); };
+        })}><Eye size={16} />{operation === 'vision-test' ? '正在测试图片…' : '测试图片理解'}</button>
+        {(operation === 'list' || operation === 'test' || operation === 'tool-test' || operation === 'vision-test') && <button className="work-command" type="button" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消请求</button>}
         <button className="work-icon" type="button" aria-label="清空表单" title="清空表单" disabled={busy} onClick={() => reset()}><X size={16} /></button>
       </div>
       {message && <p role="status" className="text-sm break-words">{message}</p>}

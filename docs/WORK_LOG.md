@@ -4,9 +4,9 @@
 
 ## 当前阶段
 
-本阶段状态更新（2026-10-02）：办公任务已支持本机 DOCX/PPTX/PDF 文本导入；本地知识库复用三种解析器，保留原文件名、提取文本和遗漏提示，并支持加密备份恢复。工作台本轮增加受限 PNG/JPEG/WebP 图片附件、云端逐次授权、加密会话/备份和模型多模态请求协议。前端全量 **124 文件 / 1205 项通过**，服务端模型/路由 **37 项通过**，类型检查、lint、Web 构建、Cargo 检查和 NSIS 构建通过。Cargo/Rust/rustfmt 1.98.1 均位于项目隔离工具链；`cargo fmt --check` 能运行但报告既有排版差异。当前 dev.61 未签名安装包为 **9,157,754 字节**，SHA-256 `3FCF6337E105F070D2617F38ACF86BD7C1BEB17106483BAEDA1F9AFE273034ED`。整体目标尚未完成。
+本阶段状态更新（2026-10-02）：办公任务已支持本机 DOCX/PPTX/PDF 文本导入；本地知识库复用三种解析器，保留原文件名、提取文本和遗漏提示，并支持加密备份恢复。工作台支持受限 PNG/JPEG/WebP 图片附件、云端逐次授权、加密会话/备份和多模态请求；模型连接页新增本机合成色块图片理解探测，能力证据加密保存并绑定连接指纹。前端全量 **125 文件 / 1211 项通过**，类型检查、lint、Web 构建、Cargo 检查、工具链回退测试、浏览器视觉探测及 NSIS 构建通过。仓库内 Cargo/rustc/rustfmt 已验证可用；`cargo fmt --check` 能运行但报告既有排版差异。当前 dev.62 未签名安装包为 **9,161,584 字节**，SHA-256 `6DAB66252BF6F77B14616746A87ACF9E20D00EAACDCC72C4DCC67817856135C3`。整体目标尚未完成。
 
-**处于应用改造阶段，完整目标未完成。** 本轮实现图像会话协议并重建 dev.61；真实视觉模型和本机 WebView2 尚未联调，能力仍按未知显示。后续重点包括 Word/LibreOffice 实际分页验收、PDF 版式转换与 OCR、在新鲜授权下可恢复的本机工作流触发、专有模型协议、文件跨卷/断电和低配性能。本轮没有改动线上部署或数据库迁移；未调用真实供应商、未发送邮件、未部署或推送。
+**处于应用改造阶段，完整目标未完成。** 本轮新增手动图片理解探测并重建 dev.62；浏览器合成 provider 验证通过，但真实视觉模型和本机 WebView2 尚未联调。后续重点包括 Word/LibreOffice 实际分页验收、PDF 版式转换与 OCR、在新鲜授权下可恢复的本机工作流触发、专有模型协议、文件跨卷/断电和低配性能。本轮没有改动线上部署或数据库迁移；未调用真实供应商、未发送邮件、未部署或推送。
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -495,3 +495,14 @@
 - 构建产物：dev.61 未签名 NSIS `GeiIt Agents Dev_0.1.0-dev.61_x64-setup.exe`，**9,157,754 字节**，SHA-256 `3FCF6337E105F070D2617F38ACF86BD7C1BEB17106483BAEDA1F9AFE273034ED`。Rust release 与 NSIS 成功；未安装或签名。前序重新构建 dev.60 的结果仍记录在上一条。
 - 未完成/风险：本地 Ollama/LM Studio 和真实账号云端 provider 是否接受视觉内容取决于具体模型，仍需有授权的端到端模型测试；图片具有敏感数据出站风险，每次云端操作均需用户授权。当前 Chromium/WebView2 没有进行本轮图片 UI 实机截图验收；不支持 HEIC/GIF/SVG、OCR、裁剪或自动压缩。`.geiitwork` 加密库整体容量仍受既有 16 MiB 快照上限影响。后端 Ruff 未安装，Python lint 本轮无法运行。
 - Git：本轮实现与工作记录已提交至本地 `develop/geiit-agents`，功能提交 `c93bf5b`；未推送 `agents`。
+
+### 2026-10-02：图片能力探测与 Cargo 环境复核、dev.62
+
+- Cargo 环境：从项目目录 dot-source `frontend/scripts/Use-ProjectRustToolchain.ps1` 后，Cargo 1.98.1、rustc 1.98.1 和 rustfmt 1.9.0-stable 均可直接运行；`desktop:toolchain:test` 确认 npm 构建在用户级 Cargo/Rustup 路径缺失时选择仓库隔离工具链。`desktop:check`、dev.62 release 打包及打包后复跑均通过，没有更改全局 PATH/HOME 或安装全局 Rust。
+- 图片探测实现：模型连接页新增显式图片理解测试，使用浏览器现场生成的随机色块 PNG，不读取用户文件；只将严格按顺序回答判为通过，错误答案记为不支持，网络错误/取消不写能力结论。能力证据与连接指纹一起加密保存；编辑连接、口令锁库或配置变更时不会把旧证据误用于新配置。
+- 浏览器验收：扩展 `scripts/verify-model-discovery.mjs` 让隔离 HTTP provider 解码收到的真实 PNG 像素，并检查随机色序响应、能力状态加密保存及刷新恢复。本机 Chromium 验收 **通过**，共 6 次本机合成 HTTP 调用，无页面异常；桌面及 390px 移动截图位于 `.tools/model-discovery-qa/`，移动页面无横向溢出。验收使用合成 provider 与浏览器 API stub，未调用真实模型/账号服务。
+- 回归：本轮完整前端 **125 文件 / 1211 项通过**，`npm run check`、`npm run lint`、Web build、Cargo 检查和工具链回退自检通过。测试期间发现浏览器验收脚本仍断言 3 次调用；新增视觉探测后修正为 4 次，并再次完整通过。
+- Cargo 格式状态：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 已执行，因仓库多份既有 Rust 文件格式与当前 rustfmt 输出不一致而退出非零；未批量格式化无关文件。这不影响 cargo check、release 编译或安装包生成，后续可逐文件处理。
+- 构建产物：`GeiIt Agents Dev_0.1.0-dev.62_x64-setup.exe`，**9,161,584 字节**，SHA-256 `6DAB66252BF6F77B14616746A87ACF9E20D00EAACDCC72C4DCC67817856135C3`。NSIS 构建成功；安装包未签名、安装或部署。
+- 未完成/风险：真实视觉 provider 与原生 WebView2 尚未联调；图片上传仍依赖用户逐次同意云端出站。Word/LibreOffice 分页、PDF 版式/OCR、工作流触发、专有模型协议、文件跨卷/断电恢复和低配性能仍待推进。没有变更线上部署或数据库，也没有发送邮件、部署或推送。
+- Git：版本配置、图片探测代码/测试、浏览器验收脚本及本工作记录待提交到本地 `develop/geiit-agents`；整体目标未完成，未推送远程。

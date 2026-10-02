@@ -3,12 +3,52 @@
 // Start vite preview on port 1425 before running. No real model keys or downloads.
 import { chromium, expect } from '@playwright/test';
 import { createServer } from 'node:http';
+import { inflateSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const output = path.resolve('../../.tools/model-discovery-qa');
 await mkdir(output, { recursive: true });
 const calls = [], timers = new Set();
+
+function swatchOrder(dataUrl) {
+  const png = Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64');
+  if (png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('Vision probe did not send a PNG.');
+  let offset = 8, width, height, bitDepth, colorType; const chunks = [];
+  while (offset < png.length) {
+    const length = png.readUInt32BE(offset), type = png.toString('ascii', offset + 4, offset + 8), data = png.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') { width = data.readUInt32BE(0); height = data.readUInt32BE(4); bitDepth = data[8]; colorType = data[9]; }
+    if (type === 'IDAT') chunks.push(data);
+    offset += 12 + length;
+  }
+  if (width !== 96 || height !== 64 || bitDepth !== 8 || ![2, 6].includes(colorType)) throw new Error('Unexpected vision fixture dimensions or format.');
+  const channels = colorType === 6 ? 4 : 3, stride = width * channels, packed = inflateSync(Buffer.concat(chunks)), pixels = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = packed[y * (stride + 1)], source = y * (stride + 1) + 1, target = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const raw = packed[source + x], left = x >= channels ? pixels[target + x - channels] : 0, up = y ? pixels[target + x - stride] : 0, upperLeft = y && x >= channels ? pixels[target + x - stride - channels] : 0;
+      let predictor = 0;
+      if (filter === 1) predictor = left;
+      else if (filter === 2) predictor = up;
+      else if (filter === 3) predictor = Math.floor((left + up) / 2);
+      else if (filter === 4) {
+        const p = left + up - upperLeft, pa = Math.abs(p - left), pb = Math.abs(p - up), pc = Math.abs(p - upperLeft);
+        predictor = pa <= pb && pa <= pc ? left : pb <= pc ? up : upperLeft;
+      }
+      else if (filter !== 0) throw new Error('Unsupported PNG filter.');
+      pixels[target + x] = (raw + predictor) & 255;
+    }
+  }
+  const colorName = (x, y) => {
+    const index = y * stride + x * channels, [r, g, b] = pixels.subarray(index, index + 3);
+    if (r > g * 1.6 && r > b * 1.6) return 'red';
+    if (g > r * 1.4 && g > b * 1.1) return 'green';
+    if (b > r * 1.1 && b > g * 1.15) return 'blue';
+    throw new Error('Unexpected vision probe swatch pixel.');
+  };
+  return [16, 48, 80].map(x => colorName(x, 16)).join(' ') + ' / ' + [16, 48, 80].map(x => colorName(x, 48)).join(' ');
+}
+
 const server = createServer(async (request, response) => {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Headers', 'authorization,content-type');
@@ -21,7 +61,8 @@ const server = createServer(async (request, response) => {
   if (request.url === '/v1/models') response.end(JSON.stringify({ data: [{ id: 'local-chat', capabilities: ['vision'] }, { id: 'embedding-only' }, { id: 'local-chat' }] }));
   else if (request.url === '/v1/chat/completions') {
     const body = calls.at(-1)?.body;
-    response.end(JSON.stringify({ choices: [{ message: body?.tools ? { content: null, tool_calls: [{ id: 'probe1', type: 'function', function: { name: 'inspect_csv', arguments: '{}' } }] } : { content: 'OK' } }] }));
+    const image = body?.messages?.[0]?.content?.find?.(part => part.type === 'image_url')?.image_url?.url;
+    response.end(JSON.stringify({ choices: [{ message: body?.tools ? { content: null, tool_calls: [{ id: 'probe1', type: 'function', function: { name: 'inspect_csv', arguments: '{}' } }] } : image ? { content: swatchOrder(image) } : { content: 'OK' } }] }));
   }
   else if (request.url === '/delayed/models') {
     const timer = setTimeout(() => { timers.delete(timer); response.end(JSON.stringify({ data: [{ id: 'late-result' }] })); }, 1000); timers.add(timer);
@@ -65,6 +106,12 @@ try {
   expect(calls[2].body.tools.map(tool => tool.function.name)).toEqual(['inspect_csv', 'render_chart', 'create_document']);
   expect(calls[2].body.messages).toHaveLength(1);
   expect(calls[2].body).not.toHaveProperty('max_tokens');
+  await page.getByRole('button', { name: '测试图片理解' }).click();
+  await expect(page.getByRole('status')).toHaveText('模型正确识别了随机色块，图片输入验证通过。');
+  await expect(page.getByText(/^图片输入：最近测试通过/)).toBeVisible();
+  expect(calls[3].body.messages[0].content).toHaveLength(2);
+  expect(calls[3].body.messages[0].content[1].image_url.url).toMatch(/^data:image\/png;base64,/);
+  expect(swatchOrder(calls[3].body.messages[0].content[1].image_url.url)).toMatch(/^(red|green|blue) (red|green|blue) (red|green|blue) \/ (red|green|blue) (red|green|blue) (red|green|blue)$/);
   await page.reload();
   await page.getByLabel('解锁口令', { exact: true }).fill('model-qa-passphrase');
   await page.getByRole('button', { name: '解锁', exact: true }).click();
@@ -72,6 +119,7 @@ try {
   await page.getByLabel('编辑 本机 QA').click();
   await expect(page.getByText(/^文本调用：最近测试通过/)).toBeVisible();
   await expect(page.getByText(/^工具调用：最近测试通过/)).toBeVisible();
+  await expect(page.getByText(/^图片输入：最近测试通过/)).toBeVisible();
   const panel = page.getByRole('heading', { name: '模型连接', exact: true }).locator('../..');
   await panel.evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: path.join(output, 'local-desktop.png'), fullPage: true });
@@ -85,7 +133,7 @@ try {
   await page.getByLabel('API Base URL').fill(base + '/other');
   await page.getByRole('button', { name: '获取模型列表' }).click();
   await expect(page.getByRole('status')).toContainText('重新填写');
-  expect(calls).toHaveLength(3);
+  expect(calls).toHaveLength(4);
   await page.getByLabel('API Key', { exact: true }).fill('replacement-fixture-key');
   await page.getByRole('button', { name: '获取模型列表' }).click();
   await expect(page.getByRole('status')).toContainText('可继续手填');
