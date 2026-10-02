@@ -77,6 +77,19 @@ it.each(['pie', 'horizontal_bar', 'scatter'] as const)('roundtrips a %s chart an
   expect(restored.data.artifacts![0].content).toBe(svg);
 });
 
+it('roundtrips chart visual review evidence and rejects a detached review', async () => {
+  const source = await vaultBackupFixture(), now = '2026-10-02T00:00:00.000Z';
+  const chart = checkChart({ title: '已审阅', csv: '类别,值\n甲,2', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '件' });
+  const svg = renderChartSvg(chart), artifactSha256 = await sha256Text(svg), taskId = crypto.randomUUID(), artifactId = crypto.randomUUID();
+  source.taskRuns!.push({ id: taskId, type: 'chart.generate', chartInput: chart.input, title: '已审阅', profileId: '', instruction: '本地图表', status: 'succeeded', createdAt: now, updatedAt: now, toolRunIds: [], artifactIds: [artifactId],
+    chartReview: { profileId: 'local', model: 'synthetic-model', answer: '图例清楚。', reviewedAt: now, imageSha256: 'a'.repeat(64), artifactSha256 } });
+  source.artifacts!.push({ id: artifactId, taskId, kind: 'svg', mimeType: 'image/svg+xml', name: '已审阅.svg', version: 1, content: svg, sha256: artifactSha256, createdAt: now });
+  const { file } = await exportVaultBackup(source, '1234'), restored = await importVaultBackup(file, '1234');
+  expect(restored.data.taskRuns!.at(-1)?.chartReview).toEqual(source.taskRuns!.at(-1)?.chartReview);
+  const detached = structuredClone(source); detached.taskRuns!.at(-1)!.chartReview!.artifactSha256 = 'b'.repeat(64);
+  await expect(exportVaultBackup(detached, '1234')).rejects.toThrow('无效');
+});
+
 it('includes keys only by opt-in and uses independent salt/nonces for each export', async () => {
   const source = await vaultBackupFixture();
   const a = await exportVaultBackup(source, '1234', true), b = await exportVaultBackup(source, '1234', true);

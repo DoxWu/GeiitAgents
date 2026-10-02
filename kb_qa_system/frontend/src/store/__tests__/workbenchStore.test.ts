@@ -735,6 +735,31 @@ it('persists chart input, two tool runs, warnings and a hashed SVG without any m
   expect(store.getState().taskRuns).toHaveLength(1);
   expect(completeModel).not.toHaveBeenCalled(); expect(completeAccountModel).not.toHaveBeenCalled();
 });
+it('reviews only the generated PNG, requires cloud consent, and encrypts the review against its chart', async () => {
+  const taskId = await store.getState().startChartTask(chartInput, crypto.randomUUID()), artifact = store.getState().artifacts[0];
+  const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+  vi.mocked(completeModel).mockResolvedValue('图例颜色相近，建议提高对比度。');
+  await store.getState().reviewChartImage(taskId, artifact.id, 'p1', image, false, new AbortController().signal);
+  expect(vi.mocked(completeModel).mock.calls.at(-1)?.[2]).toEqual([{ role: 'user', content: [
+    expect.objectContaining({ type: 'text' }), { type: 'image_url', image_url: { url: image.dataUrl } },
+  ] }]);
+  expect(store.getState().taskRuns[0].chartReview).toMatchObject({ profileId: 'p1', model: 'test', answer: '图例颜色相近，建议提高对比度。', artifactSha256: artifact.sha256 });
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain('图例颜色相近');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().taskRuns[0].chartReview?.answer).toBe('图例颜色相近，建议提高对比度。');
+});
+it('requires per-run opt-in before a relay model can inspect a chart image', async () => {
+  await store.getState().saveProfile({ ...profile, id: 'relay', name: 'relay', mode: 'relay', baseUrl: 'https://models.example/v1' }, 'relay-key');
+  const taskId = await store.getState().startChartTask(chartInput, crypto.randomUUID()), artifact = store.getState().artifacts[0];
+  const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+  const signal = new AbortController().signal;
+  await expect(store.getState().reviewChartImage(taskId, artifact.id, 'relay', image, false, signal)).rejects.toThrow('明确授权');
+  expect(completeModel).not.toHaveBeenCalled();
+  vi.mocked(completeModel).mockResolvedValue('布局正常。');
+  await store.getState().reviewChartImage(taskId, artifact.id, 'relay', image, true, signal);
+  expect(completeModel).toHaveBeenCalledTimes(1);
+  expect(store.getState().taskRuns.find(task => task.id === taskId)?.chartReview?.profileId).toBe('relay');
+});
 it('blocks invalid data and request reuse with changed chart inputs', async () => {
   await expect(store.getState().startChartTask({ ...chartInput, csv: 'a,b\nx,' }, crypto.randomUUID())).rejects.toThrow('数值');
   expect(store.getState().taskRuns).toHaveLength(0);

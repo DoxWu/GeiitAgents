@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Download, FileUp, Play, RotateCcw, Trash2 } from 'lucide-react';
+import { BarChart3, Download, Eye, FileUp, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { checkChart, parseChartCsv, renderChartSvg, MAX_CHART_SERIES, type ChartInput } from '@/officeTasks/chart';
+import { chartSvgToPng } from '@/officeTasks/chartImage';
 import { exportChartXlsx, parseFirstXlsxSheet, XLSX_MIME } from '@/officeTasks/xlsx';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import type { TaskStatus } from '@/types/workbench';
@@ -23,17 +24,37 @@ export function ChartTasks() {
   const [checked, setChecked] = useState<ReturnType<typeof checkChart> | null>(null);
   const [selected, setSelected] = useState('');
   const [importedSheet, setImportedSheet] = useState('');
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false), [reviewing, setReviewing] = useState(false), [reviewProfileId, setReviewProfileId] = useState(''), [allowCloudReview, setAllowCloudReview] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const requestId = useRef(crypto.randomUUID()), mounted = useRef(false), fileGeneration = useRef(0), fileInput = useRef<HTMLInputElement>(null);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const reviewController = useRef<AbortController | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; reviewController.current?.abort(); }; }, []);
+  useEffect(() => {
+    if (!store.profiles?.some(profile => profile.id === reviewProfileId) && store.profiles?.length) setReviewProfileId(store.profiles[0].id);
+  }, [store.profiles, reviewProfileId]);
   const tasks = store.taskRuns.filter(task => task.type === 'chart.generate');
   const task = tasks.find(item => item.id === selected) ?? tasks[0];
   const artifact = store.artifacts.find(item => item.taskId === task?.id && item.kind === 'svg');
+  const reviewProfile = store.profiles?.find(profile => profile.id === reviewProfileId);
   const columns = useMemo(() => { try { return parseChartCsv(input.csv).headers; } catch { return []; } }, [input.csv]);
   const selectedValueColumns = input.valueColumns ?? [input.valueColumn];
   const savedData = useMemo(() => { try { return task?.chartInput ? checkChart(task.chartInput) : null; } catch { return null; } }, [task?.chartInput]);
   function change(patch: Partial<ChartInput>) {
     fileGeneration.current++; setInput(current => ({ ...current, ...patch })); setImportedSheet(''); setChecked(null); setError(''); setNotice(''); requestId.current = crypto.randomUUID();
+  }
+  async function reviewChart() {
+    if (!task || !artifact || !reviewProfile || reviewing) return;
+    const controller = new AbortController(); reviewController.current = controller;
+    setReviewing(true); setError(''); setNotice(''); setAllowCloudReview(false);
+    try {
+      const image = await chartSvgToPng(artifact.content, artifact.name, controller.signal);
+      await useWorkbenchStore.getState().reviewChartImage(task.id, artifact.id, reviewProfile.id, image, reviewProfile.mode === 'relay' && allowCloudReview, controller.signal);
+      if (mounted.current) setNotice('图表视觉审阅已加密保存。请以本地数值表为准复核数据。');
+    } catch (e) {
+      if (mounted.current && !controller.signal.aborted) setError(e instanceof Error ? e.message : '图表视觉审阅失败。');
+    } finally {
+      if (reviewController.current === controller) reviewController.current = null;
+      if (mounted.current) setReviewing(false);
+    }
   }
   function inspect() { setError(''); setNotice(''); try { setChecked(checkChart(input)); } catch (e) { setChecked(null); setError(e instanceof Error ? e.message : '图表数据检查失败。'); } }
   async function open(file?: File) {
@@ -74,11 +95,11 @@ export function ChartTasks() {
     <aside className="max-h-48 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
       <h2 className="mb-3 text-sm font-semibold">图表任务</h2>
       {!tasks.length && <p className="text-sm text-ink-secondary">尚无图表记录</p>}
-      {tasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${item.id === task?.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => { setSelected(item.id); setNotice(''); }}><span className="block truncate text-sm">{item.title}</span><span className="text-xs text-ink-secondary">{status[item.status]}</span></button>)}
+      {tasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${item.id === task?.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => { reviewController.current?.abort(); setSelected(item.id); setAllowCloudReview(false); setNotice(''); }}><span className="block truncate text-sm">{item.title}</span><span className="text-xs text-ink-secondary">{status[item.status]}</span></button>)}
     </aside>
     <div className="min-h-0 min-w-0 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-5xl">
       <h1 className="text-xl font-semibold">检查与生成图表</h1>
-      <p className="mt-2 text-sm text-ink-secondary">本机处理 CSV，不上传或调用模型。支持 1–6 个同量纲数值系列、最多 50 条数据和 12 列。检查数据格式与表达风险，不核验业务真实性，也不识别图表图片。</p>
+      <p className="mt-2 text-sm text-ink-secondary">CSV 检查和图表生成在本机完成，不核验业务真实性。可另行请求模型审阅已生成图表的视觉布局；该审阅不能代替下方本地数值检查。</p>
       <fieldset disabled={busy} className="mt-5 grid min-w-0 gap-4 border-b border-line pb-5 sm:grid-cols-2">
         <label className="work-label">图表标题<input className="work-input" maxLength={80} value={input.title} onChange={e => change({ title: e.target.value })} /></label>
         <label className="work-label">单位（可选）<input className="work-input" maxLength={20} value={input.unit} onChange={e => change({ unit: e.target.value })} /></label>
@@ -106,6 +127,22 @@ export function ChartTasks() {
         <details className="mt-3 text-xs"><summary>图表执行记录</summary>{store.toolRuns.filter(tool => tool.taskId === task.id).map(tool => <p className="mt-1" key={tool.id}>{tool.tool} · {status[tool.status]}{tool.converterVersion ? ` · ${tool.converterVersion}` : ''}</p>)}</details>
         {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
         {artifact && <ChartDownloads key={artifact.id} svg={artifact.content} name={artifact.name} title={task.title} sha256={artifact.sha256} chartInput={task.chartInput} />}
+        {artifact && task.status === 'succeeded' && <section aria-label="图表视觉审阅" className="mt-5 border-t border-line pt-4">
+          <h3 className="font-medium">图表视觉审阅</h3>
+          {!store.profiles?.length ? <p className="mt-2 text-sm text-ink-secondary">请先在模型连接中添加一个兼容的视觉模型。</p> : <div className="mt-3 grid gap-3 sm:max-w-2xl">
+            <label className="work-label">审阅模型<select aria-label="图表审阅模型" className="work-input" disabled={reviewing} value={reviewProfileId || store.profiles[0].id} onChange={event => { setReviewProfileId(event.target.value); setAllowCloudReview(false); }}>
+              {store.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.capabilities?.vision?.state === 'supported' ? '图片已验证' : profile.capabilities?.vision?.state === 'unsupported' ? '图片测试未通过' : '图片能力未验证'}</option>)}
+            </select></label>
+            {reviewProfile?.mode === 'relay' && <label className="flex items-start gap-2 text-sm leading-6"><input className="mt-1" type="checkbox" disabled={reviewing} checked={allowCloudReview} onChange={event => setAllowCloudReview(event.target.checked)} />我允许本次将此图表图片发送给所选云端模型审阅</label>}
+            <p className="text-xs text-ink-secondary">只发送当前 SVG 成果转换的 PNG 图片，不发送原始 CSV。模型可能计费；审阅意见不能验证图表中的精确数值。</p>
+            <div className="flex flex-wrap gap-2"><button className="work-command" disabled={reviewing || !reviewProfile || reviewProfile.mode === 'relay' && !allowCloudReview} onClick={() => void reviewChart()}><Eye size={16} />{reviewing ? '正在审阅…' : '请求视觉审阅'}</button>
+              {reviewing && <button className="work-command" onClick={() => { reviewController.current?.abort(); }}>取消审阅</button>}</div>
+          </div>}
+          {task.chartReview && task.chartReview.artifactSha256 === artifact.sha256 && <div className="mt-4 border-l-2 border-brand pl-3" aria-label="已保存的图表审阅">
+            <p className="text-xs text-ink-secondary">{task.chartReview.model} · {new Date(task.chartReview.reviewedAt).toLocaleString()}</p>
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm">{task.chartReview.answer}</p>
+          </div>}
+        </section>}
         {savedData && <ChartChecks data={savedData} />}
       </section>}
     </div></div>

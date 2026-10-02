@@ -70,6 +70,14 @@ export interface TaskRun {
   workflow?: { definition: import('@/workflows/definition').WorkflowDefinition; input: import('@/workflows/definition').WorkflowInput };
   officeInput?: import('@/officeTasks/toolRunner').OfficeToolInput;
   summary?: string;
+  chartReview?: {
+    profileId: string;
+    model: string;
+    answer: string;
+    reviewedAt: string;
+    imageSha256: string;
+    artifactSha256: string;
+  };
   chartInput?: import('@/officeTasks/chart').ChartInput;
   title: string;
   profileId: string;

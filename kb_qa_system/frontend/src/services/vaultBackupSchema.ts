@@ -37,10 +37,11 @@ const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: s
   messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), images: optional(arr(workImage, MAX_IMAGES_PER_MESSAGE)), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
 const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)) };
 const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'horizontal_bar', 'line', 'pie', 'scatter'), unit: str(20) });
+const chartReview = obj({ profileId: id, model: str(400, 1), answer: str(20000, 1), reviewedAt: date, imageSha256: hash, artifactSha256: hash });
 const workflow: Check = value => { validateWorkflow(value); };
 const workflowDraft: Check = value => { validateWorkflow(value, true); };
 const workflowInput: Check = value => { validateWorkflowInput(value); };
-const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), summary: optional(str(1_000_000)),
+const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), chartReview: optional(chartReview), summary: optional(str(1_000_000)),
   title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50), resumedFromTaskId: optional(id), resumeFromNodeId: optional(id) });
 const finishReason = optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown'));
 const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('model.complete', 'workflow.condition', 'document.edit', 'document.restore', 'document.export-docx', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document', 'office.search_wikipedia'),
@@ -129,6 +130,8 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
         }
       }
       if ((t.type === 'workflow.run') !== Boolean(t.workflow)) fail();
+      if (t.chartReview && (t.type !== 'chart.generate' || !data.profiles.some(profile => profile.id === t.chartReview!.profileId)
+        || !t.artifactIds.some(artifactId => artifacts.get(artifactId)?.sha256 === t.chartReview!.artifactSha256))) fail();
       if (t.workflow) {
         if (t.resumeFromNodeId && !t.workflow.definition.nodes.some(node => node.id === t.resumeFromNodeId)) fail();
         const steps = t.toolRunIds.map(id => tools.get(id)).filter(step => step?.workflowNodeId);

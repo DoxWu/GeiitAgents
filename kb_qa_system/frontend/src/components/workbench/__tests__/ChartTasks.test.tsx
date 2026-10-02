@@ -6,11 +6,12 @@ import type { TaskRun } from '@/types/workbench';
 import { ChartTasks } from '../ChartTasks';
 
 const { state, getState } = vi.hoisted(() => {
-  const value = { taskRuns: [] as TaskRun[], artifacts: [] as { id: string; taskId: string; kind: string; content: string; name: string; sha256?: string }[], toolRuns: [], startChartTask: vi.fn(), storageError: null as string | null, unlocked: true };
+  const value = { taskRuns: [] as TaskRun[], artifacts: [] as { id: string; taskId: string; kind: string; content: string; name: string; sha256?: string }[], toolRuns: [], profiles: [] as { id: string; name: string; mode: 'local' | 'relay'; capabilities?: { vision?: { state: string } } }[], startChartTask: vi.fn(), reviewChartImage: vi.fn(), storageError: null as string | null, unlocked: true };
   return { state: value, getState: () => value };
 });
 vi.mock('@/store/workbenchStore', () => { const hook = () => state; Object.assign(hook, { getState }); return { useWorkbenchStore: hook }; });
-beforeEach(() => { state.taskRuns = []; state.artifacts = []; state.startChartTask.mockReset().mockResolvedValue('chart:fixture'); vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture'); vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {}); });
+vi.mock('@/officeTasks/chartImage', () => ({ chartSvgToPng: vi.fn(async () => ({ name: 'chart.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 })) }));
+beforeEach(() => { state.taskRuns = []; state.artifacts = []; state.profiles = []; state.startChartTask.mockReset().mockResolvedValue('chart:fixture'); state.reviewChartImage.mockReset().mockResolvedValue(undefined); vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture'); vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {}); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('previews every selected series and clears approval when selection changes', async () => {
@@ -106,4 +107,27 @@ it('downloads the saved chart input as an XLSX workbook', async () => {
   await screen.findByRole('button', { name: '下载 XLSX 数据' });
   expect(click).toHaveBeenCalled();
   expect(URL.createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+});
+
+it('requests an explicitly chosen local model to review the generated chart image', async () => {
+  state.profiles = [{ id: 'local', name: '本地视觉模型', mode: 'local', capabilities: { vision: { state: 'supported' } } }];
+  state.taskRuns = [{ id: 'chart-task', type: 'chart.generate', title: '销售', status: 'succeeded', profileId: '', instruction: '', createdAt: '', updatedAt: '', toolRunIds: [], artifactIds: ['svg-1'], chartInput: { title: '销售', csv: '分类,数值\n甲,2', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '件' } }];
+  state.artifacts = [{ id: 'svg-1', taskId: 'chart-task', kind: 'svg', content: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="644"></svg>', name: '销售.svg', sha256: 'a'.repeat(64) }];
+  const user = userEvent.setup(); render(<ChartTasks />);
+  await user.click(await screen.findByRole('button', { name: '请求视觉审阅' }));
+  await screen.findByRole('status');
+  expect(state.reviewChartImage).toHaveBeenCalledWith('chart-task', 'svg-1', 'local', expect.objectContaining({ mimeType: 'image/png' }), false, expect.any(AbortSignal));
+});
+
+it('requires fresh cloud consent for each chart image review', async () => {
+  state.profiles = [{ id: 'relay', name: '云端视觉模型', mode: 'relay' }];
+  state.taskRuns = [{ id: 'chart-task', type: 'chart.generate', title: '销售', status: 'succeeded', profileId: '', instruction: '', createdAt: '', updatedAt: '', toolRunIds: [], artifactIds: ['svg-1'], chartInput: { title: '销售', csv: '分类,数值\n甲,2', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '件' } }];
+  state.artifacts = [{ id: 'svg-1', taskId: 'chart-task', kind: 'svg', content: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="644"></svg>', name: '销售.svg', sha256: 'a'.repeat(64) }];
+  const user = userEvent.setup(); render(<ChartTasks />);
+  const button = await screen.findByRole('button', { name: '请求视觉审阅' });
+  expect(button).toBeDisabled();
+  await user.click(screen.getByLabelText(/我允许本次将此图表图片/));
+  expect(button).toBeEnabled();
+  await user.click(button); await screen.findByRole('status');
+  expect(state.reviewChartImage).toHaveBeenCalledWith('chart-task', 'svg-1', 'relay', expect.anything(), true, expect.any(AbortSignal));
 });
