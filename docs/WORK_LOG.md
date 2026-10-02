@@ -604,3 +604,8 @@
 - 本次本地验证：`npm run check`、`npm run lint`、`npm run build`、`npm run desktop:toolchain:test`、`npm run desktop:check`、`docker compose config --quiet` 和 `git diff --check` 通过；Railway 两份 JSON 配置解析通过。生产 Web 构建仅有既有动态/静态导入提示，无构建失败。
 - 环境边界：当前机器 Docker CLI 可用但 Docker daemon 不可连接，因此本次未构建/推送镜像、未启动容器、未做目标 PostgreSQL/Redis/PVC/邮件/provider 联调，也未访问线上服务或生产数据库。
 - 下一步：在有 Docker daemon 的 CI 或部署主机上构建不可变 SHA 镜像；先部署 Sealos staging，补齐真实 provider、邮件、pgvector、PVC 重启、备份恢复、告警和域名 HTTPS 验收，再复制到 production。未推送远程。
+### 2026-10-03：部署模块推送尝试
+
+- 按用户新增规则，在完成“部署选型与上线准备”大模块后执行了推送前检查：工作树干净，差异检查通过，待推送提交为 `077de7b` 及其之前的本地文档提交。
+- 已执行普通 `git fetch agents --prune` / `git push agents develop/geiit-agents` 流程；当前环境连接 GitHub 443 失败，推送未完成。
+- 未使用强制推送，未修改 `main`，未访问生产服务或提交凭据。网络恢复后只需复核远程 SHA，再普通推送，不重写历史。
