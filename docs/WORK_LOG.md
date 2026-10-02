@@ -656,3 +656,8 @@
 - 兼容性修复：Windows PowerShell 5.1 无法按 UTF-8 无 BOM 解析中文字符串，脚本运行消息已改为 ASCII；README 改用 `powershell -NoProfile -ExecutionPolicy Bypass` 调用。
 - 本次验证：模板模式在当前机器通过；ready 模式在缺少 `secret.yaml` 时按预期安全失败；`git diff --check` 通过。当前没有真实 Secret、镜像仓库或 Docker daemon，未执行 ready 部署检查。
 - 下一步：部署主机生成真实 Secret、填入 Git SHA 镜像后运行 ready 门禁，再执行 Sealos staging apply。
+### 2026-10-03：preflight 模块推送尝试
+
+- Sealos preflight 门禁已本地提交为 `4a23acc`，工作树在推送前干净，模板/ready 行为和差异检查通过。
+- 已执行普通 `git fetch agents --prune`、远程差异检查和 `git push agents develop/geiit-agents`；GitHub 443 再次不可达，推送未完成。
+- 远程仍保持已成功的模板提交 `cb65340`；未强推、未修改 `main`。网络恢复后一次普通推送即可同步 `4a23acc` 及之前的文档提交。
