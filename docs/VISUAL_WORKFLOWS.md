@@ -45,7 +45,7 @@
 
 `frontend/scripts/verify-workflows.mjs` 提供 Web、`--relay`、`--account`、`--native` 实际页面验收，隔离 origin / WebView 数据，动态端口。检查拖动/键盘布局、三节点分叉汇合、环路拒绝、实际 Markdown/DOCX 下载、刷新恢复，再增加模型节点检查增量/正常结束/输出上限/EOF/停止/锁库，以及实际加密备份下载、预检查、整体恢复后不重放。每模式 5 次合成生成 HTTP 请求，纯本地阶段零模型请求。云端模式使用实际 FastAPI 路由/HTTP 传输，认证/选模/上游为 fixture；不代表线上登录、真实供应商或计费验收。续跑、单节点重试、检查点复制、历史快照固定和云端重新授权由工作流存储/组件回归覆盖。原生结果、构建摘要和最终通过状态以 [工作记录](WORK_LOG.md) 为准。
 
-尚未实现：循环、定时/事件触发、任意插件工具。定义独立导入/导出和历史分页、画布缩放/自动布局已实现。失败/中断/取消续跑和单节点重试已实现，但仍需低配、最大容量、强杀/断电及真实供应商验收；DOCX 分页也仍待受支持的渲染环境。
+尚未实现：循环、定时/事件触发、任意插件工具。定义独立导入/导出和历史分页、画布缩放/自动布局已实现。失败/中断/取消续跑和单节点重试已实现，但仍需低配、最大容量、强杀/断电及真实供应商验收。DOCX 共享转换器的 Word 首批分页已通过，更多样式组合与原生导出入口仍待扩展。
 ## Resume and retry (2026-10-01)
 
 Failed, interrupted, or cancelled workflow runs can create a new continuation run from history. The default resumes at the first incomplete step; a failed step can also be selected for retry. Completed checkpoints and artifacts are restored as inputs without repeating their model or tool calls. The continuation receives new task, tool-run, and artifact IDs while the original history remains unchanged.
