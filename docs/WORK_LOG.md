@@ -632,3 +632,8 @@
 - 本地验证：所有 YAML 文档由 PyYAML 解析通过；`kubectl kustomize kb_qa_system/deploy/sealos` 成功渲染；渲染结果包含 2 个 Service、2 个 PVC 和 2 个 Deployment，未包含 `secret.example.yaml`；`git diff --check` 通过。
 - 文档同步：部署选型推荐和 Sealos 指南均加入模板入口，并明确模板不能替代目标环境的 pgvector、PVC、真实 provider、邮件、备份恢复和 HTTPS 验收。
 - 下一步：在具备 Docker daemon 和 Sealos staging 权限的环境中，用 CI 构建的 Git SHA 镜像填入模板，完成目标环境部署验收；本次未连接集群、未部署线上资源。
+### 2026-10-03：Sealos 模块推送成功与状态同步
+
+- 网络恢复后完成普通 `git fetch agents --prune`、远程差异检查和 `git push agents develop/geiit-agents`。
+- Sealos 应用层模板模块已推送成功，远程 `agents/develop/geiit-agents` 更新到 `cb65340`；`agents/main` 未修改，没有使用强制推送。
+- 同步修正接手文档和部署选型文档中的远程状态，明确远程已包含部署选型、CI 容器门禁和 Sealos 模板；本次仍未连接目标集群或执行线上部署。

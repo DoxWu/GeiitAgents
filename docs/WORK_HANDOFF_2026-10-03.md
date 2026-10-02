@@ -10,12 +10,12 @@
 
 部署选型与上线准备以 [DEPLOYMENT_SELECTION_RECOMMENDATION_2026-10-03.md](DEPLOYMENT_SELECTION_RECOMMENDATION_2026-10-03.md) 为准：当前首发推荐 Sealos/Kubernetes 上单副本前端 + `api+worker`、pgvector PostgreSQL、Redis、PVC 和集群外 ops；Railway 保留为海外/预发布方案，并明确 API/Worker 分离时的共享文件限制。
 
-当前工作树干净。核心代码基线已推送到远程，但本接手文档及其后续工作记录提交尚未推送：
+当前工作树干净。部署选型、CI 容器门禁和 Sealos 应用模板已推送到远程；后续新提交仍需按模块完成后检查并普通推送：
 
     本地分支：develop/geiit-agents
     远程：agents/develop/geiit-agents
-    远程已同步基线：2dd4ac2 docs: record remote development push
-    本地领先提交：cfb89be、e81acbe、8865069（接手文档及其工作记录修订）
+    远程已同步：cb65340 deploy: add sealos application manifests
+    本地与远程：当前一致
     旧 main：未修改
     远程地址：https://github.com/DoxWu/GeiitAgents.git
 
@@ -27,7 +27,7 @@
 
 安装包只代表当前源码已完成 Windows NSIS 构建，不代表已签名、安装升级、部署或生产验收。
 
-本接手文档已在本地提交 `cfb89be`，随后工作记录同步提交为 `e81acbe`，当前修订为 `8865069`。截至 2026-10-03，GitHub 连接两次返回无法连接 443，因此远程分支仍停在 `2dd4ac2`；网络恢复后先检查差异，再执行普通 `git push agents develop/geiit-agents`，不要强推。
+本接手文档及后续部署记录已在本地提交并随模块推送；当前远程 `agents/develop/geiit-agents` 已同步到 `cb65340`。后续仍需先检查差异，再执行普通 `git push agents develop/geiit-agents`，不要强推。
 
 ## 已完成范围和证据
 
