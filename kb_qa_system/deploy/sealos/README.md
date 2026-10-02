@@ -12,20 +12,26 @@
 1. 先在同一命名空间创建 PostgreSQL/pgvector 和 Redis，确认扩展、版本、密码、PVC 和内网服务名。
 2. 复制 `secret.example.yaml` 为未跟踪的 `secret.yaml`，替换所有占位符；不要把真实 Secret 提交到 Git。
 3. 将 `kustomization.yaml` 中两个镜像的 `newName`/`newTag` 改为实际不可变镜像引用。建议使用 Git SHA，不使用 `latest`。
-4. 先渲染检查：
+4. 先运行模板门禁（允许占位符，但检查 Kustomize 结构）：
 
    ```bash
-   kubectl kustomize kb_qa_system/deploy/sealos
+   powershell -NoProfile -ExecutionPolicy Bypass -File kb_qa_system/deploy/sealos/preflight.ps1 -Mode template
    ```
 
-5. 应用 Secret、PVC 和应用：
+5. 填写 `secret.yaml`、镜像引用后运行 ready 门禁；如果部署主机有 Docker daemon，可以同时检查：
+
+   ```bash
+   powershell -NoProfile -ExecutionPolicy Bypass -File kb_qa_system/deploy/sealos/preflight.ps1 -Mode ready -CheckDocker
+   ```
+
+6. 应用 Secret、PVC 和应用：
 
    ```bash
    kubectl apply -f kb_qa_system/deploy/sealos/secret.yaml
    kubectl apply -k kb_qa_system/deploy/sealos
    ```
 
-6. 等待就绪并检查反代：
+7. 等待就绪并检查反代：
 
    ```bash
    kubectl rollout status deployment/geiit-api

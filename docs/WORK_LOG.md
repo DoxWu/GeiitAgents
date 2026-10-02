@@ -647,3 +647,12 @@
 - `kubectl kustomize kb_qa_system/deploy/sealos` 仍可在本地成功渲染模板。
 - 额外执行 `kubectl apply --dry-run=client -k ... --validate=false` 时，kubectl 仍尝试访问本机 `localhost:8080` API Server；当前机器没有 Kubernetes 集群，因此命令未完成资源识别。该结果是环境缺少 API Server，不是模板渲染失败，也不构成 Sealos 集群验收。
 - 目标环境仍需在 Sealos staging 执行真正的 apply、rollout、PVC、探针和反代检查。
+### 2026-10-03：Sealos 部署前 preflight 门禁
+
+- 新增 `kb_qa_system/deploy/sealos/preflight.ps1`，支持 `template` 和 `ready` 两种模式：
+  - template：检查 kubectl、Kustomize 渲染和必需资源类型；
+  - ready：额外检查未跟踪 `secret.yaml`、占位符、Git 忽略状态和不可变镜像引用；
+  - 可选 `-CheckDocker` 检查 Docker daemon，但不连接 Kubernetes 集群、不打印 Secret 内容。
+- 兼容性修复：Windows PowerShell 5.1 无法按 UTF-8 无 BOM 解析中文字符串，脚本运行消息已改为 ASCII；README 改用 `powershell -NoProfile -ExecutionPolicy Bypass` 调用。
+- 本次验证：模板模式在当前机器通过；ready 模式在缺少 `secret.yaml` 时按预期安全失败；`git diff --check` 通过。当前没有真实 Secret、镜像仓库或 Docker daemon，未执行 ready 部署检查。
+- 下一步：部署主机生成真实 Secret、填入 Git SHA 镜像后运行 ready 门禁，再执行 Sealos staging apply。
