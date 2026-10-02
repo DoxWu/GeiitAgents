@@ -494,4 +494,4 @@
 - 验证：前端全量 **124 文件 / 1205 项通过**，`npm run check`、`npm run lint`、生产 Web build、Cargo toolchain fallback 和 `cargo check` 通过；后端个人/账号 schema 与路由 **37 项通过**。本机图像签名、超限、加密刷新恢复、云端未授权拒绝、账号/个人路由多模态 payload 均有测试。本轮没有调用真实模型或邮件。
 - 构建产物：dev.61 未签名 NSIS `GeiIt Agents Dev_0.1.0-dev.61_x64-setup.exe`，**9,157,754 字节**，SHA-256 `3FCF6337E105F070D2617F38ACF86BD7C1BEB17106483BAEDA1F9AFE273034ED`。Rust release 与 NSIS 成功；未安装或签名。前序重新构建 dev.60 的结果仍记录在上一条。
 - 未完成/风险：本地 Ollama/LM Studio 和真实账号云端 provider 是否接受视觉内容取决于具体模型，仍需有授权的端到端模型测试；图片具有敏感数据出站风险，每次云端操作均需用户授权。当前 Chromium/WebView2 没有进行本轮图片 UI 实机截图验收；不支持 HEIC/GIF/SVG、OCR、裁剪或自动压缩。`.geiitwork` 加密库整体容量仍受既有 16 MiB 快照上限影响。后端 Ruff 未安装，Python lint 本轮无法运行。
-- Git：本轮应用、测试和工作记录改动待提交至本地 `develop/geiit-agents`；未推送 `agents`。
+- Git：本轮实现与工作记录已提交至本地 `develop/geiit-agents`，功能提交 `c93bf5b`；未推送 `agents`。
