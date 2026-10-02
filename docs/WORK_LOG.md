@@ -609,3 +609,9 @@
 - 按用户新增规则，在完成“部署选型与上线准备”大模块后执行了推送前检查：工作树干净，差异检查通过，待推送提交为 `077de7b` 及其之前的本地文档提交。
 - 已执行普通 `git fetch agents --prune` / `git push agents develop/geiit-agents` 流程；当前环境连接 GitHub 443 失败，推送未完成。
 - 未使用强制推送，未修改 `main`，未访问生产服务或提交凭据。网络恢复后只需复核远程 SHA，再普通推送，不重写历史。
+### 2026-10-03：CI 发布容器门禁
+
+- 修改 `.github/workflows/ci.yml`：push/PR 触发范围增加实际开发分支 `develop/**`，增加 `workflow_dispatch` 手动触发。
+- 新增 `container-build` job，依赖后端测试和前端生产构建，使用 Docker Buildx 只构建后端/前端生产镜像，不推送、不读取发布凭据；后端显式使用 `INSTALL_LOCAL_ML=false`，前端使用同源 `/api/v1` 构建参数。
+- 本地验证：YAML 解析通过，工作流包含开发分支触发和容器构建 job，`git diff --check` 通过。本机无 Docker daemon，因此未在本机执行镜像构建；该门禁将在 GitHub Actions 或其他有 Docker daemon 的 CI 环境执行。
+- Git：本批改动待提交到 `develop/geiit-agents`，不修改 `main`；按用户规则完成大模块后尝试普通推送。
