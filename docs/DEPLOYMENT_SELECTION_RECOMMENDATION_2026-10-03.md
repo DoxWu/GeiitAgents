@@ -28,6 +28,8 @@
 
 首发阶段不把 API 和 Worker 拆到不同 Pod。当前文档处理会在 API 写入 `/app/uploads`，Worker 再读取同一目录；拆分后必须提供可靠的 ReadWriteMany 或对象存储迁移，并重新验证强杀、重复任务和文件一致性。小团队单副本不需要先承担这项复杂度。
 
+应用层模板已放在 [`kb_qa_system/deploy/sealos/`](../kb_qa_system/deploy/sealos/README.md)，包括 Kustomize、API/Worker、前端、PVC 和 Secret 占位样例。模板不包含数据库或 Redis 的有状态部署，也不包含任何真实凭据。
+
 ## 选型比较
 
 | 方案 | 适合场景 | 优点 | 主要限制 | 建议 |

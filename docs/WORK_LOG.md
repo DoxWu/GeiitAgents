@@ -620,3 +620,15 @@
 - CI 发布容器门禁模块已本地提交为 `904e00b`，工作树在推送前干净，差异检查通过。
 - 已执行普通 `git fetch agents --prune`、远程差异检查和 `git push agents develop/geiit-agents`；GitHub 443 连接失败，推送未完成。
 - 未使用强制推送，未修改 `main`，未读取或写入任何发布凭据。网络恢复后按普通推送流程重试。
+### 2026-10-03：Sealos 应用层部署模板
+
+- 新增 `kb_qa_system/deploy/sealos/` Kustomize 模板：
+  - `api.yaml`：单副本 `ROLE=api+worker`、`/live` 存活探针、`/ready` 就绪探针、资源限制和上传/运行数据 PVC；
+  - `frontend.yaml`：Nginx 前端、同源 `/api/` 和 `/ready` 反代、ClusterIP 服务；
+  - `pvc.yaml`：`ReadWriteOnce` 的上传和运行数据卷；
+  - `secret.example.yaml`：仅占位字段，不加入 kustomization，不含真实凭据；
+  - `kustomization.yaml` 与 README：不可变镜像标签、Secret 创建顺序、滚动状态和 port-forward 检查。
+- 设计边界：模板不部署 PostgreSQL/pgvector/Redis，不包含真实 Secret；这些依赖由 Sealos 数据库应用或已验证托管服务提供。首发保持单副本，避免尚未完成的 RWX/对象存储迁移。
+- 本地验证：所有 YAML 文档由 PyYAML 解析通过；`kubectl kustomize kb_qa_system/deploy/sealos` 成功渲染；渲染结果包含 2 个 Service、2 个 PVC 和 2 个 Deployment，未包含 `secret.example.yaml`；`git diff --check` 通过。
+- 文档同步：部署选型推荐和 Sealos 指南均加入模板入口，并明确模板不能替代目标环境的 pgvector、PVC、真实 provider、邮件、备份恢复和 HTTPS 验收。
+- 下一步：在具备 Docker daemon 和 Sealos staging 权限的环境中，用 CI 构建的 Git SHA 镜像填入模板，完成目标环境部署验收；本次未连接集群、未部署线上资源。

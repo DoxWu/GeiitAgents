@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geiit-api-uploads
+  labels:
+    app.kubernetes.io/name: geiit-agents
+    app.kubernetes.io/component: uploads
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geiit-api-data
+  labels:
+    app.kubernetes.io/name: geiit-agents
+    app.kubernetes.io/component: runtime-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

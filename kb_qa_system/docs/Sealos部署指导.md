@@ -66,6 +66,8 @@ Sealos 是一个基于 Kubernetes 的云操作系统，提供类 PaaS 的使用�
 
 ## 二、部署架构总览
 
+> 可复用的应用层 Kustomize 模板见 [`../deploy/sealos/README.md`](../deploy/sealos/README.md)。本指南仍保留 Sealos 控制台和数据库应用的逐步操作；模板中的 Secret 只作占位示例，不能直接用于生产。
+
 ### 2.1 整体架构图
 
 ```

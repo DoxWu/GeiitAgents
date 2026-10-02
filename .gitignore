@@ -17,6 +17,7 @@
 .env.development
 .env.*.local
 .env.ops
+kb_qa_system/deploy/sealos/secret.yaml
 .env.*
 # 显式保留示例文件
 !.env.example

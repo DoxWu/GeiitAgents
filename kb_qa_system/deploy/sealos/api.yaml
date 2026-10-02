@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geiit-api
+  labels:
+    app.kubernetes.io/name: geiit-agents
+    app.kubernetes.io/component: api-worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: geiit-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: geiit-api
+        app.kubernetes.io/component: api-worker
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: api-worker
+          image: geiit-backend:REPLACE_ME
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: geiit-backend-env
+          env:
+            - name: ROLE
+              value: api+worker
+            - name: ENVIRONMENT
+              value: production
+            - name: DEBUG
+              value: "False"
+            - name: PORT
+              value: "8000"
+            - name: CELERY_WORKER_CONCURRENCY
+              value: "2"
+            - name: CELERY_MAX_TASKS_PER_CHILD
+              value: "100"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+            - name: runtime-data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 20
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: geiit-api-uploads
+        - name: runtime-data
+          persistentVolumeClaim:
+            claimName: geiit-api-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geiit-api
+  labels:
+    app.kubernetes.io/name: geiit-agents
+    app.kubernetes.io/component: api-worker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: geiit-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
