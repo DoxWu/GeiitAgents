@@ -166,14 +166,14 @@ docker info
 #### 3.2.3 克隆项目代码
 
 ```bash
-git clone https://github.com/DoxWu/SmallKnowladgeBase.git
-cd SmallKnowladgeBase
+git clone https://github.com/DoxWu/GeiitAgents.git
+cd GeiitAgents
 ```
 
 确认项目结构：
 
 ```
-SmallKnowladgeBase/
+GeiitAgents/
 ├── kb_qa_system/
 │   ├── backend/              # 后端代码
 │   │   ├── Dockerfile        # 后端镜像构建文件
@@ -702,7 +702,7 @@ Login Succeeded
 #### 5.2.1 进入项目目录
 
 ```bash
-cd SmallKnowladgeBase/kb_qa_system
+cd GeiitAgents/kb_qa_system
 ```
 
 #### 5.2.2 执行构建命令

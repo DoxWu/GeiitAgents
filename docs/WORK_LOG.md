@@ -596,3 +596,11 @@
 - 当前目标确认：核心办公助手功能已完成；后续从 P0 开始，先诊断真实 provider live helper 的导入/依赖 ACL/配置读取/调用边界，再安排 Windows 原生 WebView2 验收。P1 性能、运行时数据保护、跨卷/断电和大容量恢复仍未完成。
 - 本次仅完成接手检查和状态核对，未重跑前端、后端、Rust、E5、WebView2 或真实 provider 测试，未访问线上服务、生产数据库或读取凭据，也未生成新的构建产物。
 - 下一步：在用户确认继续后，从 P0-1 的隔离 profile 与本地页面前置条件开始，安全记录真实 provider 的可复现边界。
+### 2026-10-03：部署选型与上线准备审计
+
+- 新增 `docs/DEPLOYMENT_SELECTION_RECOMMENDATION_2026-10-03.md`，按中国大陆访问为主、5–20 人团队的小规模首发场景给出 Sealos/Kubernetes 首选方案、Railway/单机 Compose 对比、资源规格、发布顺序、备份恢复、回滚和上线门禁。
+- 方案结论：首发使用前端 Nginx + 单副本 `ROLE=api+worker` + PostgreSQL 16/pgvector + Redis + PVC；API/Worker 暂不拆分，避免现有 `/app/uploads` 共享文件依赖失效。Railway 保留为海外/预发布方案，需保持合并服务或先完成对象存储/RWX 迁移。
+- 文档同步：`kb_qa_system/DEPLOYMENT.md` 增加当前选型文档入口并声明未完成真实线上联调；`kb_qa_system/docs/Sealos部署指导.md` 的克隆地址更新为 `https://github.com/DoxWu/GeiitAgents.git`；接手文档补充当前部署选型入口。
+- 本次本地验证：`npm run check`、`npm run lint`、`npm run build`、`npm run desktop:toolchain:test`、`npm run desktop:check`、`docker compose config --quiet` 和 `git diff --check` 通过；Railway 两份 JSON 配置解析通过。生产 Web 构建仅有既有动态/静态导入提示，无构建失败。
+- 环境边界：当前机器 Docker CLI 可用但 Docker daemon 不可连接，因此本次未构建/推送镜像、未启动容器、未做目标 PostgreSQL/Redis/PVC/邮件/provider 联调，也未访问线上服务或生产数据库。
+- 下一步：在有 Docker daemon 的 CI 或部署主机上构建不可变 SHA 镜像；先部署 Sealos staging，补齐真实 provider、邮件、pgvector、PVC 重启、备份恢复、告警和域名 HTTPS 验收，再复制到 production。未推送远程。

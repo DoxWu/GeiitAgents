@@ -8,6 +8,8 @@
 
 用户最初要求的核心范围已经完成：办公工具、笔记/待办、文件整理、模型配置与体验，以及历史前端全量失败处理均已有代码、测试和浏览器验收证据。当前处于“核心功能完成、发布前审查”阶段；性能、运行时数据保护、故障恢复、真实供应商/邮件联调和发布验证仍是未完成的工程目标，不能因为核心里程碑完成就自动视为可选。
 
+部署选型与上线准备以 [DEPLOYMENT_SELECTION_RECOMMENDATION_2026-10-03.md](DEPLOYMENT_SELECTION_RECOMMENDATION_2026-10-03.md) 为准：当前首发推荐 Sealos/Kubernetes 上单副本前端 + `api+worker`、pgvector PostgreSQL、Redis、PVC 和集群外 ops；Railway 保留为海外/预发布方案，并明确 API/Worker 分离时的共享文件限制。
+
 当前工作树干净。核心代码基线已推送到远程，但本接手文档及其后续工作记录提交尚未推送：
 
     本地分支：develop/geiit-agents

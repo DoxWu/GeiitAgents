@@ -1,5 +1,7 @@
 # 部署指南
 
+> 当前首发部署选型、资源规划、Railway 与 Sealos 的取舍、发布门禁和恢复要求，以 [部署选型与上线准备建议](../docs/DEPLOYMENT_SELECTION_RECOMMENDATION_2026-10-03.md) 为准。本文件保留本地 Compose 和 Railway 的操作细节；它不代表已经完成线上部署或真实供应商联调。
+
 本文档说明GeiIt企业知识库的本地开发环境启动和 Railway 生产部署流程。
 
 ---
