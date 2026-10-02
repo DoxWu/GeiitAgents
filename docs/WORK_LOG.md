@@ -642,3 +642,8 @@
 - 模板模块已确认在远程 `cb65340`；随后同步接手文档/部署文档远程状态的本地提交为 `425fba3`。
 - 对 `425fba3` 执行普通推送时 GitHub 443 再次连接失败，远程仍停在 `cb65340`；未强推、未修改 `main`。
 - 工作树状态和本地文档保持完整；网络恢复后只需普通推送 `425fba3`，不需要重做模板模块。
+### 2026-10-03：Kubernetes 客户端验收边界
+
+- `kubectl kustomize kb_qa_system/deploy/sealos` 仍可在本地成功渲染模板。
+- 额外执行 `kubectl apply --dry-run=client -k ... --validate=false` 时，kubectl 仍尝试访问本机 `localhost:8080` API Server；当前机器没有 Kubernetes 集群，因此命令未完成资源识别。该结果是环境缺少 API Server，不是模板渲染失败，也不构成 Sealos 集群验收。
+- 目标环境仍需在 Sealos staging 执行真正的 apply、rollout、PVC、探针和反代检查。
