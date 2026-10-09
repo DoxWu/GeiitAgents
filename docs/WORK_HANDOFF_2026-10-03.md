@@ -1,6 +1,6 @@
 # GeiIt Agents 接手文档
 
-2026-10-09 接续状态优先于下列 10-03 历史记录：本轮已修复登录页无法退出，加入可选且明确可见的账号服务器（桌面默认 `https://api.geiit.online/api/v1`），新增无需账号的自购 API 直连，并补齐模型列表进度/取消/失败及 20 秒超时。前端本次 128 文件 / 1244 项、Rust 21 项、check/lint 和 Chromium 隔离模拟验证通过，dev.67 NSIS 安装包已构建。本批保存在开发分支本地提交，GitHub 443 不可达，未完成本批同步；缓存远程最后成功记录为 `cb65340`，并非实时查询结论。完整状态、安装包摘要、验证边界和下一步以 [WORK_LOG.md](WORK_LOG.md) 首部及 [ACCOUNT_AND_MODEL_ACCESS.md](ACCOUNT_AND_MODEL_ACCESS.md) 为准。用户授权较大模块完成后普通推送，禁止强推；本次未改线上部署。
+2026-10-09 接续状态优先于下列 10-03 历史记录：本轮已修复登录页无法退出，加入可选且明确可见的账号服务器（桌面默认 `https://api.geiit.online/api/v1`），新增无需账号的自购 API 直连，并补齐模型列表进度/取消/失败及 20 秒超时。前端本次 128 文件 / 1244 项、Rust 21 项、check/lint 和 Chromium 隔离模拟验证通过，dev.67 NSIS 安装包已构建。本模块提交 `47bfc20` 已普通推送至 `agents/develop/geiit-agents`，之前 6 个待同步提交一并同步；GitHub 连接短暂失败后已重新 fetch 并核对历史，本次状态文档随收尾提交同步。完整状态、安装包摘要、验证边界和下一步以 [WORK_LOG.md](WORK_LOG.md) 首部及 [ACCOUNT_AND_MODEL_ACCESS.md](ACCOUNT_AND_MODEL_ACCESS.md) 为准。用户授权较大模块完成后普通推送，禁止强推；本次未改线上部署。
 
 更新时间：2026-10-03（Asia/Shanghai）
 
