@@ -1,3 +1,4 @@
+import { AccountServerSelector } from './AccountServerSelector';
 /**
  * 认证页面布局组件
  *
@@ -52,6 +53,8 @@ export function AuthLayout({
         {/* 卡片容器 */}
         <div className="rounded-lg border border-line bg-surface p-6 shadow-sm">
           <h2 className="mb-4 text-lg font-semibold text-ink">{title}</h2>
+          <Link to="/workbench" className="mb-4 block text-sm text-brand" aria-label="关闭登录并返回工作台">关闭 / 返回工作台（无需登录）</Link>
+          <AccountServerSelector />
           {children}
         </div>
 

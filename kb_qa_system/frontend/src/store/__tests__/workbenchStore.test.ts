@@ -78,6 +78,20 @@ it("routes concurrent replies back to their own conversations", async () => {
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain("fixture-key");
 });
 
+it('supports encrypted purchased-provider profiles without login while keeping cloud-material consent', async () => {
+  const direct = { ...profile, id: 'purchased', mode: 'direct' as const, baseUrl: 'https://provider.example/v1' };
+  await store.getState().saveProfile(direct, 'purchased-fixture');
+  expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  vi.mocked(completeModel).mockResolvedValue('paid reply');
+  const id = store.getState().newConversation(direct.id);
+  await store.getState().send(id, 'hello');
+  expect(completeModel).toHaveBeenCalledWith(expect.objectContaining({ mode: 'direct' }), 'purchased-fixture', expect.any(Array), expect.any(AbortSignal), expect.any(Function), expect.any(Function));
+  await expect(store.getState().startDocumentTask(direct.id, { title: 'Test', instruction: 'Write a document' }, false)).rejects.toThrow('授权');
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().profiles.find(p => p.id === direct.id)?.mode).toBe('direct');
+  expect(JSON.stringify(store.getState())).not.toContain('purchased-fixture');
+});
+
 it('keeps image attachments encrypted at rest and sends OpenAI-compatible parts to a local model', async () => {
   const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
   vi.mocked(completeModel).mockResolvedValue('The chart rises.');

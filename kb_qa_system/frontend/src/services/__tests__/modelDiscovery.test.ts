@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 vi.mock('@/api/client', () => ({ apiClient: { post: vi.fn() }, getStoredTokens: vi.fn(() => ({ access_token: 'fixture-token' })) }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const endpoint = { id: 'test', mode: 'local' as const, baseUrl: 'http://127.0.0.1:11434/v1/' };
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 it('reads only IDs without assuming capabilities and bounds duplicates, invalid IDs and long catalogs', () => {
   expect(normalizeModelList({ data: [{ id: 'chat', capabilities: ['vision'] }, { id: 'chat' }, null, { id: 'bad\n' }, { id: 'bad\x7f' }, { id: 'x'.repeat(201) }] })).toEqual({ models: [{ id: 'chat' }], truncated: true });
@@ -59,4 +59,19 @@ it('uses the desktop bridge and cancels native work, ignoring a late response', 
   controller.abort(); resolve({ models: [{ id: 'late' }], truncated: false });
   await rejected;
   expect(invoke).toHaveBeenCalledWith('cancel_local_model', { requestId: (vi.mocked(invoke).mock.calls[0][1] as Record<string, unknown>).requestId });
+});
+
+it('times out an unresponsive provider and aborts its request', async () => {
+  vi.useFakeTimers();
+  const fetcher = vi.fn().mockImplementation(() => new Promise(() => {})); vi.stubGlobal('fetch', fetcher);
+  const pending = discoverModels(endpoint, '', new AbortController().signal);
+  const rejected = expect(pending).rejects.toThrow('超时');
+  await vi.advanceTimersByTimeAsync(20_000); await rejected;
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+});
+it('discovers purchased provider models without an account relay', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response('{"data":[{"id":"paid"}]}')); vi.stubGlobal('fetch', fetcher);
+  await expect(discoverModels({ ...endpoint, mode: 'direct', baseUrl: 'https://provider.example/v1' }, 'provider-fixture', new AbortController().signal)).resolves.toEqual({ models: [{ id: 'paid' }], truncated: false });
+  expect(apiClient.post).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledWith('https://provider.example/v1/models', expect.objectContaining({ headers: { Authorization: 'Bearer provider-fixture' }, credentials: 'omit', redirect: 'error' }));
 });

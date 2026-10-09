@@ -1,5 +1,6 @@
+import { getAccountServer } from '@/services/accountServer';
 import type { ReminderRecurrence, ServerReminder } from '@/api/personal';
-import { API_BASE_URL } from '@/utils/constants';
+
 import { wallTime } from './reminderTime';
 
 export interface ReminderFields { subject: string; body: string; timezone: string; recurrence: ReminderRecurrence; next_run_at: string }
@@ -8,7 +9,7 @@ export interface ReminderForm { subject: string; body: string; timezone: string;
 export type ReminderAttempt = { kind: 'create'; payload: ReminderFields & { request_id: string } } | { kind: 'edit'; id: number; payload: ReminderEdit & { revision: number } };
 export interface ReminderDraft { owner: string; form: ReminderForm; original?: ServerReminder; attempt?: ReminderAttempt; conflict?: boolean; updatedAt: string }
 export interface ReminderTemplate { id: string; owner: string; name: string; subject: string; body: string; timezone: string; recurrence: ReminderRecurrence }
-export const reminderOwner = (id: number, email: string) => JSON.stringify([API_BASE_URL, id, email.toLowerCase()]);
+export const reminderOwner = (id: number, email: string) => JSON.stringify([getAccountServer(), id, email.toLowerCase()]);
 export function reminderForm(original?: ServerReminder, resume = false): ReminderForm {
   const timezone = original?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   return { subject: original?.subject || '', body: original?.body || '', timezone, recurrence: original?.recurrence || 'once',

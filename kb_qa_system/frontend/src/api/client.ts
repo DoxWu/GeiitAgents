@@ -1,3 +1,4 @@
+import { getAccountServer, accountFetch, getAccountGeneration, getAccountSignal } from '@/services/accountServer';
 /**
  * API 客户端核心封装
  *
@@ -14,7 +15,7 @@
  *   const data = await apiClient.get<UserResponse>('/auth/me');
  */
 
-import { API_BASE_URL, TOKEN_STORAGE_KEY } from "@/utils/constants";
+import { TOKEN_STORAGE_KEY } from "@/utils/constants";
 import { safeStorage } from "@/utils/safeStorage";
 import type { TokenResponse, RefreshTokenResponse } from "@/types/user";
 import type { ApiError, RequestOptions } from "@/types/api";
@@ -35,6 +36,7 @@ export class HttpClientError extends Error {
 }
 
 /** Token 刷新状态（防止并发刷新） */
+let refreshGeneration = -1;
 let refreshPromise: Promise<string | null> | null = null;
 
 /**
@@ -43,6 +45,8 @@ let refreshPromise: Promise<string | null> | null = null;
  */
 export function getStoredTokens(): TokenResponse | null {
   try {
+    const owner = safeStorage.getItem("kb_auth_server");
+    if (owner && owner !== getAccountServer()) return null;
     const raw = safeStorage.getItem(TOKEN_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as TokenResponse) : null;
   } catch {
@@ -55,6 +59,7 @@ export function getStoredTokens(): TokenResponse | null {
  * @param tokens - Token 响应对象
  */
 export function storeTokens(tokens: TokenResponse): void {
+  safeStorage.setItem("kb_auth_server", getAccountServer());
   safeStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens));
 }
 
@@ -103,19 +108,22 @@ export function registerTokenExpiredCallback(callback: () => void): void {
  */
 export async function refreshAccessToken(): Promise<string | null> {
   // 如果已有刷新请求在进行，复用该 promise
-  if (refreshPromise) return refreshPromise;
+  if (refreshPromise && refreshGeneration === getAccountGeneration()) return refreshPromise;
+  refreshGeneration = getAccountGeneration();
 
   const tokens = getStoredTokens();
   if (!tokens?.refresh_token) return null;
 
+  const generation = getAccountGeneration();
   refreshPromise = (async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      const res = await accountFetch(`${getAccountServer()}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: tokens.refresh_token }),
       });
 
+      if (generation !== getAccountGeneration()) return null;
       if (!res.ok) {
         // 刷新失败，清除 Token
         clearTokens();
@@ -124,14 +132,16 @@ export async function refreshAccessToken(): Promise<string | null> {
       }
 
       const data: RefreshTokenResponse = await res.json();
+      if (generation !== getAccountGeneration()) return null;
       updateTokens(data);
       return data.access_token;
     } catch {
+      if (generation !== getAccountGeneration()) return null;
       clearTokens();
       onTokenExpired?.();
       return null;
     } finally {
-      refreshPromise = null;
+      if (generation === getAccountGeneration()) refreshPromise = null;
     }
   })();
 
@@ -319,7 +329,8 @@ export const apiClient: ApiClient = {
    * @throws HttpClientError 当请求失败时抛出
    */
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
+    const generation = getAccountGeneration();
+    const url = `${getAccountServer()}${endpoint}`;
     const autoRefresh = options.autoRefresh !== false;
 
     const config: RequestInit = {
@@ -329,7 +340,7 @@ export const apiClient: ApiClient = {
 
     let response: Response;
     try {
-      response = await fetch(url, config);
+      response = await accountFetch(url, config);
 
       // 401 时尝试刷新 Token 并重试
       if (response.status === 401 && autoRefresh && options.auth !== false) {
@@ -337,7 +348,7 @@ export const apiClient: ApiClient = {
         if (newToken) {
           // 用新 Token 重试原请求
           config.headers = buildHeaders(options);
-          response = await fetch(url, config);
+          response = await accountFetch(url, config);
         }
       }
     } catch (err) {
@@ -354,7 +365,9 @@ export const apiClient: ApiClient = {
       return undefined as T;
     }
 
-    return response.json() as Promise<T>;
+    const data: T = await response.json();
+    if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
+    return data;
   },
 
   /** GET 请求 */
@@ -376,7 +389,8 @@ export const apiClient: ApiClient = {
    * @throws HttpClientError 当请求失败时抛出
    */
   async getText(endpoint: string, options: RequestOptions = {}): Promise<string> {
-    const url = `${API_BASE_URL}${endpoint}`;
+    const generation = getAccountGeneration();
+    const url = `${getAccountServer()}${endpoint}`;
     const autoRefresh = options.autoRefresh !== false;
 
     const config: RequestInit = {
@@ -387,14 +401,14 @@ export const apiClient: ApiClient = {
 
     let response: Response;
     try {
-      response = await fetch(url, config);
+      response = await accountFetch(url, config);
 
       // 401 时尝试刷新 Token 并重试
       if (response.status === 401 && autoRefresh && options.auth !== false) {
         const newToken = await refreshAccessToken();
         if (newToken) {
           config.headers = buildHeaders(options);
-          response = await fetch(url, config);
+          response = await accountFetch(url, config);
         }
       }
     } catch (err) {
@@ -405,7 +419,9 @@ export const apiClient: ApiClient = {
       throw await parseError(response);
     }
 
-    return response.text();
+    const data = await response.text();
+    if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
+    return data;
   },
 
   /**
@@ -421,7 +437,8 @@ export const apiClient: ApiClient = {
    * @throws HttpClientError 当请求失败时抛出
    */
   async getBlob(endpoint: string, options: RequestOptions = {}): Promise<Blob> {
-    const url = `${API_BASE_URL}${endpoint}`;
+    const generation = getAccountGeneration();
+    const url = `${getAccountServer()}${endpoint}`;
     const autoRefresh = options.autoRefresh !== false;
 
     const config: RequestInit = {
@@ -432,13 +449,13 @@ export const apiClient: ApiClient = {
 
     let response: Response;
     try {
-      response = await fetch(url, config);
+      response = await accountFetch(url, config);
 
       if (response.status === 401 && autoRefresh && options.auth !== false) {
         const newToken = await refreshAccessToken();
         if (newToken) {
           config.headers = buildHeaders(options);
-          response = await fetch(url, config);
+          response = await accountFetch(url, config);
         }
       }
     } catch (err) {
@@ -449,7 +466,9 @@ export const apiClient: ApiClient = {
       throw await parseError(response);
     }
 
-    return response.blob();
+    const data = await response.blob();
+    if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
+    return data;
   },
 
   /** POST 请求 */
@@ -506,7 +525,7 @@ export const apiClient: ApiClient = {
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      const url = `${API_BASE_URL}${endpoint}`;
+      const url = `${getAccountServer()}${endpoint}`;
 
       // [Bug-2 修复] xhr.open() 必须在 setRequestHeader 之前调用
       xhr.open("POST", url);
@@ -567,6 +586,10 @@ export const apiClient: ApiClient = {
         });
       }
 
+      const serverSignal = getAccountSignal();
+      const serverAbort = () => { xhr.abort(); reject(new DOMException("账号服务器已切换", "AbortError")); };
+      serverSignal.addEventListener("abort", serverAbort, { once: true });
+      xhr.onloadend = () => serverSignal.removeEventListener("abort", serverAbort);
       xhr.send(formData);
     });
   },
@@ -603,7 +626,7 @@ export const apiClient: ApiClient = {
     signal?: AbortSignal,
     options?: Pick<RequestOptions, "headers" | "auth">,
   ): Promise<void> {
-    const url = `${API_BASE_URL}${endpoint}`;
+    const url = `${getAccountServer()}${endpoint}`;
     const headers = buildHeaders({
       method: "POST",
       body: JSON.stringify(body),
@@ -613,7 +636,7 @@ export const apiClient: ApiClient = {
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await accountFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(body),

@@ -6,7 +6,7 @@ import type { ModelCapabilityEvidence, ModelProfile } from '@/types/workbench';
 import type { ModelCatalog } from '@/services/modelDiscovery';
 
 type Draft = Omit<ModelProfile, 'hasKey' | 'textTestedAt' | 'toolTestedAt' | 'capabilities'>;
-const empty = (): Draft => ({ id: crypto.randomUUID(), name: '', mode: 'relay', baseUrl: '', model: '' });
+const empty = (): Draft => ({ id: crypto.randomUUID(), name: '', mode: 'direct', baseUrl: '', model: '' });
 
 function capabilityLabel(evidence: ModelCapabilityEvidence | undefined, legacyTestedAt?: string): string {
   if (evidence?.state === 'unsupported') return evidence.testedAt ? `不支持（${new Date(evidence.testedAt).toLocaleString()}）` : '不支持';
@@ -31,6 +31,7 @@ export function ModelConnections() {
   const [clearKey, setClearKey] = useState(false);
   const [operation, setOperation] = useState<'save' | 'test' | 'tool-test' | 'vision-test' | 'list' | null>(null);
   const [message, setMessage] = useState('');
+  const [failed, setFailed] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const active = useRef<AbortController | null>(null);
   const busy = operation === 'save' || operation === 'test' || operation === 'tool-test' || operation === 'vision-test';
@@ -39,7 +40,7 @@ export function ModelConnections() {
 
   const invalidate = useCallback(() => {
     active.current?.abort(); active.current = null;
-    setOperation(null); setCatalog(null); setMessage('');
+    setOperation(null); setCatalog(null); setMessage(''); setFailed(false);
   }, []);
   useEffect(() => {
     invalidate(); setApiKey(''); setClearKey(false);
@@ -51,13 +52,13 @@ export function ModelConnections() {
   async function action(kind: 'save' | 'test' | 'tool-test' | 'vision-test' | 'list', callback: (signal: AbortSignal) => Promise<() => void>) {
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
-    setOperation(kind); setMessage('');
+    setOperation(kind); setMessage(''); setFailed(false);
     if (kind === 'list') setCatalog(null);
     try {
       const apply = await callback(controller.signal);
       if (active.current === controller && !controller.signal.aborted) apply();
     } catch (error) {
-      if (active.current === controller && !controller.signal.aborted) setMessage(error instanceof Error ? error.message : '操作失败。');
+      if (active.current === controller && !controller.signal.aborted) { setFailed(true); setMessage(error instanceof Error ? error.message : '操作失败。'); }
     } finally {
       if (active.current === controller) { active.current = null; setOperation(null); }
     }
@@ -71,9 +72,10 @@ export function ModelConnections() {
       <p className="text-xs text-ink-secondary">仅显示账号获准使用的配置；由服务端管理。个人连接失败时不会自动切换。</p>
       {userId && <button type="button" className="work-command justify-self-start" disabled={accountLoading} onClick={() => void useWorkbenchStore.getState().refreshAccountModel()}>{accountLoading ? '正在检查权限…' : '刷新账号模型'}</button>}
     </section>
+    <p className="mb-4 text-sm">无需登录即可添加本机模型或自购 API。直连请求只发送到所填模型地址，API Key 加密保存在本机。网页直连需要服务商允许跨域；桌面端不受此限制。</p>
     <div className="mb-6 divide-y divide-line border-y border-line">
       {profiles.map(profile => <div key={profile.id} className="flex items-center gap-3 py-3">
-        <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{profile.name}</p><p className="truncate text-xs text-ink-secondary">{profile.model} · {profile.mode === 'local' ? '本机直连' : '云端临时转发'}</p></div>
+        <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{profile.name}</p><p className="truncate text-xs text-ink-secondary">{profile.model} · {profile.mode === 'local' ? '本机直连' : profile.mode === 'direct' ? '自购 API 直连' : '云端临时转发'}</p></div>
         <button className="work-icon" title="编辑连接" aria-label={'编辑 ' + profile.name} disabled={busy} onClick={() => { const { hasKey: _, textTestedAt: __, toolTestedAt: ___, capabilities: ____, ...config } = profile; reset(config); }}><Pencil size={16} /></button>
         <button className="work-icon" title="删除连接" aria-label={'删除 ' + profile.name} disabled={busy} onClick={() => { if (window.confirm('删除模型连接“' + profile.name + '”？')) void action('save', async () => { await useWorkbenchStore.getState().removeProfile(profile.id); return () => { reset(); setMessage('连接已删除。'); }; }); }}><Trash2 size={16} /></button>
       </div>)}
@@ -90,7 +92,7 @@ export function ModelConnections() {
       <fieldset disabled={busy} className="grid min-w-0 gap-4">
         <label className="work-label">连接名称<input className="work-input" required maxLength={100} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
         <label className="work-label">调用方式<select aria-label="调用方式" className="work-input" value={draft.mode} onChange={e => editConnection({ mode: e.target.value as ModelProfile['mode'], baseUrl: e.target.value === 'local' ? 'http://127.0.0.1:11434/v1' : '', model: '' })}>
-          <option value="relay">云端临时转发</option><option value="local">本机直连（Ollama / LM Studio）</option>
+          <option value="direct">自购 API 直连（无需登录）</option><option value="relay">云端临时转发（需登录）</option><option value="local">本机直连（Ollama / LM Studio）</option>
         </select></label>
         <label className="work-label">API Base URL<input className="work-input" type="url" required maxLength={2048} placeholder={draft.mode === 'local' ? 'http://127.0.0.1:11434/v1' : 'https://api.example.com/v1'} value={draft.baseUrl} onChange={e => editConnection({ baseUrl: e.target.value })} /></label>
         <label className="work-label">API Key<input className="work-input" type="password" autoComplete="new-password" maxLength={4096} placeholder={existing?.hasKey ? '已保存；留空保持原密钥' : draft.mode === 'local' ? '可选' : '必填'} value={apiKey} onChange={e => { invalidate(); setApiKey(e.target.value); }} /></label>
@@ -100,6 +102,8 @@ export function ModelConnections() {
             const result = await useWorkbenchStore.getState().discoverProfileModels(draft, apiKey, clearKey, signal);
             return () => { setCatalog(result); setMessage(result.models.length ? '已获取 ' + result.models.length + ' 个模型。' : '列表为空，可继续手填模型名称。'); };
           })}>{operation === 'list' ? '正在获取模型…' : '获取模型列表'}</button>
+          {operation === 'list' && <div role="status" className="grid gap-2 rounded-lg border border-brand p-3"><p>正在获取模型列表，请稍候（最多等待 20 秒）…</p><progress aria-label="模型列表获取进度" className="w-full" /><button type="button" className="work-command justify-self-start" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消获取</button></div>}
+          {message && <p role={failed ? 'alert' : 'status'} className={failed ? 'text-sm text-danger break-words' : 'text-sm break-words'}>{message}</p>}
           <p className="text-xs text-ink-secondary">主动读取当前接口的模型列表，不会自动下载或切换模型。列表不可用时仍可手填。</p>
           {catalog && <>
             {catalog.models.length > 0 && <label className="work-label">从列表选择模型<select className="work-input min-w-0 max-w-full" value="" onChange={e => { if (e.target.value) setDraft({ ...draft, model: e.target.value }); }}>
@@ -130,7 +134,6 @@ export function ModelConnections() {
         {(operation === 'list' || operation === 'test' || operation === 'tool-test' || operation === 'vision-test') && <button className="work-command" type="button" onClick={() => { invalidate(); setMessage('请求已取消。'); }}>取消请求</button>}
         <button className="work-icon" type="button" aria-label="清空表单" title="清空表单" disabled={busy} onClick={() => reset()}><X size={16} /></button>
       </div>
-      {message && <p role="status" className="text-sm break-words">{message}</p>}
     </form>
   </div>;
 }

@@ -18,7 +18,7 @@ export interface ModelCapabilities {
 export interface ModelProfile {
   id: string;
   name: string;
-  mode: "relay" | "local";
+  mode: "relay" | "local" | "direct";
   baseUrl: string;
   model: string;
   maxTokens?: number;

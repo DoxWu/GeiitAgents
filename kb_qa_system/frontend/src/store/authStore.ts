@@ -1,3 +1,4 @@
+import { getAccountGeneration, subscribeAccountServer } from '@/services/accountServer';
 /**
  * 认证状态管理 Store
  *
@@ -17,10 +18,11 @@ import { create } from "zustand";
 import * as authApi from "@/api/auth";
 import {
   clearTokens,
+  storeTokens,
   getStoredTokens,
   registerTokenExpiredCallback,
 } from "@/api/client";
-import { TOKEN_STORAGE_KEY, USER_STORAGE_KEY } from "@/utils/constants";
+import { USER_STORAGE_KEY } from "@/utils/constants";
 import { safeStorage } from "@/utils/safeStorage";
 import type { TokenResponse, UserResponse, LoginRequest } from "@/types/user";
 import { useDocumentStore } from "@/store/documentStore";
@@ -61,9 +63,9 @@ function restoreFromStorage(): {
   user: UserResponse | null;
 } {
   try {
-    const tokensRaw = safeStorage.getItem(TOKEN_STORAGE_KEY);
+    const tokensRaw = getStoredTokens();
     const userRaw = safeStorage.getItem(USER_STORAGE_KEY);
-    const tokens = tokensRaw ? (JSON.parse(tokensRaw) as TokenResponse) : null;
+    const tokens = tokensRaw;
     const user = userRaw ? (JSON.parse(userRaw) as UserResponse) : null;
     return { tokens, user };
   } catch {
@@ -80,9 +82,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: null,
 
   login: async (data: LoginRequest) => {
+    const generation = getAccountGeneration();
     set({ loading: true, error: null });
     try {
       const tokenResponse = await authApi.login(data);
+      if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 修复问题三：登录前清除前一个用户的文档数据，防止数据残留。
       // 作用：覆盖 token 过期后直接登录新账户的场景（logout 未被调用，
@@ -91,10 +95,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       useDocumentStore.getState().reset();
 
       // 持久化到安全存储（兼容国产浏览器的 localStorage 降级）
-      safeStorage.setItem(
-        TOKEN_STORAGE_KEY,
-        JSON.stringify(tokenResponse),
-      );
+      storeTokens(tokenResponse);
       safeStorage.setItem(
         USER_STORAGE_KEY,
         JSON.stringify(tokenResponse.user),
@@ -110,24 +111,24 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "登录失败，请重试";
+      if (generation !== getAccountGeneration()) throw err;
       set({ loading: false, error: message });
       throw err;
     }
   },
 
   guestLogin: async () => {
+    const generation = getAccountGeneration();
     set({ loading: true, error: null });
     try {
       const tokenResponse = await authApi.guestLogin();
+      if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 修复问题三：登录前清除前一个用户的文档数据（与 login 一致）
       useDocumentStore.getState().reset();
 
       // 持久化到安全存储（与 login 一致）
-      safeStorage.setItem(
-        TOKEN_STORAGE_KEY,
-        JSON.stringify(tokenResponse),
-      );
+      storeTokens(tokenResponse);
       safeStorage.setItem(
         USER_STORAGE_KEY,
         JSON.stringify(tokenResponse.user),
@@ -143,18 +144,21 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "游客登录失败，请重试";
+      if (generation !== getAccountGeneration()) throw err;
       set({ loading: false, error: message });
       throw err;
     }
   },
 
   logout: async () => {
+    const generation = getAccountGeneration();
     try {
       // 尝试通知后端登出（失败不阻塞）
       await authApi.logout();
     } catch {
       // 忽略登出请求失败
     } finally {
+      if (generation === getAccountGeneration()) {
       // 修复问题3：登出时重置 documentStore，清除前一个用户的分支/文档数据，
       // 防止切换账户后数据残留（如普通账户→游客→换回时分支丢失或看到他人分支）
       useDocumentStore.getState().reset();
@@ -166,10 +170,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: false,
         error: null,
       });
+      }
     }
   },
 
   deleteAccount: async (password: string) => {
+    const generation = getAccountGeneration();
     set({ loading: true, error: null });
     try {
       // 获取当前 Refresh Token，一并吊销
@@ -178,6 +184,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
       // 调用删除账号 API（后端会删除数据并吊销 Token）
       await authApi.deleteAccount(password, refreshToken);
+      if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 清除本地状态（不调用 logout API，避免重复黑名单请求）
       useDocumentStore.getState().reset();
@@ -193,6 +200,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "删除账号失败，请重试";
+      if (generation !== getAccountGeneration()) throw err;
       set({ loading: false, error: message });
       throw err;
     }
@@ -233,3 +241,8 @@ registerTokenExpiredCallback(() => {
  *       确保路由守卫在首次渲染时即可正确判断认证状态，避免登录页闪烁。
  */
 useAuthStore.getState().restoreSession();
+
+subscribeAccountServer(() => {
+  useDocumentStore.getState().reset();
+  useAuthStore.setState({ user: null, tokens: null, isAuthenticated: false, loading: false, error: null });
+});

@@ -70,10 +70,21 @@ it('keeps hand entry and saving available after a failed list request', async ()
   vi.mocked(store.getState().discoverProfileModels).mockRejectedValue(new Error('列表不可用，可手填'));
   localDraft(); fireEvent.click(screen.getByText('获取模型列表'));
   await screen.findByText('列表不可用，可手填');
+  expect(screen.getByRole('alert')).toHaveTextContent('列表不可用');
   fireEvent.change(screen.getByLabelText('连接名称'), { target: { value: 'Local' } });
   fireEvent.change(screen.getByLabelText('模型名称'), { target: { value: 'manual' } });
   fireEvent.click(screen.getByText('保存连接'));
   await screen.findByText('连接已加密保存到本机。');
+});
+
+it('shows adjacent progress and cancellation while waiting for the model catalog', async () => {
+  vi.mocked(store.getState().discoverProfileModels).mockImplementation(() => new Promise(() => {}));
+  localDraft(); fireEvent.click(screen.getByText('获取模型列表'));
+  expect(screen.getByRole('progressbar', { name: '模型列表获取进度' })).toBeInTheDocument();
+  fireEvent.click(screen.getByText('取消获取'));
+  expect(vi.mocked(store.getState().discoverProfileModels).mock.calls[0][3].aborted).toBe(true);
+  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  expect(screen.getByText('请求已取消。')).toBeInTheDocument();
 });
 
 it('does not mark a cancelled text probe successful and keeps the saved model', async () => {

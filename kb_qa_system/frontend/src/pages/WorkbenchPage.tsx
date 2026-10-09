@@ -50,7 +50,7 @@ export default function WorkbenchPage() {
   const available = state.profiles.length > 0 || Boolean(state.accountModel);
   const selectedProfile = conversation?.profileId || (!state.profiles.length && state.accountModel ? ACCOUNT_MODEL_ID : "");
   const selectedConnection = state.profiles.find(profile => profile.id === selectedProfile);
-  const cloudModel = selectedProfile === ACCOUNT_MODEL_ID || selectedConnection?.mode === 'relay';
+  const cloudModel = selectedProfile === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(selectedConnection?.mode || '');
   const conversationHasImages = messages.some(message => message.images?.length);
 
   useEffect(() => { void useWorkbenchStore.getState().refreshAccountModel(); }, [userId, authenticated]);

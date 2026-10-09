@@ -35,7 +35,7 @@ import type {
  * @returns Token 响应
  */
 export async function login(data: LoginRequest): Promise<TokenResponse> {
-  return apiClient.post<TokenResponse>(API_PATHS.LOGIN, data);
+  return apiClient.post<TokenResponse>(API_PATHS.LOGIN, data, { auth: false, autoRefresh: false });
 }
 
 /**
@@ -47,7 +47,7 @@ export async function login(data: LoginRequest): Promise<TokenResponse> {
  * @returns Token 响应
  */
 export async function guestLogin(): Promise<TokenResponse> {
-  return apiClient.post<TokenResponse>(API_PATHS.GUEST_LOGIN, {});
+  return apiClient.post<TokenResponse>(API_PATHS.GUEST_LOGIN, {}, { auth: false, autoRefresh: false });
 }
 
 /**

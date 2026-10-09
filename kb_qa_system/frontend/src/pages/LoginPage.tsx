@@ -6,7 +6,7 @@
  *   已登录用户自动重定向至文档管理页。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
@@ -19,6 +19,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { isAuthenticated, error, guestLogin, loading } = useAuthStore();
   const [guestLoading, setGuestLoading] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   // 存储降级提示（国产浏览器隐私模式阻止 localStorage 时显示）
   const storageWarning = safeStorage.getDegradedMessage();
@@ -40,11 +42,11 @@ export default function LoginPage() {
     setGuestLoading(true);
     try {
       await guestLogin();
-      navigate("/chat", { replace: true });
+      if (mounted.current) navigate("/chat", { replace: true });
     } catch {
       // 错误已由 store 设置到 error 字段
     } finally {
-      setGuestLoading(false);
+      if (mounted.current) setGuestLoading(false);
     }
   }
 

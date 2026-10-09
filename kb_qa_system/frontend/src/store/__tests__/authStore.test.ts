@@ -27,8 +27,8 @@ vi.mock("@/api/client", () => ({
   apiClient: mockApiClient,
   registerTokenExpiredCallback: vi.fn(),
   clearTokens: vi.fn(),
-  getStoredTokens: vi.fn(() => null),
-  storeTokens: vi.fn(),
+  getStoredTokens: vi.fn(() => { const raw = localStorage.getItem('kb_auth_tokens'); return raw ? JSON.parse(raw) : null; }),
+  storeTokens: vi.fn(tokens => localStorage.setItem('kb_auth_tokens', JSON.stringify(tokens))),
   HttpClientError: class HttpClientError extends Error {
     status: number;
     detail: unknown;

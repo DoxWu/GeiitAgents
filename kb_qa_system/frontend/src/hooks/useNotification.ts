@@ -1,3 +1,4 @@
+import { getAccountServer } from '@/services/accountServer';
 /**
  * WebSocket 实时通知 Hook（E1-04）
  *
@@ -6,7 +7,7 @@
  *   并通过 Toast Store 显示给用户。支持自动重连和登出时断开。
  *
  * 实现方式：
- *   1. 从 authStore 获取 access_token，从 API_BASE_URL 推导 WebSocket URL
+ *   1. 从 authStore 获取 access_token，从 getAccountServer() 推导 WebSocket URL
  *   2. 仅在用户已认证时建立连接
  *   3. 连接断开后按指数退避策略自动重连（1s → 2s → 4s → ... 最大 30s）
  *   4. 收到消息后按 type 字段映射到对应 Toast 类型
@@ -30,7 +31,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import { API_BASE_URL, TOKEN_STORAGE_KEY } from "@/utils/constants";
+import { TOKEN_STORAGE_KEY } from "@/utils/constants";
 import { useAuthStore } from "@/store/authStore";
 import { useToastStore } from "@/store/toastStore";
 
@@ -58,7 +59,7 @@ const MAX_RECONNECT_DELAY = 30_000;
 const INITIAL_RECONNECT_DELAY = 1_000;
 
 /**
- * 从 API_BASE_URL 推导 WebSocket URL
+ * 从 getAccountServer() 推导 WebSocket URL
  *
  * 作用：
  *   将 http://localhost:8000/api/v1 转换为 ws://localhost:8000/ws/notifications
@@ -150,7 +151,7 @@ export function useNotification(): void {
      *   连接断开时按指数退避策略自动重连。
      */
     const connect = (): void => {
-      const wsUrl = buildWebSocketUrl(API_BASE_URL);
+      const wsUrl = buildWebSocketUrl(getAccountServer());
       const url = `${wsUrl}?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(url);
       wsRef.current = ws;

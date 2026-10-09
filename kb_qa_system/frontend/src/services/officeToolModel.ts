@@ -21,6 +21,7 @@ export async function completeToolModel(profile: ModelProfile | null, apiKey: st
     return normalizeToolReply(reply);
   }
   const baseUrl = validateProfile(profile);
+  if (profile.mode === "direct" && !apiKey) throw new Error("此连接尚未填写 API Key。");
   if (profile.mode === 'relay') {
     requirePrivateRelay(apiKey);
     const reply = await apiClient.post('/private-models/tools/complete', { base_url: baseUrl, model: profile.model, messages, ...(allowWebSearch ? { allow_web_search: true } : {}), ...(profile.maxTokens === undefined ? {} : { max_tokens: profile.maxTokens }) },
@@ -37,7 +38,7 @@ export async function completeToolModel(profile: ModelProfile | null, apiKey: st
       const abort = () => { void invoke('cancel_local_model', { requestId }).catch(() => {}); };
       signal.addEventListener('abort', abort, { once: true });
       try {
-        const result = await invoke('complete_local_tools', { requestId, baseUrl, apiKey, body: JSON.stringify(body) });
+        const result = await invoke('complete_local_tools', { requestId, baseUrl, apiKey, ...(profile.mode === "direct" ? { direct: true } : {}), body: JSON.stringify(body) });
         if (signal.aborted) throw new DOMException('已取消', 'AbortError');
         return normalizeToolReply(result);
       } finally { signal.removeEventListener('abort', abort); }
@@ -59,6 +60,6 @@ export async function completeToolModel(profile: ModelProfile | null, apiKey: st
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   } catch {
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
-    throw new Error('本机模型工具请求失败或格式无效，请检查模型的工具调用支持与接口配置。');
+    throw new Error(profile.mode === 'local' ? '本机模型工具请求失败或格式无效，请检查模型的工具调用支持与接口配置。' : '自购 API 工具请求失败或格式无效，请检查模型的工具调用支持、密钥与接口配置。');
   }
 }

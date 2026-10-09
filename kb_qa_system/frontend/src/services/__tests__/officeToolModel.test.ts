@@ -20,6 +20,13 @@ it('sends fixed tool schemas through local HTTP without a default output limit',
   expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ redirect: 'error', credentials: 'omit', cache: 'no-store' });
 });
 
+it('calls a purchased provider directly without the account relay', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: reply }] }))); vi.stubGlobal('fetch', fetcher);
+  await expect(completeToolModel({ ...profile, mode: 'direct', baseUrl: 'https://provider.example/v1' }, 'provider-fixture', messages, new AbortController().signal)).resolves.toEqual(reply);
+  expect(apiClient.post).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledWith('https://provider.example/v1/chat/completions', expect.objectContaining({ credentials: 'omit', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer provider-fixture' } }));
+});
+
 it('accepts only the requested inert empty-argument tool call as a capability probe', async () => {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ choices: [{ message: reply }] }))));
   await expect(probeToolCallModel(profile, '', new AbortController().signal)).resolves.toBeUndefined();

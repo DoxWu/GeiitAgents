@@ -25,7 +25,7 @@ export function DocumentTasks() {
   const artifacts = task ? store.artifacts.filter(item => item.kind === 'markdown' && task.artifactIds.includes(item.id)) : [];
   const tools = task ? store.toolRuns.filter(item => item.taskId === task.id) : [];
   const profile = store.profiles.find(item => item.id === profileId);
-  const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
+  const cloud = profileId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(profile?.mode || '');
   const connectionSignature = JSON.stringify([profile, store.accountModel]);
   useEffect(() => { if (!profileId) setProfileId(store.profiles[0]?.id ?? (store.accountModel ? ACCOUNT_MODEL_ID : '')); }, [profileId, store.profiles, store.accountModel]);
   useEffect(() => { setConsent(false); }, [profileId, sourceContent, sourceName, instruction, title, connectionSignature]);

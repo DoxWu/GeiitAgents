@@ -47,7 +47,7 @@ export function ChartTasks() {
     setReviewing(true); setError(''); setNotice(''); setAllowCloudReview(false);
     try {
       const image = await chartSvgToPng(artifact.content, artifact.name, controller.signal);
-      await useWorkbenchStore.getState().reviewChartImage(task.id, artifact.id, reviewProfile.id, image, reviewProfile.mode === 'relay' && allowCloudReview, controller.signal);
+      await useWorkbenchStore.getState().reviewChartImage(task.id, artifact.id, reviewProfile.id, image, reviewProfile.mode !== 'local' && allowCloudReview, controller.signal);
       if (mounted.current) setNotice('图表视觉审阅已加密保存。请以本地数值表为准复核数据。');
     } catch (e) {
       if (mounted.current && !controller.signal.aborted) setError(e instanceof Error ? e.message : '图表视觉审阅失败。');
@@ -133,9 +133,9 @@ export function ChartTasks() {
             <label className="work-label">审阅模型<select aria-label="图表审阅模型" className="work-input" disabled={reviewing} value={reviewProfileId || store.profiles[0].id} onChange={event => { setReviewProfileId(event.target.value); setAllowCloudReview(false); }}>
               {store.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.capabilities?.vision?.state === 'supported' ? '图片已验证' : profile.capabilities?.vision?.state === 'unsupported' ? '图片测试未通过' : '图片能力未验证'}</option>)}
             </select></label>
-            {reviewProfile?.mode === 'relay' && <label className="flex items-start gap-2 text-sm leading-6"><input className="mt-1" type="checkbox" disabled={reviewing} checked={allowCloudReview} onChange={event => setAllowCloudReview(event.target.checked)} />我允许本次将此图表图片发送给所选云端模型审阅</label>}
+            {['relay', 'direct'].includes(reviewProfile?.mode || '') && <label className="flex items-start gap-2 text-sm leading-6"><input className="mt-1" type="checkbox" disabled={reviewing} checked={allowCloudReview} onChange={event => setAllowCloudReview(event.target.checked)} />我允许本次将此图表图片发送给所选云端模型审阅</label>}
             <p className="text-xs text-ink-secondary">只发送当前 SVG 成果转换的 PNG 图片，不发送原始 CSV。模型可能计费；审阅意见不能验证图表中的精确数值。</p>
-            <div className="flex flex-wrap gap-2"><button className="work-command" disabled={reviewing || !reviewProfile || reviewProfile.mode === 'relay' && !allowCloudReview} onClick={() => void reviewChart()}><Eye size={16} />{reviewing ? '正在审阅…' : '请求视觉审阅'}</button>
+            <div className="flex flex-wrap gap-2"><button className="work-command" disabled={reviewing || !reviewProfile || reviewProfile.mode !== 'local' && !allowCloudReview} onClick={() => void reviewChart()}><Eye size={16} />{reviewing ? '正在审阅…' : '请求视觉审阅'}</button>
               {reviewing && <button className="work-command" onClick={() => { reviewController.current?.abort(); }}>取消审阅</button>}</div>
           </div>}
           {task.chartReview && task.chartReview.artifactSha256 === artifact.sha256 && <div className="mt-4 border-l-2 border-brand pl-3" aria-label="已保存的图表审阅">

@@ -13,7 +13,7 @@
  *   <LoginForm onSuccess={() => navigate('/documents')} />
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mail, Lock, Eye, EyeOff, LogIn } from "lucide-react";
 import { Button, Input } from "@/components/common";
 import { useAuthStore } from "@/store/authStore";
@@ -34,6 +34,8 @@ interface FormErrors {
 /** LoginForm 组件 */
 export function LoginForm({ onSuccess }: LoginFormProps) {
   const { login, loading } = useAuthStore();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -69,7 +71,7 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
       // 后端 username 字段同时支持用户名和邮箱
       // 前端登录表单使用邮箱，将其作为 username 传入
       await login({ username: email, password });
-      onSuccess?.();
+      if (mounted.current) onSuccess?.();
     } catch {
       // 错误已在 store 中处理，此处无需额外处理
     }

@@ -21,7 +21,7 @@ export function normalizeModelList(value: unknown): ModelCatalog {
   return { models, truncated };
 }
 
-export async function discoverModels(endpoint: ModelEndpoint, apiKey: string, signal: AbortSignal): Promise<ModelCatalog> {
+async function discoverModelsRequest(endpoint: ModelEndpoint, apiKey: string, signal: AbortSignal): Promise<ModelCatalog> {
   const baseUrl = validateModelEndpoint(endpoint);
   if (signal.aborted) throw new DOMException('已取消', 'AbortError');
   if (endpoint.mode === 'relay') {
@@ -40,7 +40,7 @@ export async function discoverModels(endpoint: ModelEndpoint, apiKey: string, si
       const abort = () => { void invoke('cancel_local_model', { requestId }).catch(() => {}); };
       signal.addEventListener('abort', abort, { once: true });
       try {
-        const result = await invoke<ModelCatalog>('list_local_models', { requestId, baseUrl, apiKey });
+        const result = await invoke<ModelCatalog>('list_local_models', { requestId, baseUrl, apiKey, ...(endpoint.mode === 'direct' ? { direct: true } : {}) });
         if (signal.aborted) throw new DOMException('已取消', 'AbortError');
         return normalizeModelList({ data: result.models, has_more: result.truncated });
       } finally { signal.removeEventListener('abort', abort); }
@@ -67,4 +67,24 @@ export async function discoverModels(endpoint: ModelEndpoint, apiKey: string, si
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
     throw new Error(LIST_ERROR);
   }
+}
+
+export async function discoverModels(endpoint: ModelEndpoint, apiKey: string, signal: AbortSignal): Promise<ModelCatalog> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) controller.abort();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 20_000);
+  try {
+    const aborted = new Promise<never>((_, reject) => {
+      const fail = () => reject(new DOMException('已取消', 'AbortError'));
+      if (controller.signal.aborted) fail(); else controller.signal.addEventListener('abort', fail, { once: true });
+    });
+    return await Promise.race([discoverModelsRequest(endpoint, apiKey, controller.signal), aborted]);
+  } catch (error) {
+    if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+    if (timedOut) throw new Error('获取模型列表超时（20 秒），请检查地址和网络后重试；也可手填模型名称。');
+    throw new Error(error instanceof Error ? error.message : LIST_ERROR);
+  } finally { clearTimeout(timer); signal.removeEventListener('abort', abort); }
 }

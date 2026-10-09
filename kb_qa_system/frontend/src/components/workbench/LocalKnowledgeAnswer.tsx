@@ -24,7 +24,7 @@ export default function LocalKnowledgeAnswer({ question, sources }: { question: 
   const savingRef = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const profile = store.profiles.find(p => p.id === profileId);
-  const cloud = profileId === ACCOUNT_MODEL_ID || profile?.mode === 'relay';
+  const cloud = profileId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(profile?.mode || '');
   const endpoint = profile?.baseUrl ?? (profileId === ACCOUNT_MODEL_ID ? '账号所配置的服务端模型供应商' : '尚未选择');
   const signature = JSON.stringify([profileId, profile, store.accountModel]);
   const sourceSignature = JSON.stringify([question, sources.map(({ documentId, name, start, end, text }) => ({ documentId, name, start, end, text }))]);

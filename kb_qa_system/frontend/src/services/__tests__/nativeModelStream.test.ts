@@ -44,6 +44,12 @@ it('keeps the nonstream command for callers that do not request progress', async
   expect(native.invoke).toHaveBeenCalledWith('complete_local_model', expect.not.objectContaining({ onChunk: expect.anything() }));
 });
 
+it('uses the native HTTPS provider transport without account authentication', async () => {
+  native.invoke.mockResolvedValue({ content: 'provider reply' });
+  await expect(completeModel({ ...profile, mode: 'direct', baseUrl: 'https://provider.example/v1', hasKey: true }, 'provider-fixture', messages, new AbortController().signal)).resolves.toBe('provider reply');
+  expect(native.invoke).toHaveBeenCalledWith('complete_local_model', expect.objectContaining({ direct: true, baseUrl: 'https://provider.example/v1', apiKey: 'provider-fixture' }));
+});
+
 it('isolates channels for concurrent conversations', async () => {
   const finish: ((value: unknown) => void)[] = [], left: string[] = [], right: string[] = [];
   native.invoke.mockImplementation(() => new Promise(resolve => finish.push(resolve)));

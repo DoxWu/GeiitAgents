@@ -20,7 +20,7 @@ export function OfficeToolTasks() {
   useEffect(() => { const reads = readVersion; mounted.current = true; return () => { mounted.current = false; reads.current++; }; }, []);
   const chosen = profileId || store.profiles[0]?.id || (store.accountModel ? ACCOUNT_MODEL_ID : '');
   const chosenProfile = store.profiles.find(profile => profile.id === chosen);
-  const cloud = chosen === ACCOUNT_MODEL_ID || chosenProfile?.mode === 'relay';
+  const cloud = chosen === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(chosenProfile?.mode || '');
   useEffect(() => { setAllowCloud(false); setAllowWebSearch(false); }, [chosen, chosenProfile, userId, store.accountModel]);
   const tasks = store.taskRuns.filter(task => task.type === 'office.tools');
   const task = tasks.find(task => task.id === selected) || tasks[0];

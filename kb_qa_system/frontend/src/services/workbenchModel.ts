@@ -1,5 +1,6 @@
+import { getAccountServer, accountFetch } from '@/services/accountServer';
 import { apiClient, getStoredTokens } from "@/api/client";
-import { API_BASE_URL } from "@/utils/constants";
+
 import type { ModelMessageContent, ModelProfile } from "@/types/workbench";
 import { finishReason, readModelResponse, type FinishReason } from './modelStream';
 
@@ -14,7 +15,7 @@ export function validateModelEndpoint(profile: Pick<ModelProfile, "baseUrl" | "m
   if (profile.mode === "local") {
     if (!loopback || !["http:", "https:"].includes(url.protocol)) throw new Error("本机模型仅支持 localhost、127.0.0.1 或 [::1]。");
   } else if (url.protocol !== "https:" || loopback || url.port && url.port !== "443") {
-    throw new Error("云端转发仅支持 HTTPS 公网地址（443 端口）。");
+    throw new Error("云端模型仅支持 HTTPS 公网地址（443 端口）。");
   }
   return url.href.replace(/\/$/, "");
 }
@@ -28,7 +29,7 @@ export function validateProfile(profile: Pick<ModelProfile, "baseUrl" | "mode" |
 }
 
 export function requirePrivateRelay(apiKey: string): void {
-  const api = new URL(API_BASE_URL, window.location.href);
+  const api = new URL(getAccountServer(), window.location.href);
   if (api.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(api.hostname)) {
     throw new Error("云端地址必须使用 HTTPS 才能传输模型密钥。");
   }
@@ -43,6 +44,7 @@ export async function completeModel(
   onFinish?: (reason: FinishReason) => void,
 ): Promise<string> {
   validateProfile(profile);
+  if (profile.mode === "direct" && !apiKey) throw new Error("此连接尚未填写 API Key。");
   if (signal.aborted) throw new DOMException("已取消", "AbortError");
   if (profile.mode === "relay") {
     requirePrivateRelay(apiKey);
@@ -78,7 +80,7 @@ export async function completeModel(
     try {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
       const result = await invoke<{ content: string; finish_reason?: string }>(channel ? "stream_local_model" : "complete_local_model", {
-        requestId, baseUrl: profile.baseUrl, apiKey, model: profile.model, messages, maxTokens: profile.maxTokens,
+        requestId, baseUrl: profile.baseUrl, apiKey, ...(profile.mode === "direct" ? { direct: true } : {}), model: profile.model, messages, maxTokens: profile.maxTokens,
         ...(channel ? { onChunk: channel } : {}),
       });
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
@@ -87,7 +89,7 @@ export async function completeModel(
       return result.content;
     } catch {
       if (signal.aborted) throw new DOMException("已取消", "AbortError");
-      throw new Error("本机模型请求失败或输出中断，请检查服务、模型名称和接口地址。");
+      throw new Error(profile.mode === 'local' ? "本机模型请求失败或输出中断，请检查服务、模型名称和接口地址。" : "自购 API 请求失败或输出中断，请检查模型名称、密钥和接口地址。");
     } finally {
       accepting = false;
       if (channel) channel.onmessage = () => {};
@@ -104,7 +106,7 @@ export async function completeModel(
     onFinish?.(result.finishReason); return result.content;
   } catch {
     if (signal.aborted) throw new DOMException("已取消", "AbortError");
-    throw new Error("本机模型请求失败或输出中断。请检查服务、模型名称和跨域设置。");
+    throw new Error(profile.mode === 'local' ? "本机模型请求失败或输出中断。请检查服务、模型名称和跨域设置。" : "自购 API 请求失败或输出中断。请检查模型名称、密钥和跨域设置。");
   }
 }
 
@@ -127,7 +129,7 @@ async function relayStream(endpoint: string, body: unknown, signal: AbortSignal,
   const token = getStoredTokens()?.access_token;
   if (!token) throw new Error('请先登录知识库账号。');
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST', body: JSON.stringify(body), signal,
+    const response = await accountFetch(`${getAccountServer()}${endpoint}`, { method: 'POST', body: JSON.stringify(body), signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...headers }, cache: 'no-store', redirect: 'error', credentials: 'omit' });
     if (response.status === 401 || response.status === 403) {
       await response.body?.cancel().catch(() => {});

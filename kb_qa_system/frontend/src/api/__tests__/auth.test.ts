@@ -75,7 +75,7 @@ describe("auth API - 真实接口", () => {
     expect(mockApiClient.post).toHaveBeenCalledWith("/auth/login", {
       username: "test@example.com",
       password: "pass123",
-    });
+    }, { auth: false, autoRefresh: false });
     expect(result).toEqual(mockResponse);
   });
 

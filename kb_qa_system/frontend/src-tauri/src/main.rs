@@ -66,11 +66,24 @@ fn local_endpoint(base_url: &str, resource: &str) -> Result<reqwest::Url, String
     Ok(url)
 }
 
+fn model_endpoint(base_url: &str, resource: &str, direct: bool) -> Result<reqwest::Url, String> {
+    if !direct { return local_endpoint(base_url, resource); }
+    if base_url.len() > 2048 || base_url.chars().any(|c| c <= ' ' || c == '\u{7f}')
+        || !["chat/completions", "models"].contains(&resource) { return Err("Invalid URL".into()); }
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| "Invalid URL")?;
+    if url.scheme() != "https" || url.port_or_known_default() != Some(443)
+        || [Some("localhost"), Some("127.0.0.1"), Some("[::1]")].contains(&url.host_str())
+        || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some()
+        || url.query().is_some() || url.fragment().is_some() { return Err("Direct providers require HTTPS on port 443".into()); }
+    url.set_path(&format!("{}/{}", url.path().trim_end_matches('/'), resource));
+    Ok(url)
+}
+
 async fn run_local_completion(
     request_id: String, base_url: String, api_key: String, model: String,
-    messages: Vec<Message>, max_tokens: Option<u32>, on_chunk: Option<tauri::ipc::Channel<TextDelta>>, state: &Requests,
+    messages: Vec<Message>, max_tokens: Option<u32>, on_chunk: Option<tauri::ipc::Channel<TextDelta>>, direct: bool, state: &Requests,
 ) -> Result<Completion, String> {
-    let url = local_endpoint(&base_url, "chat/completions")?;
+    let url = model_endpoint(&base_url, "chat/completions", direct)?;
     if request_id.is_empty() || request_id.len() > 100 || model.trim().is_empty() || model.chars().count() > 200 || model.chars().any(|c| c.is_control())
         || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c)) || max_tokens.is_some_and(|value| !(1..=2147483647).contains(&value))
         || messages.is_empty() || messages.len() > 100
@@ -101,17 +114,17 @@ async fn run_local_completion(
 #[tauri::command]
 async fn complete_local_model(
     request_id: String, base_url: String, api_key: String, model: String,
-    messages: Vec<Message>, max_tokens: Option<u32>, state: State<'_, Requests>,
+    messages: Vec<Message>, max_tokens: Option<u32>, direct: Option<bool>, state: State<'_, Requests>,
 ) -> Result<Completion, String> {
-    run_local_completion(request_id, base_url, api_key, model, messages, max_tokens, None, &state).await
+    run_local_completion(request_id, base_url, api_key, model, messages, max_tokens, None, direct.unwrap_or(false), &state).await
 }
 
 #[tauri::command]
 async fn stream_local_model(
     request_id: String, base_url: String, api_key: String, model: String,
-    messages: Vec<Message>, max_tokens: Option<u32>, on_chunk: tauri::ipc::Channel<TextDelta>, state: State<'_, Requests>,
+    messages: Vec<Message>, max_tokens: Option<u32>, on_chunk: tauri::ipc::Channel<TextDelta>, direct: Option<bool>, state: State<'_, Requests>,
 ) -> Result<Completion, String> {
-    run_local_completion(request_id, base_url, api_key, model, messages, max_tokens, Some(on_chunk), &state).await
+    run_local_completion(request_id, base_url, api_key, model, messages, max_tokens, Some(on_chunk), direct.unwrap_or(false), &state).await
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -153,8 +166,8 @@ async fn fetch_model_list(url: reqwest::Url, api_key: String) -> Result<ModelCat
 }
 
 #[tauri::command]
-async fn list_local_models(request_id: String, base_url: String, api_key: String, state: State<'_, Requests>) -> Result<ModelCatalog, String> {
-    let url = local_endpoint(&base_url, "models")?;
+async fn list_local_models(request_id: String, base_url: String, api_key: String, direct: Option<bool>, state: State<'_, Requests>) -> Result<ModelCatalog, String> {
+    let url = model_endpoint(&base_url, "models", direct.unwrap_or(false))?;
     if request_id.is_empty() || request_id.len() > 100 || api_key.len() > 4096
         || !api_key.bytes().all(|c| (33..=126).contains(&c))
     { return Err("Invalid model request".into()); }
@@ -177,8 +190,8 @@ fn cancel_local_model(request_id: String, state: State<'_, Requests>) {
 }
 
 #[tauri::command]
-async fn complete_local_tools(request_id: String, base_url: String, api_key: String, body: String, state: State<'_, Requests>) -> Result<serde_json::Value, String> {
-    let url = local_endpoint(&base_url, "chat/completions")?;
+async fn complete_local_tools(request_id: String, base_url: String, api_key: String, body: String, direct: Option<bool>, state: State<'_, Requests>) -> Result<serde_json::Value, String> {
+    let url = model_endpoint(&base_url, "chat/completions", direct.unwrap_or(false))?;
     if request_id.is_empty() || request_id.len() > 100 || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c)) {
         return Err("Invalid tool request".into());
     }
@@ -211,6 +224,15 @@ mod tests {
         assert_eq!(local_endpoint("http://localhost:11434/v1/", "models").unwrap().as_str(), "http://127.0.0.1:11434/v1/models");
         for url in ["http://192.168.1.1/v1", "https://example.com/v1", "http://user:secret@127.0.0.1/v1", "http://localhost/v1?key=secret", "file:///etc/passwd"] {
             assert!(local_endpoint(url, "models").is_err());
+        }
+    }
+
+    #[test]
+    fn direct_providers_require_explicit_https_mode() {
+        assert!(model_endpoint("https://provider.example/v1", "models", false).is_err());
+        assert_eq!(model_endpoint("https://provider.example/v1", "models", true).unwrap().as_str(), "https://provider.example/v1/models");
+        for url in ["http://provider.example/v1", "https://localhost/v1", "https://provider.example:8443/v1", "https://key@provider.example/v1", "https://provider.example/v1?key=value"] {
+            assert!(model_endpoint(url, "models", true).is_err());
         }
     }
 

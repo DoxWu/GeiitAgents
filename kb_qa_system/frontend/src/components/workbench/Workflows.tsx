@@ -45,7 +45,7 @@ export function Workflows() {
   const needsDefault = draft.nodes.some(n => n.kind === 'generate_document' && !n.profileId);
   const routeId = (node: WorkflowNode) => node.profileId || chosen;
   const routes = draft.nodes.filter(n => n.kind === 'generate_document').map(n => [n.id, routeId(n), store.profiles.find(p => p.id === routeId(n)), store.accountModel]);
-  const cloud = routes.some(([, id, profile]) => id === ACCOUNT_MODEL_ID || (profile as typeof store.profiles[number] | undefined)?.mode === 'relay');
+  const cloud = routes.some(([, id, profile]) => id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes((profile as typeof store.profiles[number] | undefined)?.mode || ''));
   const signature = JSON.stringify([routes, store.accountModel]);
   useEffect(() => { setConsent(false); }, [signature]);
   const node = draft.nodes.find(n => n.id === selected);
@@ -57,7 +57,7 @@ export function Workflows() {
   const runNeedsCloud = Boolean(run?.workflow?.definition.nodes.some(n => {
     if (n.kind !== 'generate_document') return false;
     const id = n.profileId || run.profileId;
-    return id === ACCOUNT_MODEL_ID || store.profiles.find(p => p.id === id)?.mode === 'relay';
+    return id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(store.profiles.find(p => p.id === id)?.mode || '');
   }));
   const resumeSignature = JSON.stringify([run?.id, run?.workflow, run?.profileId, store.profiles, store.accountModel]);
   useEffect(() => { setResumeConsent(false); }, [resumeSignature]);
@@ -224,7 +224,7 @@ export function Workflows() {
         const itemCloud = draft.nodes.some(node => {
           if (node.kind !== 'generate_document') return false;
           const routeId = node.profileId || item.profileId;
-          return routeId === ACCOUNT_MODEL_ID || store.profiles.find(profile => profile.id === routeId)?.mode === 'relay';
+          return routeId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(store.profiles.find(profile => profile.id === routeId)?.mode || '');
         });
         const needsManual = item.status === 'awaiting-device' || item.status === 'awaiting-authorization' || item.status === 'error';
         return <li key={item.id} className="flex flex-wrap items-center gap-2 rounded border border-line p-3 text-sm"><span>{item.kind === 'interval' ? `每 ${item.intervalMinutes} 分钟` : `事件：${item.eventName}`} · {scheduleStatuses[item.status]}{item.nextRunAt ? ` · 下次 ${new Date(item.nextRunAt).toLocaleString()}` : ''}</span>

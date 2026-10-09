@@ -32,7 +32,7 @@ const filename: Check = value => { str(240, 1)(value); if (!validFileName(value 
 const status = one('running', 'succeeded', 'failed', 'cancelled', 'interrupted');
 const capabilityEvidence = obj({ state: one('unknown', 'supported', 'unsupported'), testedAt: optional(date), fingerprint: optional(hash), value: optional(num(2147483647, 1)) });
 const capabilities = obj({ text: optional(capabilityEvidence), toolCalls: optional(capabilityEvidence), vision: optional(capabilityEvidence), contextWindow: optional(capabilityEvidence), maxOutputTokens: optional(capabilityEvidence) });
-const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local'), baseUrl: str(2048, 1), model: str(400, 1), maxTokens: optional(num(2147483647, 1)), textTestedAt: optional(date), toolTestedAt: optional(date), capabilities: optional(capabilities), apiKey: str(4096) });
+const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local', 'direct'), baseUrl: str(2048, 1), model: str(400, 1), maxTokens: optional(num(2147483647, 1)), textTestedAt: optional(date), toolTestedAt: optional(date), capabilities: optional(capabilities), apiKey: str(4096) });
 const workImage = obj({ name: str(240), mimeType: one('image/png', 'image/jpeg', 'image/webp'), dataUrl: str(2_100_000, 1), bytes: num(1_500_000, 1) });
 const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: str(1000), profileId: str(200), updatedAt: date,
   messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), images: optional(arr(workImage, MAX_IMAGES_PER_MESSAGE)), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
