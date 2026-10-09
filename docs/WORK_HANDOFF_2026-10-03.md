@@ -1,6 +1,6 @@
 # GeiIt Agents 接手文档
 
-2026-10-09 第二批接续状态优先于下列 10-03 历史记录：四类任务过程/成果已移到设置前，开始/查看任务时自动定位，运行中过程优先、完成后成果优先，正文预览先于导出/编辑控件并改善小屏历史占用。认证页品牌标题为“GeiIt 工作台”，右上角 X 返回工作台；登录显示 POST 地址、是否尝试发起、真实 HTTP 错误码/可用请求编号及 20 秒超时，网络失败不会虚构状态码或断言服务器没有收到请求。本批前端 130 文件 / 1260 项、check/lint、Chromium 1280px/390px 模拟验证与 dev.68 NSIS 构建通过；未重跑 Rust/后端、未调用真实账号/收费模型或变更线上部署。上一批账号/模型模块及文档已推送至 `f4126d6`；本批首次 fetch 遇到 GitHub 443 不可达，先本地提交，恢复后核对历史并普通推送。完整状态、安装包摘要、同步结果和下一步以 [WORK_LOG.md](WORK_LOG.md) 首部、[TASK_RESULT_NAVIGATION.md](TASK_RESULT_NAVIGATION.md) 及 [ACCOUNT_AND_MODEL_ACCESS.md](ACCOUNT_AND_MODEL_ACCESS.md) 为准。用户授权较大模块完成后普通推送，禁止强推。
+2026-10-09 第二批接续状态优先于下列 10-03 历史记录：四类任务过程/成果已移到设置前，开始/查看任务时自动定位，运行中过程优先、完成后成果优先，正文预览先于导出/编辑控件并改善小屏历史占用。认证页品牌标题为“GeiIt 工作台”，右上角 X 返回工作台；登录显示 POST 地址、是否尝试发起、真实 HTTP 错误码/可用请求编号及 20 秒超时，网络失败不会虚构状态码或断言服务器没有收到请求。本批前端 130 文件 / 1260 项、check/lint、Chromium 1280px/390px 模拟验证与 dev.68 NSIS 构建通过；未重跑 Rust/后端、未调用真实账号/收费模型或变更线上部署。上一批账号/模型模块及文档已推送至 `f4126d6`；本批模块已本地提交为 `0df69cf`，提交前后两次 fetch 均遇到 GitHub 443 不可达，模块和收尾文档待同步，恢复后核对历史并普通推送。完整状态、安装包摘要、同步结果和下一步以 [WORK_LOG.md](WORK_LOG.md) 首部、[TASK_RESULT_NAVIGATION.md](TASK_RESULT_NAVIGATION.md) 及 [ACCOUNT_AND_MODEL_ACCESS.md](ACCOUNT_AND_MODEL_ACCESS.md) 为准。用户授权较大模块完成后普通推送，禁止强推。
 
 更新时间：2026-10-03（Asia/Shanghai）
 
