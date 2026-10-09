@@ -34,8 +34,8 @@ import type {
  * @param data - 登录请求（username + password）
  * @returns Token 响应
  */
-export async function login(data: LoginRequest): Promise<TokenResponse> {
-  return apiClient.post<TokenResponse>(API_PATHS.LOGIN, data, { auth: false, autoRefresh: false });
+export async function login(data: LoginRequest, signal?: AbortSignal): Promise<TokenResponse> {
+  return apiClient.post<TokenResponse>(API_PATHS.LOGIN, data, { auth: false, autoRefresh: false, ...(signal ? { signal } : {}) });
 }
 
 /**
@@ -46,8 +46,8 @@ export async function login(data: LoginRequest): Promise<TokenResponse> {
  *
  * @returns Token 响应
  */
-export async function guestLogin(): Promise<TokenResponse> {
-  return apiClient.post<TokenResponse>(API_PATHS.GUEST_LOGIN, {}, { auth: false, autoRefresh: false });
+export async function guestLogin(signal?: AbortSignal): Promise<TokenResponse> {
+  return apiClient.post<TokenResponse>(API_PATHS.GUEST_LOGIN, {}, { auth: false, autoRefresh: false, ...(signal ? { signal } : {}) });
 }
 
 /**

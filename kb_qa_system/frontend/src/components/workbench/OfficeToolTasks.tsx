@@ -1,3 +1,5 @@
+import { TaskNavigation } from './TaskNavigation';
+import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
@@ -24,6 +26,7 @@ export function OfficeToolTasks() {
   useEffect(() => { setAllowCloud(false); setAllowWebSearch(false); }, [chosen, chosenProfile, userId, store.accountModel]);
   const tasks = store.taskRuns.filter(task => task.type === 'office.tools');
   const task = tasks.find(task => task.id === selected) || tasks[0];
+  const taskNavigation = useTaskNavigation(task?.id);
   const artifacts = task ? task.artifactIds.map(id => store.artifacts.find(item => item.id === id)).filter((item): item is WorkArtifact => Boolean(item)) : [];
   const roots = artifacts.filter(item => !item.parentArtifactId);
   const root = roots.find(item => item.id === selectedArtifact) || roots[0];
@@ -70,13 +73,35 @@ export function OfficeToolTasks() {
     finally { starting.current = false; if (mounted.current) setBusy(false); }
   }
   return <section aria-label="多步骤办公任务" className="grid min-h-0 min-w-0 flex-1 grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)]">
-    <aside className="max-h-44 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
+    <aside className="max-h-32 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
       <h2 className="mb-3 text-sm font-medium">多步骤任务记录</h2>
-      {tasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${item.id === task?.id ? 'bg-muted' : ''}`} onClick={() => { setSelected(item.id); setSelectedArtifact(''); }}><span className="block truncate">{item.title}</span><span className="text-xs text-ink-secondary">{statusText[item.status]} · {item.artifactIds.length} 个成果</span></button>)}
+      {tasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${item.id === task?.id ? 'bg-muted' : ''}`} onClick={() => { setSelected(item.id); setSelectedArtifact(''); taskNavigation.showResult(); }}><span className="block truncate">{item.title}</span><span className="text-xs text-ink-secondary">{statusText[item.status]} · {item.artifactIds.length} 个成果</span></button>)}
     </aside>
     <div className="min-h-0 min-w-0 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-4xl">
       <h1 className="text-xl font-semibold">多步骤办公助手</h1>
       <p className="mt-2 text-sm text-ink-secondary">让模型按目标读取本次 CSV/XLSX 表格、生成图表和 Markdown 文档。文档可分别编辑、比较和恢复版本，所有成果保存到本机加密库。需要模型支持工具调用；最多 6 轮模型请求、8 次工具执行，可随时停止。</p>
+      <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
+      {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
+      <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
+      {task && <section aria-label="多步骤任务详情" className="mt-6 flex min-w-0 flex-col border-t border-line pt-4">
+        <h2 className="break-words text-lg font-medium">{task.title} · {statusText[task.status]}</h2>
+        <div className="my-3 flex flex-wrap gap-2">{task.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(task.id)}>停止此任务</button> : <>
+          <button className="work-command" disabled={busy} onClick={() => { if (task.officeInput) { change(task.officeInput); setImportedSheet(''); setProfileId(task.profileId); taskNavigation.showInput(); } }}>复用输入（新任务）</button>
+          <button className="work-command" onClick={() => { if (window.confirm('删除此任务、执行记录和全部成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}>删除此任务</button>
+        </>}</div>
+        {task.error && <p className="text-sm text-danger">{task.error}</p>}
+        <p className="mt-3 text-xs text-ink-secondary">已保存 {roots.length} 个成果{artifacts.length > roots.length ? `，共 ${artifacts.length} 个版本` : ''}；失败或中断任务中的成果需自行核对。文档修改不会更改已完成工具的原始结果。</p>
+        <div className={task.status === 'running' ? 'order-1 mt-3' : 'order-2 mt-5'}><h3 className="font-medium">执行过程</h3><ol className="mt-3 grid gap-2">{task.toolRunIds.map(id => store.toolRuns.find(tool => tool.id === id)).filter(Boolean).map(tool => <li key={tool!.id} className="rounded border border-line p-2 text-sm"><details><summary>{toolText[tool!.tool] || tool!.tool} · {statusText[tool!.status]}</summary>
+          {tool!.arguments && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{tool!.arguments}</pre>}{tool!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{tool!.result}</pre>}{tool!.error && <p>{tool!.error}</p>}</details></li>)}</ol></div>
+        {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
+        <div className={task.status === 'running' ? 'order-2' : 'order-1'}>
+        {!!roots.length && <label className="work-label mt-4">选择成果<select className="work-input" value={root?.id || ''} onChange={e => setSelectedArtifact(e.target.value)}>{roots.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+        {artifact && <ToolArtifact key={root!.id} artifact={artifact} versions={versions} running={task.status === 'running'} />}
+        {task.summary && <details className="mt-3 text-sm"><summary>任务总结</summary><p className="mt-2 whitespace-pre-wrap break-words">{task.summary}</p></details>}
+        </div>
+      </section>}
+      </div>
+      <div ref={taskNavigation.inputRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
       <form className="mt-5 grid gap-3" onSubmit={event => { event.preventDefault(); void start(); }}>
         <fieldset disabled={busy} className="grid min-w-0 gap-3">
           <label className="work-label">任务标题<input className="work-input" required maxLength={100} value={input.title} onChange={e => change({ title: e.target.value })} /></label>
@@ -92,21 +117,7 @@ export function OfficeToolTasks() {
           <button className="work-command justify-self-start bg-brand text-white" type="submit" disabled={!chosen || busy || Boolean(cloud && !allowCloud)}>{busy ? '任务运行中…' : '开始多步骤任务'}</button>
         </fieldset>
       </form>
-      {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
-      {task && <section aria-label="多步骤任务详情" className="mt-6 min-w-0 border-t border-line pt-4">
-        <h2 className="break-words text-lg font-medium">{task.title} · {statusText[task.status]}</h2>
-        <div className="my-3 flex flex-wrap gap-2">{task.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(task.id)}>停止此任务</button> : <>
-          <button className="work-command" disabled={busy} onClick={() => { if (task.officeInput) { change(task.officeInput); setImportedSheet(''); setProfileId(task.profileId); } }}>复用输入（新任务）</button>
-          <button className="work-command" onClick={() => { if (window.confirm('删除此任务、执行记录和全部成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}>删除此任务</button>
-        </>}</div>
-        {task.error && <p className="text-sm text-danger">{task.error}</p>}{task.summary && <p className="whitespace-pre-wrap break-words text-sm">{task.summary}</p>}
-        <p className="mt-3 text-xs text-ink-secondary">已保存 {roots.length} 个成果{artifacts.length > roots.length ? `，共 ${artifacts.length} 个版本` : ''}；失败或中断任务中的成果需自行核对。文档修改不会更改已完成工具的原始结果。</p>
-        <ol className="mt-3 grid gap-2">{task.toolRunIds.map(id => store.toolRuns.find(tool => tool.id === id)).filter(Boolean).map(tool => <li key={tool!.id} className="rounded border border-line p-2 text-sm"><details><summary>{toolText[tool!.tool] || tool!.tool} · {statusText[tool!.status]}</summary>
-          {tool!.arguments && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{tool!.arguments}</pre>}{tool!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{tool!.result}</pre>}{tool!.error && <p>{tool!.error}</p>}</details></li>)}</ol>
-        {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
-        {!!roots.length && <label className="work-label mt-4">选择成果<select className="work-input" value={root?.id || ''} onChange={e => setSelectedArtifact(e.target.value)}>{roots.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-        {artifact && <ToolArtifact key={root!.id} artifact={artifact} versions={versions} running={task.status === 'running'} />}
-      </section>}
+      </div>
     </div></div>
   </section>;
 }

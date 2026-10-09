@@ -1,3 +1,5 @@
+import { TaskNavigation } from './TaskNavigation';
+import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
@@ -54,6 +56,7 @@ export function Workflows() {
   const currentRunsPage = Math.min(runsPage, runsPageCount);
   const pageRuns = runs.slice((currentRunsPage - 1) * RUNS_PER_PAGE, currentRunsPage * RUNS_PER_PAGE);
   const run = pageRuns.find(t => t.id === selectedRun) ?? pageRuns[0];
+  const taskNavigation = useTaskNavigation(run?.id);
   const runNeedsCloud = Boolean(run?.workflow?.definition.nodes.some(n => {
     if (n.kind !== 'generate_document') return false;
     const id = n.profileId || run.profileId;
@@ -109,7 +112,7 @@ export function Workflows() {
   function load(definition: WorkflowDefinition) {
     if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
     if (store.workflowDraft) void clearDraft().catch(e => { if (mounted.current) setError(e instanceof Error ? e.message : '无法清除工作流草稿。'); });
-    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setDraftPending(false); setFrom(''); setTo(''); setEdgeWhen(''); setConsent(false); setError(''); setNotice('');
+    setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setDraftPending(false); setFrom(''); setTo(''); setEdgeWhen(''); setConsent(false); setError(''); setNotice(''); taskNavigation.showInput();
   }
   async function save() {
     setBusy(true); setError('');
@@ -166,6 +169,32 @@ export function Workflows() {
   }
   return <section aria-label="可视化工作流" className="min-h-0 min-w-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5">
     <div><h1 className="text-xl font-semibold">可视化工作流</h1><p className="mt-2 text-sm text-ink-secondary">把本次输入交给工具，连线将前置步骤结果交给后续文档步骤。手动运行，按依赖顺序串行执行；不自动发邮件或修改外部文件。</p></div>
+      <TaskNavigation hasTask={Boolean(run)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} inputLabel="工作流设置 / 本次运行输入" />
+    {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
+    {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}
+      <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
+    <section aria-label="工作流运行历史" className="flex flex-col gap-3 border-t border-line pt-4"><h2 className="font-semibold">运行历史</h2>
+      <label className="work-label">选择工作流运行<select aria-label="选择工作流运行" className="work-input" value={run?.id || ''} onChange={e => { setSelectedRun(e.target.value); setArtifactId(''); taskNavigation.showResult(); }}>{!runs.length && <option value="">暂无记录</option>}{pageRuns.map(r => <option key={r.id} value={r.id}>{r.title} · 修订 {r.workflow?.definition.revision} · {statuses[r.status]} · {new Date(r.createdAt).toLocaleString()}</option>)}</select></label>
+      {runs.length > RUNS_PER_PAGE && <nav aria-label="工作流运行历史分页" className="flex flex-wrap items-center gap-2 text-sm"><span>第 {currentRunsPage} / {runsPageCount} 页 · 共 {runs.length} 条</span><button className="work-command" disabled={currentRunsPage <= 1} onClick={() => { setRunsPage(currentRunsPage - 1); setSelectedRun(''); setArtifactId(''); }}>上一页运行</button><button className="work-command" disabled={currentRunsPage >= runsPageCount} onClick={() => { setRunsPage(currentRunsPage + 1); setSelectedRun(''); setArtifactId(''); }}>下一页运行</button></nav>}
+      {run && <><p className="font-medium">{statuses[run.status]} · {run.artifactIds.length} 个成果</p>{run.error && <p className="text-sm text-danger">{run.error}</p>}{run.summary && <p className="text-sm">{run.summary}</p>}
+        <div className="flex flex-wrap gap-2">{run.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(run.id)}>停止工作流</button> : <>
+          {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled') && <>
+            {runNeedsCloud && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={resumeConsent} onChange={e => setResumeConsent(e.target.checked)} />确认续跑时重新向云端模型发送步骤内容</label>}
+            <button className="work-command bg-brand text-white" onClick={() => void resume(run.id)}>从失败步骤继续</button>
+          </>}
+          <button className="work-command" onClick={() => { if (run.workflow) { if (dirty && !window.confirm('放弃尚未保存修改并复制历史快照？')) return; const copy = { ...clone(run.workflow.definition), id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() }; setDraft(copy); setDirty(true); setInput(clone(run.workflow.input)); setProfileId(run.profileId); setConsent(false); setSelected(copy.nodes[0]?.id || ''); taskNavigation.showInput(); setNotice('已复制历史快照；保存后可作为新任务重新运行，可能再次计费。'); } }}>复制快照为新工作流</button>
+          <button className="work-command" onClick={() => { if (window.confirm('删除本次运行和成果？工作流定义保留。')) void store.removeTask(run.id).catch(e => { if (mounted.current) setError(e.message); }); }}>删除运行</button>
+        </>}</div>
+        {run.status === 'running' && store.generationPreviews[run.id] && <GenerationPreview value={store.generationPreviews[run.id]} label="工作流模型生成预览" />}
+        <ol aria-label="工作流执行过程" className={run.status === 'running' ? 'order-1 space-y-2' : 'order-2 space-y-2'}>{run.toolRunIds.map(id => store.toolRuns.find(t => t.id === id)).filter(Boolean).map(t => <li className="rounded border border-line p-3 text-sm" key={t!.id}><details><summary>{run.workflow?.definition.nodes.find(n => n.id === t!.workflowNodeId)?.title || t!.tool} · {statuses[t!.status]}</summary>{t!.warnings?.map((warning, i) => <p key={i}>{warning}</p>)}{t!.finishReason && <p>{finishLabel(t!.finishReason)}</p>}{t!.error && <p>{t!.error}</p>}{t!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{t!.result}</pre>}</details>{t!.workflowNodeId && (t!.status === 'failed' || t!.status === 'interrupted' || t!.status === 'cancelled' || t!.finishReason && t!.finishReason !== 'stop') && run.status !== 'running' && <button className="work-command mt-2" onClick={() => void resume(run.id, t!.workflowNodeId)}>重试此步骤并继续</button>}</li>)}</ol>
+        <div className={run.status === 'running' ? 'order-2 space-y-3' : 'order-1 space-y-3'}>
+        {!!run.artifactIds.length && <label className="work-label">选择工作流成果<select aria-label="选择工作流成果" className="work-input" value={artifact?.id || ''} onChange={e => setArtifactId(e.target.value)}>{store.artifacts.filter(a => run.artifactIds.includes(a.id)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
+        {artifact && <ToolArtifact key={artifact.id} artifact={artifact} running={run.status === 'running'} />}
+        </div>
+      </>}
+    </section>
+      </div>
+      <div ref={taskNavigation.inputRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20 space-y-5">
     <div className="flex flex-wrap items-end gap-3">
       <label className="work-label min-w-0 flex-1">已保存工作流<select aria-label="已保存工作流" className="work-input" value={store.workflows.some(d => d.id === draft.id) ? draft.id : ''} disabled={busy} onChange={e => { const saved = store.workflows.find(d => d.id === e.target.value); if (saved) load(saved); }}><option value="">未保存</option>{store.workflows.map(d => <option key={d.id} value={d.id}>{d.name} · 修订 {d.revision}</option>)}</select></label>
       <button className="work-command" disabled={busy} onClick={() => load(newWorkflow())}>新建工作流</button>
@@ -234,25 +263,6 @@ export function Workflows() {
           <button className="work-command" onClick={() => void store.removeWorkflowSchedule(item.id).catch(e => setError(e instanceof Error ? e.message : '无法删除触发器。'))}>删除</button></li>;
       })}</ul>
     </section>
-    {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
-    {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}
-    <section aria-label="工作流运行历史" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">运行历史</h2>
-      <label className="work-label">选择工作流运行<select aria-label="选择工作流运行" className="work-input" value={run?.id || ''} onChange={e => { setSelectedRun(e.target.value); setArtifactId(''); }}>{!runs.length && <option value="">暂无记录</option>}{pageRuns.map(r => <option key={r.id} value={r.id}>{r.title} · 修订 {r.workflow?.definition.revision} · {statuses[r.status]} · {new Date(r.createdAt).toLocaleString()}</option>)}</select></label>
-      {runs.length > RUNS_PER_PAGE && <nav aria-label="工作流运行历史分页" className="flex flex-wrap items-center gap-2 text-sm"><span>第 {currentRunsPage} / {runsPageCount} 页 · 共 {runs.length} 条</span><button className="work-command" disabled={currentRunsPage <= 1} onClick={() => { setRunsPage(currentRunsPage - 1); setSelectedRun(''); setArtifactId(''); }}>上一页运行</button><button className="work-command" disabled={currentRunsPage >= runsPageCount} onClick={() => { setRunsPage(currentRunsPage + 1); setSelectedRun(''); setArtifactId(''); }}>下一页运行</button></nav>}
-      {run && <><p className="font-medium">{statuses[run.status]} · {run.artifactIds.length} 个成果</p>{run.error && <p className="text-sm text-danger">{run.error}</p>}{run.summary && <p className="text-sm">{run.summary}</p>}
-        <div className="flex flex-wrap gap-2">{run.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(run.id)}>停止工作流</button> : <>
-          {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled') && <>
-            {runNeedsCloud && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={resumeConsent} onChange={e => setResumeConsent(e.target.checked)} />确认续跑时重新向云端模型发送步骤内容</label>}
-            <button className="work-command bg-brand text-white" onClick={() => void resume(run.id)}>从失败步骤继续</button>
-          </>}
-          <button className="work-command" onClick={() => { if (run.workflow) { if (dirty && !window.confirm('放弃尚未保存修改并复制历史快照？')) return; const copy = { ...clone(run.workflow.definition), id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() }; setDraft(copy); setDirty(true); setInput(clone(run.workflow.input)); setProfileId(run.profileId); setConsent(false); setSelected(copy.nodes[0]?.id || ''); setNotice('已复制历史快照；保存后可作为新任务重新运行，可能再次计费。'); } }}>复制快照为新工作流</button>
-          <button className="work-command" onClick={() => { if (window.confirm('删除本次运行和成果？工作流定义保留。')) void store.removeTask(run.id).catch(e => { if (mounted.current) setError(e.message); }); }}>删除运行</button>
-        </>}</div>
-        {run.status === 'running' && store.generationPreviews[run.id] && <GenerationPreview value={store.generationPreviews[run.id]} label="工作流模型生成预览" />}
-        <ol className="space-y-2">{run.toolRunIds.map(id => store.toolRuns.find(t => t.id === id)).filter(Boolean).map(t => <li className="rounded border border-line p-3 text-sm" key={t!.id}><details><summary>{run.workflow?.definition.nodes.find(n => n.id === t!.workflowNodeId)?.title || t!.tool} · {statuses[t!.status]}</summary>{t!.warnings?.map((warning, i) => <p key={i}>{warning}</p>)}{t!.finishReason && <p>{finishLabel(t!.finishReason)}</p>}{t!.error && <p>{t!.error}</p>}{t!.result && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{t!.result}</pre>}</details>{t!.workflowNodeId && (t!.status === 'failed' || t!.status === 'interrupted' || t!.status === 'cancelled' || t!.finishReason && t!.finishReason !== 'stop') && run.status !== 'running' && <button className="work-command mt-2" onClick={() => void resume(run.id, t!.workflowNodeId)}>重试此步骤并继续</button>}</li>)}</ol>
-        {!!run.artifactIds.length && <label className="work-label">选择工作流成果<select aria-label="选择工作流成果" className="work-input" value={artifact?.id || ''} onChange={e => setArtifactId(e.target.value)}>{store.artifacts.filter(a => run.artifactIds.includes(a.id)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
-        {artifact && <ToolArtifact key={artifact.id} artifact={artifact} running={run.status === 'running'} />}
-      </>}
-    </section>
+      </div>
   </div></section>;
 }

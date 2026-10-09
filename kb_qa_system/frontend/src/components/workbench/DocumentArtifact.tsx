@@ -82,6 +82,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
         {ordered.map(item => <option key={item.id} value={item.id}>版本 {item.version}{item.restoredFromArtifactId ? ` · 恢复自版本 ${ordered.find(source => source.id === item.restoredFromArtifactId)?.version ?? '未知'}` : item.parentArtifactId ? ' · 手动编辑' : ' · 模型生成'}</option>)}
       </select>
     </div>
+    <div className="mt-5 max-h-[50vh] overflow-auto rounded border border-line p-3" tabIndex={0} role="region" aria-label="文档内容预览"><PrivateMarkdown content={editing ? draft : artifact.content} /></div>
     <div className="mt-3 flex flex-wrap gap-2">
       <button className="work-command" disabled={busy || editing} onClick={() => download(new Blob([documentExportContent(artifact)], { type: 'text/markdown;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.md`)}><Download size={16} />下载 Markdown</button>
       <DocxStyleSelect value={docxStyle} onChange={setDocxStyle} format={docxFormat} onFormatChange={setDocxFormat} disabled={busy || editing} />
@@ -110,6 +111,5 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
     </div>}
     {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
     {notice && <p role="status" className="mt-3 text-sm text-ink-secondary">{notice}</p>}
-    <div className="mt-5"><PrivateMarkdown content={editing ? draft : artifact.content} /></div>
   </article>;
 }

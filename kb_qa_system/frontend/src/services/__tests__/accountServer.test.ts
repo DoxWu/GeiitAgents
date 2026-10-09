@@ -9,7 +9,7 @@ vi.mock('@/api/auth', () => ({ login: vi.fn(), guestLogin: vi.fn() }));
 vi.mock('@/store/documentStore', () => ({ useDocumentStore: { getState: () => ({ reset: vi.fn() }) } }));
 const tokens = { access_token: 'fixture-access', refresh_token: 'fixture-refresh', user: { id: 1 }, token_type: 'bearer', expires_in: 3600 } as TokenResponse;
 beforeEach(() => { localStorage.clear(); setAccountServer('https://accounts-one.example'); vi.clearAllMocks(); });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('canonicalizes server roots and preserves reverse proxy prefixes', () => {
   expect(normalizeAccountServer('https://api.geiit.online/')).toBe('https://api.geiit.online/api/v1');
@@ -63,4 +63,43 @@ it('a late old-server refresh cannot replace new-server tokens', async () => {
   setAccountServer('https://accounts-two.example'); storeTokens({ ...tokens, access_token: 'new-server-fixture' });
   finish(new Response(JSON.stringify(tokens))); await expect(pending).resolves.toBeNull();
   expect(getStoredTokens()?.access_token).toBe('new-server-fixture');
+});
+
+it('records a pending login destination and actual HTTP failure without credentials', async () => {
+  let fail!: (error: unknown) => void;
+  vi.mocked(authApi.login).mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+  const pending = useAuthStore.getState().login({ username: 'fixture@example.com', password: 'fixture-secret' });
+  const rejected = expect(pending).rejects.toMatchObject({ status: 404 });
+  expect(useAuthStore.getState().loginDiagnostic).toMatchObject({ phase: 'sending', url: `${getAccountServer()}/auth/login` });
+  fail(Object.assign(new Error('fixture failure'), { status: 404, requestId: 'fixture-request' }));
+  await rejected;
+  expect(useAuthStore.getState().loginDiagnostic).toMatchObject({ phase: 'http-response', status: 404, requestId: 'fixture-request' });
+  expect(JSON.stringify(useAuthStore.getState().loginDiagnostic)).not.toMatch(/fixture-secret|fixture@example/);
+  expect(useAuthStore.getState().loading).toBe(false);
+});
+
+it('a failed network attempt has no fabricated HTTP status', async () => {
+  vi.mocked(authApi.login).mockRejectedValue(new TypeError('Failed to fetch'));
+  await expect(useAuthStore.getState().login({ username: 'fixture@example.com', password: 'fixture' })).rejects.toThrow();
+  expect(useAuthStore.getState().loginDiagnostic).toMatchObject({ phase: 'no-response' });
+  expect(useAuthStore.getState().loginDiagnostic).not.toHaveProperty('status');
+});
+
+it.each(['login', 'guestLogin'] as const)('aborts %s after 20 seconds and permits retry', async method => {
+  vi.useFakeTimers();
+  const abortable = (signal?: AbortSignal) => new Promise<TokenResponse>((_, reject) => {
+    signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  });
+  vi.mocked(authApi.login).mockImplementation((_, signal) => abortable(signal));
+  vi.mocked(authApi.guestLogin).mockImplementation(abortable);
+  const pending = method === 'login' ? useAuthStore.getState().login({ username: 'fixture@example.com', password: 'fixture' }) : useAuthStore.getState().guestLogin();
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  await vi.advanceTimersByTimeAsync(20_000);
+  await rejected;
+  expect(useAuthStore.getState().loginDiagnostic).toMatchObject({ phase: 'timeout', durationMs: 20_000 });
+  expect(useAuthStore.getState().loading).toBe(false);
+  vi.mocked(authApi.login).mockResolvedValue(tokens);
+  await useAuthStore.getState().login({ username: 'fixture@example.com', password: 'fixture' });
+  expect(useAuthStore.getState().loginDiagnostic?.phase).toBe('succeeded');
+  expect(vi.getTimerCount()).toBe(0);
 });

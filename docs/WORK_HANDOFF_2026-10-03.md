@@ -1,6 +1,6 @@
 # GeiIt Agents 接手文档
 
-2026-10-09 接续状态优先于下列 10-03 历史记录：本轮已修复登录页无法退出，加入可选且明确可见的账号服务器（桌面默认 `https://api.geiit.online/api/v1`），新增无需账号的自购 API 直连，并补齐模型列表进度/取消/失败及 20 秒超时。前端本次 128 文件 / 1244 项、Rust 21 项、check/lint 和 Chromium 隔离模拟验证通过，dev.67 NSIS 安装包已构建。本模块提交 `47bfc20` 已普通推送至 `agents/develop/geiit-agents`，之前 6 个待同步提交一并同步；GitHub 连接短暂失败后已重新 fetch 并核对历史，本次状态文档随收尾提交同步。完整状态、安装包摘要、验证边界和下一步以 [WORK_LOG.md](WORK_LOG.md) 首部及 [ACCOUNT_AND_MODEL_ACCESS.md](ACCOUNT_AND_MODEL_ACCESS.md) 为准。用户授权较大模块完成后普通推送，禁止强推；本次未改线上部署。
+2026-10-09 第二批接续状态优先于下列 10-03 历史记录：四类任务过程/成果已移到设置前，开始/查看任务时自动定位，运行中过程优先、完成后成果优先，正文预览先于导出/编辑控件并改善小屏历史占用。认证页品牌标题为“GeiIt 工作台”，右上角 X 返回工作台；登录显示 POST 地址、是否尝试发起、真实 HTTP 错误码/可用请求编号及 20 秒超时，网络失败不会虚构状态码或断言服务器没有收到请求。本批前端 130 文件 / 1260 项、check/lint、Chromium 1280px/390px 模拟验证与 dev.68 NSIS 构建通过；未重跑 Rust/后端、未调用真实账号/收费模型或变更线上部署。上一批账号/模型模块及文档已推送至 `f4126d6`；本批首次 fetch 遇到 GitHub 443 不可达，先本地提交，恢复后核对历史并普通推送。完整状态、安装包摘要、同步结果和下一步以 [WORK_LOG.md](WORK_LOG.md) 首部、[TASK_RESULT_NAVIGATION.md](TASK_RESULT_NAVIGATION.md) 及 [ACCOUNT_AND_MODEL_ACCESS.md](ACCOUNT_AND_MODEL_ACCESS.md) 为准。用户授权较大模块完成后普通推送，禁止强推。
 
 更新时间：2026-10-03（Asia/Shanghai）
 

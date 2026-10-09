@@ -22,6 +22,7 @@ import type { ApiError, RequestOptions } from "@/types/api";
 
 /** 自定义错误类，携带 HTTP 状态码和错误详情 */
 export class HttpClientError extends Error {
+  requestId?: string;
   /** HTTP 状态码 */
   status: number;
   /** 原始错误响应 */
@@ -203,7 +204,10 @@ async function parseError(res: Response): Promise<HttpClientError> {
     // 响应非 JSON，使用状态文本
   }
 
-  return new HttpClientError(res.status, detail, message);
+  const error = new HttpClientError(res.status, detail, message);
+  const requestId = res.headers?.get('X-Request-ID');
+  if (requestId && /^[A-Za-z0-9._:-]{1,100}$/.test(requestId)) error.requestId = requestId;
+  return error;
 }
 
 /**
@@ -365,7 +369,12 @@ export const apiClient: ApiClient = {
       return undefined as T;
     }
 
-    const data: T = await response.json();
+    let data: T;
+    try { data = await response.json(); }
+    catch (error) {
+      if (generation !== getAccountGeneration() || options.signal?.aborted) throw error;
+      throw new HttpClientError(response.status, '响应格式无效', `服务器返回 HTTP ${response.status}，但响应不是有效的 JSON。`);
+    }
     if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
     return data;
   },

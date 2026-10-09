@@ -92,7 +92,7 @@ describe("LoginPage", () => {
   it("渲染页面标题和副标题", () => {
     renderWithRouter();
     expect(screen.getByText("登录")).toBeInTheDocument();
-    expect(screen.getByText("欢迎使用GeiIt企业知识库")).toBeInTheDocument();
+    expect(screen.getByText("登录账号以使用获授权的云端服务；本机模型和自购 API 无需登录")).toBeInTheDocument();
   });
 
   it("渲染注册申请链接", () => {

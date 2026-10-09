@@ -1,3 +1,5 @@
+import { TaskNavigation } from './TaskNavigation';
+import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Download, Eye, FileUp, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { checkChart, parseChartCsv, renderChartSvg, MAX_CHART_SERIES, type ChartInput } from '@/officeTasks/chart';
@@ -33,6 +35,7 @@ export function ChartTasks() {
   }, [store.profiles, reviewProfileId]);
   const tasks = store.taskRuns.filter(task => task.type === 'chart.generate');
   const task = tasks.find(item => item.id === selected) ?? tasks[0];
+  const taskNavigation = useTaskNavigation(task?.id);
   const artifact = store.artifacts.find(item => item.taskId === task?.id && item.kind === 'svg');
   const reviewProfile = store.profiles?.find(profile => profile.id === reviewProfileId);
   const columns = useMemo(() => { try { return parseChartCsv(input.csv).headers; } catch { return []; } }, [input.csv]);
@@ -78,7 +81,7 @@ export function ChartTasks() {
   async function create() {
     if (!checked) return;
     fileGeneration.current++; setBusy(true); setError(''); setNotice('');
-    const id = requestId.current;
+    const id = requestId.current; setSelected(`chart:${id}`);
     try {
       const taskId = await store.startChartTask(input, id);
       if (mounted.current) { setSelected(taskId); setChecked(null); setNotice('图表和检查记录已保存到本机加密库。'); }
@@ -92,36 +95,20 @@ export function ChartTasks() {
     } finally { if (mounted.current) setBusy(false); }
   }
   return <section className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)]" aria-label="图表工具">
-    <aside className="max-h-48 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
+    <aside className="max-h-32 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
       <h2 className="mb-3 text-sm font-semibold">图表任务</h2>
       {!tasks.length && <p className="text-sm text-ink-secondary">尚无图表记录</p>}
-      {tasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${item.id === task?.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => { reviewController.current?.abort(); setSelected(item.id); setAllowCloudReview(false); setNotice(''); }}><span className="block truncate text-sm">{item.title}</span><span className="text-xs text-ink-secondary">{status[item.status]}</span></button>)}
+      {tasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${item.id === task?.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => { reviewController.current?.abort(); setSelected(item.id); setAllowCloudReview(false); setNotice(''); taskNavigation.showResult(); }}><span className="block truncate text-sm">{item.title}</span><span className="text-xs text-ink-secondary">{status[item.status]}</span></button>)}
     </aside>
     <div className="min-h-0 min-w-0 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-5xl">
       <h1 className="text-xl font-semibold">检查与生成图表</h1>
       <p className="mt-2 text-sm text-ink-secondary">CSV 检查和图表生成在本机完成，不核验业务真实性。可另行请求模型审阅已生成图表的视觉布局；该审阅不能代替下方本地数值检查。</p>
-      <fieldset disabled={busy} className="mt-5 grid min-w-0 gap-4 border-b border-line pb-5 sm:grid-cols-2">
-        <label className="work-label">图表标题<input className="work-input" maxLength={80} value={input.title} onChange={e => change({ title: e.target.value })} /></label>
-        <label className="work-label">单位（可选）<input className="work-input" maxLength={20} value={input.unit} onChange={e => change({ unit: e.target.value })} /></label>
-        <label className="work-label sm:col-span-2">CSV 数据<textarea aria-label="CSV 数据" className="work-input min-h-40 resize-y font-mono" maxLength={100000} value={input.csv} onChange={e => change({ csv: e.target.value })} /></label>
-        <div className="flex flex-wrap items-center gap-2 sm:col-span-2"><button className="work-command" onClick={() => fileInput.current?.click()}><FileUp size={16} />导入 CSV / XLSX</button><button className="work-command" onClick={() => change({ ...sample, valueColumns: undefined })}>使用示例数据</button>
-          <input ref={fileInput} hidden type="file" accept=".csv,.xlsx" aria-label="选择图表 CSV 或 XLSX 文件" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} />{importedSheet && <span role="status" className="text-sm text-ink-secondary">工作表：{importedSheet}</span>}</div>
-        <label className="work-label">{input.chartType === 'scatter' ? 'X 轴数值列' : '分类列'}<select aria-label={input.chartType === 'scatter' ? 'X 轴数值列' : '分类列'} className="work-input" value={input.categoryColumn} onChange={e => { const categoryColumn = Number(e.target.value); const valueColumns = selectedValueColumns.filter(column => column !== categoryColumn); change({ categoryColumn, valueColumn: valueColumns[0] ?? -1, valueColumns }); }}>{columns.map((header, index) => <option key={index} value={index}>{index + 1}. {header}</option>)}</select></label>
-        <fieldset className="min-w-0 rounded border border-line p-3">
-          <legend className="px-1 text-sm font-medium">数值列（可多选）</legend>
-          <div className="grid gap-2 sm:grid-cols-2">{columns.map((header, index) => <label key={index} className="flex min-w-0 items-start gap-2 break-all text-sm">
-            <input type="checkbox" className="mt-1 shrink-0" aria-label={`数值列：${header}`} checked={selectedValueColumns.includes(index)} disabled={busy || index === input.categoryColumn || (input.chartType === 'pie' && !selectedValueColumns.includes(index)) || (!selectedValueColumns.includes(index) && selectedValueColumns.length >= MAX_CHART_SERIES)} onChange={event => { const valueColumns = event.target.checked ? [...selectedValueColumns, index] : selectedValueColumns.filter(column => column !== index); change({ valueColumn: valueColumns[0] ?? -1, valueColumns }); }} />{header}
-          </label>)}</div>
-          <p className="mt-2 text-xs text-ink-secondary">散点图把这些列作为 Y 轴系列，与 X 轴数值按原始行对应；柱状图、水平条形图和折线图可选择 1–{MAX_CHART_SERIES} 个系列，饼图只支持单个非负系列。</p>
-        </fieldset>
-        <label className="work-label">图表类型<select aria-label="图表类型" className="work-input" value={input.chartType} onChange={e => { const chartType = e.target.value as ChartInput['chartType']; change({ chartType, ...(chartType === 'pie' ? { valueColumn: selectedValueColumns[0] ?? -1, valueColumns: selectedValueColumns.slice(0, 1) } : {}) }); }}><option value="bar">柱状图</option><option value="horizontal_bar">水平条形图</option><option value="line">折线图</option><option value="pie">饼图</option><option value="scatter">散点图</option></select></label>
-        <div className="flex flex-wrap items-end gap-2"><button className="work-command" onClick={inspect}><BarChart3 size={16} />检查并预览</button><button className="work-command bg-brand text-white" disabled={!checked || busy} onClick={() => void create()}><Play size={16} />{busy ? '保存中…' : '保存图表任务'}</button></div>
-      </fieldset>
+      <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
       {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}{notice && <p role="status" className="mt-4 text-sm">{notice}</p>}
-      {checked && <details open className="mt-5"><summary>未保存预览 · {checked.points.length} 条数据</summary><ChartImage svg={renderChartSvg(checked)} title={`预览：${checked.input.title}`} /><ChartChecks data={checked} /></details>}
+      <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
       {task && <section aria-label="图表任务详情" className="mt-6 border-t border-line pt-5">
         <div className="flex flex-wrap items-center gap-2"><h2 className="min-w-0 flex-1 break-words text-lg font-semibold">{task.title}</h2>
-          <button className="work-command" disabled={busy || !task.chartInput} onClick={() => task.chartInput && change({ ...task.chartInput, valueColumns: task.chartInput.valueColumns?.slice() })}><RotateCcw size={15} />复用图表输入</button>
+          <button className="work-command" disabled={busy || !task.chartInput} onClick={() => { if (task.chartInput) { change({ ...task.chartInput, valueColumns: task.chartInput.valueColumns?.slice() }); taskNavigation.showInput(); } }}><RotateCcw size={15} />复用图表输入</button>
           <button className="work-command" disabled={busy || task.status === 'running'} onClick={() => { if (window.confirm('删除此图表任务、输入和成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}><Trash2 size={15} />删除图表任务</button></div>
         <p className="mt-2 text-sm">{status[task.status]} · {new Date(task.updatedAt).toLocaleString()}</p>{task.error && <p className="text-sm text-danger">{task.error}</p>}
         <details className="mt-3 text-xs"><summary>图表执行记录</summary>{store.toolRuns.filter(tool => tool.taskId === task.id).map(tool => <p className="mt-1" key={tool.id}>{tool.tool} · {status[tool.status]}{tool.converterVersion ? ` · ${tool.converterVersion}` : ''}</p>)}</details>
@@ -145,6 +132,27 @@ export function ChartTasks() {
         </section>}
         {savedData && <ChartChecks data={savedData} />}
       </section>}
+      </div>
+      <div ref={taskNavigation.inputRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
+      <fieldset disabled={busy} className="mt-5 grid min-w-0 gap-4 border-b border-line pb-5 sm:grid-cols-2">
+        <label className="work-label">图表标题<input className="work-input" maxLength={80} value={input.title} onChange={e => change({ title: e.target.value })} /></label>
+        <label className="work-label">单位（可选）<input className="work-input" maxLength={20} value={input.unit} onChange={e => change({ unit: e.target.value })} /></label>
+        <label className="work-label sm:col-span-2">CSV 数据<textarea aria-label="CSV 数据" className="work-input min-h-40 resize-y font-mono" maxLength={100000} value={input.csv} onChange={e => change({ csv: e.target.value })} /></label>
+        <div className="flex flex-wrap items-center gap-2 sm:col-span-2"><button className="work-command" onClick={() => fileInput.current?.click()}><FileUp size={16} />导入 CSV / XLSX</button><button className="work-command" onClick={() => change({ ...sample, valueColumns: undefined })}>使用示例数据</button>
+          <input ref={fileInput} hidden type="file" accept=".csv,.xlsx" aria-label="选择图表 CSV 或 XLSX 文件" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} />{importedSheet && <span role="status" className="text-sm text-ink-secondary">工作表：{importedSheet}</span>}</div>
+        <label className="work-label">{input.chartType === 'scatter' ? 'X 轴数值列' : '分类列'}<select aria-label={input.chartType === 'scatter' ? 'X 轴数值列' : '分类列'} className="work-input" value={input.categoryColumn} onChange={e => { const categoryColumn = Number(e.target.value); const valueColumns = selectedValueColumns.filter(column => column !== categoryColumn); change({ categoryColumn, valueColumn: valueColumns[0] ?? -1, valueColumns }); }}>{columns.map((header, index) => <option key={index} value={index}>{index + 1}. {header}</option>)}</select></label>
+        <fieldset className="min-w-0 rounded border border-line p-3">
+          <legend className="px-1 text-sm font-medium">数值列（可多选）</legend>
+          <div className="grid gap-2 sm:grid-cols-2">{columns.map((header, index) => <label key={index} className="flex min-w-0 items-start gap-2 break-all text-sm">
+            <input type="checkbox" className="mt-1 shrink-0" aria-label={`数值列：${header}`} checked={selectedValueColumns.includes(index)} disabled={busy || index === input.categoryColumn || (input.chartType === 'pie' && !selectedValueColumns.includes(index)) || (!selectedValueColumns.includes(index) && selectedValueColumns.length >= MAX_CHART_SERIES)} onChange={event => { const valueColumns = event.target.checked ? [...selectedValueColumns, index] : selectedValueColumns.filter(column => column !== index); change({ valueColumn: valueColumns[0] ?? -1, valueColumns }); }} />{header}
+          </label>)}</div>
+          <p className="mt-2 text-xs text-ink-secondary">散点图把这些列作为 Y 轴系列，与 X 轴数值按原始行对应；柱状图、水平条形图和折线图可选择 1–{MAX_CHART_SERIES} 个系列，饼图只支持单个非负系列。</p>
+        </fieldset>
+        <label className="work-label">图表类型<select aria-label="图表类型" className="work-input" value={input.chartType} onChange={e => { const chartType = e.target.value as ChartInput['chartType']; change({ chartType, ...(chartType === 'pie' ? { valueColumn: selectedValueColumns[0] ?? -1, valueColumns: selectedValueColumns.slice(0, 1) } : {}) }); }}><option value="bar">柱状图</option><option value="horizontal_bar">水平条形图</option><option value="line">折线图</option><option value="pie">饼图</option><option value="scatter">散点图</option></select></label>
+        <div className="flex flex-wrap items-end gap-2"><button className="work-command" onClick={inspect}><BarChart3 size={16} />检查并预览</button><button className="work-command bg-brand text-white" disabled={!checked || busy} onClick={() => void create()}><Play size={16} />{busy ? '保存中…' : '保存图表任务'}</button></div>
+      </fieldset>
+      {checked && <details open className="mt-5"><summary>未保存预览 · {checked.points.length} 条数据</summary><ChartImage svg={renderChartSvg(checked)} title={`预览：${checked.input.title}`} /><ChartChecks data={checked} /></details>}
+      </div>
     </div></div>
   </section>;
 }

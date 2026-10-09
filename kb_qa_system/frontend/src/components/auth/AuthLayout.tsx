@@ -12,7 +12,7 @@ import { AccountServerSelector } from './AccountServerSelector';
  *   </AuthLayout>
  */
 
-import { BookOpen } from "lucide-react";
+import { BookOpen, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 /** AuthLayout 组件属性 */
@@ -43,7 +43,7 @@ export function AuthLayout({
             <BookOpen className="h-6 w-6" />
           </div>
           <h1 className="text-xl font-semibold text-ink">
-            GeiIt企业知识库
+            GeiIt 工作台
           </h1>
           {subtitle && (
             <p className="mt-1 text-sm text-ink-secondary">{subtitle}</p>
@@ -51,9 +51,9 @@ export function AuthLayout({
         </div>
 
         {/* 卡片容器 */}
-        <div className="rounded-lg border border-line bg-surface p-6 shadow-sm">
+        <div className="relative rounded-lg border border-line bg-surface p-6 shadow-sm">
+          <Link to="/workbench" className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-secondary transition hover:bg-canvas hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" aria-label="关闭登录并返回工作台" title="关闭并返回工作台"><X className="h-5 w-5" /></Link>
           <h2 className="mb-4 text-lg font-semibold text-ink">{title}</h2>
-          <Link to="/workbench" className="mb-4 block text-sm text-brand" aria-label="关闭登录并返回工作台">关闭 / 返回工作台（无需登录）</Link>
           <AccountServerSelector />
           {children}
         </div>

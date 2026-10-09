@@ -11,13 +11,14 @@ import { useNavigate, Link } from "react-router-dom";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { LoginForm } from "@/components/auth/LoginForm";
+import { LoginDiagnostics } from "@/components/auth/LoginDiagnostics";
 import { useAuthStore } from "@/store/authStore";
 import { safeStorage } from "@/utils/safeStorage";
 
 /** LoginPage 组件 */
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { isAuthenticated, error, guestLogin, loading } = useAuthStore();
+  const { isAuthenticated, error, guestLogin, loading, loginDiagnostic } = useAuthStore();
   const [guestLoading, setGuestLoading] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -53,7 +54,7 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="登录"
-      subtitle="欢迎使用GeiIt企业知识库"
+      subtitle="登录账号以使用获授权的云端服务；本机模型和自购 API 无需登录"
       footer={
         <p className="text-sm text-ink-secondary">
           还没有账号？{" "}
@@ -79,7 +80,8 @@ export default function LoginPage() {
           <p className="text-sm text-danger">{error}</p>
         </div>
       )}
-      <LoginForm onSuccess={handleLoginSuccess} />
+      <LoginForm onSuccess={handleLoginSuccess} onValidationFailure={() => useAuthStore.setState({ loginDiagnostic: null })} />
+      <LoginDiagnostics attempt={loginDiagnostic} />
 
       {/* 分割线 */}
       <div className="relative my-4">

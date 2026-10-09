@@ -2,7 +2,7 @@
  * AuthLayout 组件单元测试
  *
  * 覆盖范围：
- *   - 渲染品牌标题"GeiIt企业知识库"
+ *   - 渲染品牌标题"GeiIt 工作台"
  *   - 渲染传入的 title 和 subtitle
  *   - 渲染子内容
  *   - 渲染 footer 区域
@@ -30,7 +30,7 @@ describe("AuthLayout 组件", () => {
         <div>表单内容</div>
       </AuthLayout>,
     );
-    expect(screen.getByText("GeiIt企业知识库")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "GeiIt 工作台" })).toBeInTheDocument();
   });
 
   it("渲染传入的 title", () => {

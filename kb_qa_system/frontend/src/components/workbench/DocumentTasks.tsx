@@ -1,3 +1,5 @@
+import { TaskNavigation } from './TaskNavigation';
+import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ClipboardList, FileUp, Loader2, Play, RotateCcw, Square, Trash2, XCircle } from 'lucide-react';
 import { DocumentArtifact } from './DocumentArtifact';
@@ -22,6 +24,7 @@ export function DocumentTasks() {
   const input = useRef<HTMLInputElement>(null);
   const documentTasks = store.taskRuns.filter(item => item.type === 'document.generate-markdown');
   const task = documentTasks.find(item => item.id === selectedId) ?? documentTasks[0];
+  const taskNavigation = useTaskNavigation(task?.id);
   const artifacts = task ? store.artifacts.filter(item => item.kind === 'markdown' && task.artifactIds.includes(item.id)) : [];
   const tools = task ? store.toolRuns.filter(item => item.taskId === task.id) : [];
   const profile = store.profiles.find(item => item.id === profileId);
@@ -54,13 +57,13 @@ export function DocumentTasks() {
   }
   function reuse(item: TaskRun) {
     setTitle(item.title); setInstruction(item.instruction); setSourceName(item.sourceName ?? ''); setSourceContent(item.sourceContent ?? '');
-    setProfileId(item.profileId); setConsent(false); setError('');
+    setProfileId(item.profileId); setConsent(false); setError(''); taskNavigation.showInput();
   }
   return <section className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]" aria-label="文档任务">
-    <aside className="max-h-56 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
+    <aside className="max-h-32 overflow-auto border-b border-line p-3 md:max-h-none md:border-b-0 md:border-r">
       <div className="mb-2 flex items-center gap-2 px-2"><ClipboardList size={17} /><h2 className="text-sm font-semibold">文档任务</h2></div>
       {!documentTasks.length && <p className="px-2 py-6 text-sm text-ink-tertiary">尚无任务记录</p>}
-      {documentTasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${task?.id === item.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => setSelectedId(item.id)}>
+      {documentTasks.map(item => <button key={item.id} className={`mb-1 block w-full rounded p-2 text-left ${task?.id === item.id ? 'bg-muted' : 'hover:bg-muted'}`} onClick={() => { setSelectedId(item.id); taskNavigation.showResult(); }}>
         <span className="block truncate text-sm font-medium">{item.title}</span><span className="mt-1 flex items-center gap-1 text-xs text-ink-secondary">
           {item.status === 'running' ? <Loader2 size={12} className="animate-spin" /> : item.status === 'succeeded' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{statusText[item.status]}</span>
       </button>)}
@@ -69,6 +72,25 @@ export function DocumentTasks() {
       <div className="mx-auto max-w-4xl">
         <h1 className="text-xl font-semibold">生成 Markdown 文档</h1>
         <p className="mt-2 text-sm text-ink-secondary">任务和成果保存到本机加密库。模型只收到本次标题、要求和参考文本。关闭或锁定客户端会中断任务；下载文件为明文，内容请先审阅。</p>
+      <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
+          {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
+        {task && <section className="py-6" aria-label="任务详情">
+          <div className="flex flex-wrap items-start gap-3"><div className="min-w-0 flex-1"><h2 className="truncate text-lg font-semibold">{task.title}</h2><p className="mt-1 text-xs text-ink-secondary">{statusText[task.status]} · {new Date(task.updatedAt).toLocaleString()}</p></div>
+            {task.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(task.id)}><Square size={15} />停止</button> : <button className="work-command" onClick={() => reuse(task)}><RotateCcw size={15} />复用输入</button>}
+            <button className="work-icon" title="删除任务" aria-label="删除任务" disabled={task.status === 'running'} onClick={() => { if (window.confirm('删除此任务、工具记录和成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}><Trash2 size={16} /></button></div>
+          {task.error && <p className="mt-3 text-sm text-danger">{task.error}</p>}
+          {task.status === 'running' && store.generationPreviews[task.id] && <GenerationPreview value={store.generationPreviews[task.id]} label="文档生成中的预览" />}
+          <details open={task.status === 'running'} className="mt-4 text-sm"><summary className="cursor-pointer">执行记录 · {tools.length}</summary>{tools.map(tool => <div className="mt-2 break-words text-xs text-ink-secondary" key={tool.id}>
+            <p>{tool.tool} · {statusText[tool.status]}{tool.model ? ` · ${tool.model}` : ''}{tool.sourceArtifactId ? ` · 源版本 ${artifacts.find(item => item.id === tool.sourceArtifactId)?.version ?? '未知'}` : ''}</p>
+            {tool.finishReason && <p>{finishLabel(tool.finishReason)}</p>}
+            {tool.outputArtifactId && <p>{tool.previousArtifactId ? `基于版本 ${artifacts.find(item => item.id === tool.previousArtifactId)?.version ?? '未知'} · ` : ''}生成版本 {artifacts.find(item => item.id === tool.outputArtifactId)?.version ?? '未知'}</p>}
+            {tool.outputName && <p>{tool.outputName} · SHA-256 {tool.outputSha256?.slice(0, 12)}…</p>}{tool.error && <p>{tool.error}</p>}{tool.warnings?.map(warning => <p key={warning}>{warning}</p>)}</div>)}</details>
+          {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
+          {!!artifacts.length && <DocumentArtifact key={task.id} versions={artifacts} />}
+        </section>}
+      </div>
+      <div ref={taskNavigation.inputRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
         <form className="mt-5 grid gap-4 border-b border-line pb-6" onSubmit={start}>
           <fieldset disabled={submitting} className="grid gap-4 sm:grid-cols-2">
             <label className="work-label">文档标题<input className="work-input" required maxLength={100} value={title} onChange={e => setTitle(e.target.value)} /></label>
@@ -87,22 +109,8 @@ export function DocumentTasks() {
           {profile?.mode === 'local' && <p className="text-xs text-ink-secondary">请求发往上述本机接口；接口背后的模型是否完全离线取决于你的服务配置。</p>}
           <div className="flex flex-wrap gap-2"><button className="work-command bg-brand text-white" disabled={submitting || !profileId || !title.trim() || !instruction.trim() || !!cloud && !consent}><Play size={16} />{submitting ? '任务运行中…' : '开始生成'}</button>
             {store.accountModel === null && <button type="button" className="work-command" disabled={store.accountLoading} onClick={() => void store.refreshAccountModel()}>检查账号模型权限</button>}</div>
-          {error && <p role="alert" className="text-sm text-danger">{error}</p>}
         </form>
-        {task && <section className="py-6" aria-label="任务详情">
-          <div className="flex flex-wrap items-start gap-3"><div className="min-w-0 flex-1"><h2 className="truncate text-lg font-semibold">{task.title}</h2><p className="mt-1 text-xs text-ink-secondary">{statusText[task.status]} · {new Date(task.updatedAt).toLocaleString()}</p></div>
-            {task.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(task.id)}><Square size={15} />停止</button> : <button className="work-command" onClick={() => reuse(task)}><RotateCcw size={15} />复用输入</button>}
-            <button className="work-icon" title="删除任务" aria-label="删除任务" disabled={task.status === 'running'} onClick={() => { if (window.confirm('删除此任务、工具记录和成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}><Trash2 size={16} /></button></div>
-          {task.error && <p className="mt-3 text-sm text-danger">{task.error}</p>}
-          {task.status === 'running' && store.generationPreviews[task.id] && <GenerationPreview value={store.generationPreviews[task.id]} label="文档生成中的预览" />}
-          <details className="mt-4 text-sm"><summary className="cursor-pointer">执行记录 · {tools.length}</summary>{tools.map(tool => <div className="mt-2 break-words text-xs text-ink-secondary" key={tool.id}>
-            <p>{tool.tool} · {statusText[tool.status]}{tool.model ? ` · ${tool.model}` : ''}{tool.sourceArtifactId ? ` · 源版本 ${artifacts.find(item => item.id === tool.sourceArtifactId)?.version ?? '未知'}` : ''}</p>
-            {tool.finishReason && <p>{finishLabel(tool.finishReason)}</p>}
-            {tool.outputArtifactId && <p>{tool.previousArtifactId ? `基于版本 ${artifacts.find(item => item.id === tool.previousArtifactId)?.version ?? '未知'} · ` : ''}生成版本 {artifacts.find(item => item.id === tool.outputArtifactId)?.version ?? '未知'}</p>}
-            {tool.outputName && <p>{tool.outputName} · SHA-256 {tool.outputSha256?.slice(0, 12)}…</p>}{tool.error && <p>{tool.error}</p>}{tool.warnings?.map(warning => <p key={warning}>{warning}</p>)}</div>)}</details>
-          {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
-          {!!artifacts.length && <DocumentArtifact key={task.id} versions={artifacts} />}
-        </section>}
+      </div>
       </div>
     </div>
   </section>;

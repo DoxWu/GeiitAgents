@@ -35,11 +35,12 @@ export function ToolArtifact({ artifact, versions, running }: { artifact: WorkAr
   return <section aria-label="多步骤任务成果" className="mt-4 min-w-0 border-t border-line pt-4">
     <h3 className="break-all font-medium">{artifact.name}</h3>
     {artifact.finishReason && <p className="mt-2 text-sm text-ink-secondary">{finishLabel(artifact.finishReason)}</p>}
+    {!(manageVersions && versions && !running) && <div className="mt-3 max-h-[50vh] overflow-auto rounded border border-line p-3" tabIndex={0} role="region" aria-label="成果内容预览">{artifact.kind === 'markdown' ? <PrivateMarkdown content={artifact.content} /> : <div className="overflow-x-auto bg-white">{url && <img src={url} alt={artifact.name} className="max-w-none" />}</div>}</div>}
     <div className="my-3 flex flex-wrap items-end gap-2"><button className="work-command" onClick={() => download(new Blob([artifact.kind === 'markdown' ? documentExportContent(artifact) : artifact.content], { type: artifact.mimeType }), artifact.name)}>下载成果</button>
       {artifact.kind === 'markdown' && <DocxStyleSelect value={docxStyle} onChange={setDocxStyle} format={docxFormat} onFormatChange={setDocxFormat} disabled={busy || running} />}
       {artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} onClick={() => void docx()}>{busy ? '正在导出…' : '导出 Word'}</button>}
       {versions && artifact.kind === 'markdown' && <button className="work-command" disabled={busy || running} aria-expanded={manageVersions} onClick={() => setManageVersions(current => !current)}>{manageVersions ? '关闭版本管理' : '编辑与版本管理'}</button>}</div>
     {error && <p role="status" className="text-sm">{error}</p>}
-    {manageVersions && versions && !running ? <DocumentArtifact versions={versions} /> : artifact.kind === 'markdown' ? <PrivateMarkdown content={artifact.content} /> : <div className="overflow-x-auto bg-white">{url && <img src={url} alt={artifact.name} className="max-w-none" />}</div>}
+    {manageVersions && versions && !running && <DocumentArtifact versions={versions} />}
   </section>;
 }

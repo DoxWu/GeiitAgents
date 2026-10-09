@@ -23,6 +23,7 @@ import { isValidEmail } from "@/utils/validate";
 interface LoginFormProps {
   /** 登录成功回调 */
   onSuccess?: () => void;
+  onValidationFailure?: () => void;
 }
 
 /** 登录表单错误类型 */
@@ -32,7 +33,7 @@ interface FormErrors {
 }
 
 /** LoginForm 组件 */
-export function LoginForm({ onSuccess }: LoginFormProps) {
+export function LoginForm({ onSuccess, onValidationFailure }: LoginFormProps) {
   const { login, loading } = useAuthStore();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -65,7 +66,7 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
   /** 提交登录 */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!validate()) return;
+    if (!validate()) { onValidationFailure?.(); return; }
 
     try {
       // 后端 username 字段同时支持用户名和邮箱

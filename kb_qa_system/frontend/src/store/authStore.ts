@@ -1,4 +1,5 @@
-import { getAccountGeneration, subscribeAccountServer } from '@/services/accountServer';
+import { getAccountGeneration, getAccountServer, subscribeAccountServer } from '@/services/accountServer';
+import { finishLoginDiagnostic, type LoginDiagnostic } from '@/services/loginDiagnostics';
 /**
  * 认证状态管理 Store
  *
@@ -39,6 +40,7 @@ interface AuthState {
   loading: boolean;
   /** 错误信息 */
   error: string | null;
+  loginDiagnostic: LoginDiagnostic | null;
 
   /** 登录 */
   login: (data: LoginRequest) => Promise<void>;
@@ -80,12 +82,16 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   loading: false,
   error: null,
+  loginDiagnostic: null,
 
   login: async (data: LoginRequest) => {
     const generation = getAccountGeneration();
-    set({ loading: true, error: null });
+    const attempt: LoginDiagnostic = { phase: 'sending', url: `${getAccountServer()}/auth/login`, startedAt: new Date().toISOString() };
+    const controller = new AbortController(); let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 20_000);
+    set({ loading: true, error: null, loginDiagnostic: attempt });
     try {
-      const tokenResponse = await authApi.login(data);
+      const tokenResponse = await authApi.login(data, controller.signal);
       if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 修复问题三：登录前清除前一个用户的文档数据，防止数据残留。
@@ -107,21 +113,25 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true,
         loading: false,
         error: null,
+        loginDiagnostic: finishLoginDiagnostic(attempt),
       });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "登录失败，请重试";
       if (generation !== getAccountGeneration()) throw err;
-      set({ loading: false, error: message });
+      set({ loading: false, error: timedOut ? '登录请求超时，请检查服务器地址和网络后重试。' : message, loginDiagnostic: finishLoginDiagnostic(attempt, err, timedOut) });
       throw err;
-    }
+    } finally { clearTimeout(timeout); }
   },
 
   guestLogin: async () => {
     const generation = getAccountGeneration();
-    set({ loading: true, error: null });
+    const attempt: LoginDiagnostic = { phase: 'sending', url: `${getAccountServer()}/auth/guest-login`, startedAt: new Date().toISOString() };
+    const controller = new AbortController(); let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 20_000);
+    set({ loading: true, error: null, loginDiagnostic: attempt });
     try {
-      const tokenResponse = await authApi.guestLogin();
+      const tokenResponse = await authApi.guestLogin(controller.signal);
       if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 修复问题三：登录前清除前一个用户的文档数据（与 login 一致）
@@ -140,14 +150,15 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true,
         loading: false,
         error: null,
+        loginDiagnostic: finishLoginDiagnostic(attempt),
       });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "游客登录失败，请重试";
       if (generation !== getAccountGeneration()) throw err;
-      set({ loading: false, error: message });
+      set({ loading: false, error: timedOut ? '登录请求超时，请检查服务器地址和网络后重试。' : message, loginDiagnostic: finishLoginDiagnostic(attempt, err, timedOut) });
       throw err;
-    }
+    } finally { clearTimeout(timeout); }
   },
 
   logout: async () => {
@@ -244,5 +255,5 @@ useAuthStore.getState().restoreSession();
 
 subscribeAccountServer(() => {
   useDocumentStore.getState().reset();
-  useAuthStore.setState({ user: null, tokens: null, isAuthenticated: false, loading: false, error: null });
+  useAuthStore.setState({ user: null, tokens: null, isAuthenticated: false, loading: false, error: null, loginDiagnostic: null });
 });
