@@ -10,7 +10,7 @@
  *   - 注册申请/审批/密码设置：kb_qa_system/backend/app/api/routes/registration.py
  */
 
-import { apiClient } from "./client";
+import { apiClient, getStoredTokens } from "./client";
 import { API_PATHS } from "@/utils/constants";
 import type {
   LoginRequest,
@@ -70,7 +70,7 @@ export async function refreshToken(
  * 调用 POST /auth/logout，将当前 Token 加入黑名单。
  */
 export async function logout(): Promise<void> {
-  await apiClient.post(API_PATHS.LOGOUT);
+  await apiClient.post(API_PATHS.LOGOUT, { refresh_token: getStoredTokens()?.refresh_token }, { autoRefresh: false });
 }
 
 /**

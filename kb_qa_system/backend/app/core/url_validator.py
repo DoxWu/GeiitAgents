@@ -180,7 +180,12 @@ def validate_url(url: str, allow_private: bool = False) -> str:
 
     # 5. 端口校验
     # 作用：阻止通过 URL 访问数据库、缓存等内部服务端口
-    port = parsed.port
+    try:
+        port = parsed.port
+    except ValueError:
+        raise URLValidationError("URL 端口无效") from None
+    if parsed.username is not None or parsed.password is not None or any(ord(c) < 33 for c in url):
+        raise URLValidationError("URL 不得包含凭据或控制字符")
     if port is not None and port in BLOCKED_PORTS:
         raise URLValidationError(f"禁止访问的端口: {port}")
 
@@ -191,7 +196,7 @@ def validate_url(url: str, allow_private: bool = False) -> str:
     return url
 
 
-def _validate_hostname_ip(hostname: str, allow_private: bool) -> None:
+def _validate_hostname_ip(hostname: str, allow_private: bool) -> list[str]:
     """
     校验主机名对应的 IP 是否安全
 
@@ -243,6 +248,9 @@ def _validate_hostname_ip(hostname: str, allow_private: bool) -> None:
     # 检查每个 IP 是否属于禁止的地址段
     for ip in ips_to_check:
         _check_ip_safety(ip, hostname, allow_private)
+        if not allow_private and not ip.is_global:
+            raise URLValidationError("禁止访问非公网地址")
+    return [str(ip) for ip in ips_to_check]
 
 
 def _check_ip_safety(

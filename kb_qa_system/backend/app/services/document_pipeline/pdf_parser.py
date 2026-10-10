@@ -25,6 +25,8 @@ PDF 解析与版面分析模块
 """
 
 import logging
+import time
+from app.core.config import settings
 from typing import List, Optional, Dict, Any
 
 from app.services.document_pipeline.context import (
@@ -83,10 +85,19 @@ class PdfParser:
 
         doc = fitz.open(ctx.file_path)
         pages: List[ParsedPage] = []
+        deadline = time.monotonic() + settings.PARSER_MAX_SECONDS
+        total_chars = 0
 
         try:
+            if len(doc) > settings.PARSER_MAX_PDF_PAGES:
+                raise ValueError("PDF 页数超过解析预算")
             for page_num, page in enumerate(doc, start=1):
+                if time.monotonic() > deadline:
+                    raise ValueError("PDF 解析超过总时间限制")
                 parsed_page = self._parse_page(page, page_num)
+                total_chars += len(parsed_page.text)
+                if total_chars > settings.PARSER_MAX_TEXT_CHARS:
+                    raise ValueError("PDF 文本超过解析预算")
                 pages.append(parsed_page)
 
             ctx.pages = pages
@@ -127,7 +138,8 @@ class PdfParser:
 
         # 提取结构化文本
         # 作用：get_text("dict") 返回带坐标、字体信息的字典
-        text_dict = page.get_text("dict")
+        import fitz
+        text_dict = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)
 
         blocks: List[TextBlock] = []
 

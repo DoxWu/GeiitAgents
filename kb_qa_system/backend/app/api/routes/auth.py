@@ -38,6 +38,9 @@ from app.core.security import (
     create_token_pair,
     blacklist_token,
     is_token_blacklisted,
+    decode_access_token,
+    consume_refresh_token,
+    token_remaining_ttl,
 )
 from app.core.rate_limit import (
     rate_limit,
@@ -528,19 +531,22 @@ def refresh_token(
         # 作用：每次刷新都生成新的 Refresh Token，旧的立即拉黑
         #       这样即使旧 Refresh Token 被窃取，也无法再次使用
         new_access_token = create_access_token(
-            data={"sub": str(user.id), "username": user.username}
+            data={"sub": str(user.id), "username": user.username, **({"sid": payload["sid"]} if payload.get("sid") else {})}
         )
         new_refresh_token = create_refresh_token(
-            data={"sub": str(user.id), "username": user.username}
+            data={"sub": str(user.id), "username": user.username, **({"sid": payload["sid"]} if payload.get("sid") else {})}
         )
         expires_in = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
 
         # 5. 将旧的 Refresh Token 加入黑名单（一次性使用）
         # 作用：防止旧 Token 被重放，TTL 设为 Refresh Token 剩余有效期
-        blacklist_token(
-            body.refresh_token,
-            ttl=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-        )
+        try:
+            if not consume_refresh_token(body.refresh_token, payload):
+                raise invalid_exception
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(503, detail={"error": {"code": "AUTH_SERVICE_UNAVAILABLE", "message": "认证服务暂时不可用，请稍后重试"}}) from None
 
         return {
             "access_token": new_access_token,
@@ -614,45 +620,40 @@ async def logout(
             detail={"error": {"code": "UNAUTHORIZED", "message": "未提供有效的认证凭证"}},
         )
 
-    # 将 Access Token 加入黑名单
-    # 作用：主动失效，即使 Token 未过期也不能再使用
-    # L-9 修复：先检查是否已在黑名单，避免重复拉黑浪费 Redis 写入
-    #   场景：前端连点登出按钮 / 多标签页同时登出同一 Token
-    try:
-        if not is_token_blacklisted(token):
-            blacklist_token(token)
-    except Exception:
-        # is_token_blacklisted fail-closed 会抛异常（Redis 故障），降级为直接拉黑
-        # 作用：Redis 故障时不阻塞登出流程，blacklist_token 内部 best-effort 处理
-        blacklist_token(token)
-
-    # 尝试从请求体中提取 Refresh Token 并拉黑
-    # 作用：登出时同时失效 Refresh Token，防止用 Refresh Token 刷新获取新的 Access Token
-    try:
-        content_type = request.headers.get("content-type", "")
-        if "application/json" in content_type:
+    # L-9 replaced by A30: batch writes are idempotent; success requires acknowledgement.
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(401, detail="无效的认证凭证")
+    refresh_payload = None
+    refresh_tok = None
+    if "application/json" in request.headers.get("content-type", ""):
+        try:
             body = await request.json()
-            if body and isinstance(body, dict):
-                refresh_tok = body.get("refresh_token")
-                if refresh_tok and isinstance(refresh_tok, str):
-                    # Refresh Token 黑名单 TTL 设为其有效期（7天）
-                    # 作用：7天后自动清理，避免 Redis 无限增长
-                    # L-9 修复：同样先检查是否已黑名单，避免重复写入
-                    try:
-                        if not is_token_blacklisted(refresh_tok):
-                            blacklist_token(
-                                refresh_tok,
-                                ttl=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-                            )
-                    except Exception:
-                        blacklist_token(
-                            refresh_tok,
-                            ttl=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-                        )
+            refresh_tok = body.get("refresh_token") if isinstance(body, dict) else None
+        except ValueError:
+            raise HTTPException(400, detail="请求体不是有效 JSON") from None
+        if refresh_tok is not None:
+            if not isinstance(refresh_tok, str):
+                raise HTTPException(400, detail="Refresh Token 格式无效")
+            refresh_payload = decode_refresh_token(refresh_tok)
+            if refresh_payload and (refresh_payload.get("sub") != str(current_user.id)
+                    or (payload.get("sid") and refresh_payload.get("sid") != payload["sid"])):
+                raise HTTPException(400, detail="Refresh Token 不属于当前会话")
+
+    from app.core.redis import RedisKeys
+    entries = [(RedisKeys.token_blacklist(token), "1", token_remaining_ttl(payload))]
+    if refresh_payload:
+        entries.append((RedisKeys.token_blacklist(refresh_tok), "1", token_remaining_ttl(refresh_payload)))
+    if payload.get("sid"):
+        # Covers credentials from a concurrent refresh of the same session.
+        entries.append((f"auth:session:revoked:{payload['sid']}", "1",
+                        settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600 + 60))
+    try:
+        if not RedisManager.set_many_strict(entries):
+            raise RuntimeError("revocation not acknowledged")
     except Exception:
-        # 请求体解析失败不影响登出流程
-        # 作用：即使前端未传 Refresh Token，登出仍成功
-        pass
+        raise HTTPException(503, detail={"error": {"code": "LOGOUT_NOT_CONFIRMED",
+            "message": "服务器未确认会话注销，请稍后重试。"}}) from None
 
     return {"message": "已成功登出"}
 

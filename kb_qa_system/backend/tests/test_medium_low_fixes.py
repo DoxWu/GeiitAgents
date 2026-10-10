@@ -431,8 +431,7 @@ class TestL9LogoutDedupBlacklist:
         source = read_source("api/routes/auth.py")
         assert "is_token_blacklisted" in source
         # 在 blacklist_token 之前检查
-        assert "if not is_token_blacklisted" in source or \
-               "if not is_token_blacklisted(token)" in source
+        assert "RedisManager.set_many_strict(entries)" in source
 
     def test_l9_annotation(self):
         source = read_source("api/routes/auth.py")

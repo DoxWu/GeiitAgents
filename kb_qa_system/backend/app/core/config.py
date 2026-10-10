@@ -278,6 +278,10 @@ class Settings(BaseSettings):
     # 检索时返回的相似文档数量（Top-K）
     # 任务3：从 4 提升至 6，直接增加最终返回数量，提升检索覆盖率
     SEARCH_TOP_K: int = 6
+    PARSER_MAX_PDF_PAGES: int = 500
+    PARSER_MAX_IMAGE_PIXELS: int = 20_000_000
+    PARSER_MAX_SECONDS: int = 120
+    PARSER_MAX_TEXT_CHARS: int = 8_000_000
 
     # 相似度阈值，低于此值的文档不会被采用（0-1，越大越严格）
     # 任务3：从 0.5 降至 0.35，避免相关文档因阈值过高被过滤掉

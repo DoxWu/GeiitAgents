@@ -360,10 +360,18 @@ class TestUrlDownloadSizeLimit:
             "应引用最大大小配置"
 
     def test_streaming_size_check_exists(self):
-        """验证有流式累计大小检查"""
-        source = read_source("app/services/document_pipeline/parsers.py")
-        assert "iter_content" in source, "应使用 iter_content 流式读取"
-        assert "downloaded" in source, "应有累计字节数变量"
+        """An untrusted chunked body must stop before full consumption."""
+        from types import SimpleNamespace
+        import time
+        from app.services.document_pipeline.resource_limits import read_limited
+        consumed = []
+        def chunks(**kwargs):
+            for i in range(20):
+                consumed.append(i)
+                yield b'x' * 32
+        with pytest.raises(ValueError):
+            read_limited(SimpleNamespace(headers={}, iter_content=chunks), 64, time.monotonic() + 10)
+        assert len(consumed) == 3
 
 
 # ============================================

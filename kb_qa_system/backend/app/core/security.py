@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Tuple
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+from uuid import uuid4
+import math
 
 from app.core.config import settings
 from app.core.redis import RedisManager, RedisKeys
@@ -117,7 +119,7 @@ def create_access_token(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
 
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "jti": uuid4().hex})
 
     encoded_jwt = jwt.encode(
         to_encode,
@@ -196,7 +198,7 @@ def create_refresh_token(
             days=settings.REFRESH_TOKEN_EXPIRE_DAYS
         )
 
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "jti": uuid4().hex})
 
     encoded_jwt = jwt.encode(
         to_encode,
@@ -295,7 +297,23 @@ def is_token_blacklisted(token: str) -> bool:
         修复：改用 exists_strict（fail-closed），Redis 故障时拒绝请求。
     """
     key = RedisKeys.token_blacklist(token)
-    return RedisManager.exists_strict(key)
+    if RedisManager.exists_strict(key):
+        return True
+    payload = decode_access_token(token) or decode_refresh_token(token)
+    sid = payload.get("sid") if payload else None
+    return bool(sid and RedisManager.exists_strict(f"auth:session:revoked:{sid}"))
+
+
+def token_remaining_ttl(payload: Dict[str, Any]) -> int:
+    """Keep a tombstone through the token's actual expiry, including rounding."""
+    return max(1, math.ceil(float(payload["exp"]) - datetime.now(timezone.utc).timestamp()))
+
+
+def consume_refresh_token(token: str, payload: Dict[str, Any]) -> bool:
+    """Atomic NX consumption remains exclusive even if the request lock expires."""
+    return RedisManager.set_once_strict(
+        RedisKeys.token_blacklist(token), "1", token_remaining_ttl(payload)
+    )
 
 
 # ============================================
@@ -320,7 +338,7 @@ def create_token_pair(
     返回:
         Tuple[str, str, int] - (access_token, refresh_token, access_token有效期秒数)
     """
-    token_data = {"sub": str(user_id), "username": username}
+    token_data = {"sub": str(user_id), "username": username, "sid": uuid4().hex}
 
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)

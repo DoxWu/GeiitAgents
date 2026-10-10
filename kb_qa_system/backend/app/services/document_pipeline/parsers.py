@@ -16,11 +16,14 @@
 
 import os
 import logging
+import time
 from typing import List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 from docx import Document as DocxDocument
+from app.core.public_http import public_get
+from app.services.document_pipeline.resource_limits import read_limited, validate_docx_archive
 
 from app.services.document_pipeline.context import (
     PipelineContext,
@@ -196,6 +199,7 @@ class DocxParser:
         返回：
             str - 提取的文本
         """
+        validate_docx_archive(file_path)
         doc = DocxDocument(file_path)
         parts: List[str] = []
 
@@ -298,7 +302,7 @@ class UrlParser:
         "Upgrade-Insecure-Requests": "1",
     }
 
-    def _download_html(self, url: str, timeout: int = 30, _redirect_count: int = 0) -> tuple:
+    def _download_html(self, url: str, timeout: int = 30, _redirect_count: int = 0, _deadline=None) -> tuple:
         """
         下载网页 HTML（内部方法，供 parse 和 parse_with_images 复用）
 
@@ -324,10 +328,14 @@ class UrlParser:
         """
         # C-1 + C-8 修复：禁用自动重定向 + 流式下载 + 大小限制
         # 安全策略：不使用 requests 自动重定向，手动跟随并校验每个重定向目标
-        response = requests.get(
+        deadline = _deadline if _deadline is not None else time.monotonic() + timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("下载超过总时间限制")
+        response = public_get(
             url,
             headers=self._HEADERS,
-            timeout=timeout,
+            timeout=remaining,
             allow_redirects=False,  # C-1: 禁用自动重定向，手动校验后跟随
             stream=True,            # C-8: 流式下载，便于边读边检查大小
         )
@@ -358,7 +366,7 @@ class UrlParser:
             from app.core.url_validator import validate_url, URLValidationError
             from app.core.config import settings as _settings
             try:
-                validate_url(redirect_url, allow_private=_settings.is_development)
+                validate_url(redirect_url, allow_private=False)
             except URLValidationError:
                 raise ValueError(
                     f"重定向目标不安全，已拦截: {redirect_url[:100]}"
@@ -368,35 +376,15 @@ class UrlParser:
                 f"URL 重定向跟随（{_redirect_count + 1}/3）: "
                 f"{url[:80]} → {redirect_url[:80]}"
             )
-            return self._download_html(redirect_url, timeout, _redirect_count + 1)
+            return self._download_html(redirect_url, timeout, _redirect_count + 1, deadline)
 
-        response.raise_for_status()
-
-        # C-8: 检查 Content-Length（若服务端提供）
         from app.core.config import settings
-        max_size = settings.URL_IMPORT_MAX_SIZE
-        content_length = response.headers.get("Content-Length")
-        if content_length and int(content_length) > max_size:
+        try:
+            response.raise_for_status()
+            content = read_limited(response, settings.URL_IMPORT_MAX_SIZE, deadline)
+        except Exception:
             response.close()
-            raise ValueError(
-                f"下载内容过大（{int(content_length)} bytes），最大允许 {max_size} bytes"
-            )
-
-        # C-8: 流式读取 + 边写边检查累计大小
-        downloaded = 0
-        chunks = []
-        for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
-            if not chunk:
-                continue
-            downloaded += len(chunk)
-            if downloaded > max_size:
-                response.close()
-                raise ValueError(
-                    f"下载内容超过大小限制（{max_size} bytes），已中止下载"
-                )
-            chunks.append(chunk)
-
-        content = b"".join(chunks)
+            raise
         # 注意：不在此处 close response，调用方需要读取 headers（如 Content-Type）
         return content, response
 
@@ -649,8 +637,10 @@ class UrlParser:
         """
         from app.core.config import settings
 
+        response = None
         try:
-            response = requests.get(
+            deadline = time.monotonic() + settings.URL_IMAGE_DOWNLOAD_TIMEOUT
+            response = public_get(
                 img_url,
                 headers=self._HEADERS,
                 timeout=settings.URL_IMAGE_DOWNLOAD_TIMEOUT,
@@ -669,8 +659,8 @@ class UrlParser:
                 response.close()
                 return None
 
-            # 下载图片
-            image_bytes = response.content
+            # Check decoded bytes incrementally, even without a trustworthy header.
+            image_bytes = read_limited(response, settings.URL_IMAGE_MAX_SIZE, deadline)
             response.close()
 
             if len(image_bytes) > settings.URL_IMAGE_MAX_SIZE:
@@ -684,8 +674,11 @@ class UrlParser:
             return image_bytes
 
         except Exception as e:
-            logger.debug(f"图片下载失败（{img_url[:100]}）: {e}")
+            logger.debug("图片下载失败或超出资源预算")
             return None
+        finally:
+            if response is not None:
+                response.close()
 
     @staticmethod
     def _is_image_large_enough(image_bytes: bytes) -> bool:
@@ -708,12 +701,12 @@ class UrlParser:
             from PIL import Image
             import io
 
-            img = Image.open(io.BytesIO(image_bytes))
-            width, height = img.size
-            return width * height >= settings.URL_IMAGE_MIN_SIZE
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                width, height = img.size
+                return settings.URL_IMAGE_MIN_SIZE <= width * height <= settings.PARSER_MAX_IMAGE_PIXELS
         except Exception:
-            # 非 PIL 支持格式（如 SVG）保守放行
-            return True
+            # Unknown formats and decompression bombs never reach OCR/vision.
+            return False
 
     def _generate_image_text(
         self,

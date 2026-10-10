@@ -1,179 +1,184 @@
-"""
-WebSocket 实时通知端点（E1-04）
-
-作用：
-    提供 WebSocket 连接，实时向用户推送通知事件：
-    - 注册审批结果通知
-    - 文档处理完成通知
-    - 系统公告
-
-    基于 Redis Pub/Sub 实现跨实例消息分发（Railway 多副本场景）。
-
-实现方式：
-    1. 客户端通过 /ws/notifications?token=<JWT> 连接
-    2. 服务端验证 JWT，提取 user_id
-    3. 订阅 Redis channel: notifications:{user_id}
-    4. 其他服务通过 publish_notification() 发布通知
-    5. WebSocket 收到 Redis 消息后推送给客户端
-
-使用方式：
-    # 后端发布通知
-    from app.api.ws_notifications import publish_notification
-    await publish_notification(user_id=1, notification={
-        "type": "registration_approved",
-        "message": "您的注册申请已通过",
-    })
-
-    # 前端连接
-    const ws = new WebSocket(`ws://host/ws/notifications?token=${jwt}`)
-    ws.onmessage = (event) => console.log(JSON.parse(event.data))
-"""
-
+"""One-use notification tickets; every open socket remains subject to auth."""
+import asyncio
+import hashlib
 import json
 import logging
-from typing import Optional, Dict, Any
+import secrets
+import time
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from jose import JWTError
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 
+from app.api.deps import get_current_active_user, oauth2_scheme
 from app.core.config import settings
-from app.core.security import decode_access_token
-from app.core.redis import redis_client
+from app.core.database import SessionLocal
+from app.core.redis import redis_client, RedisManager
+from app.core.security import decode_access_token, is_token_blacklisted
+from app.models.user import User
+from app.core.rate_limit import rate_limit
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
+TICKET_TTL = 30
+LEASE_TTL = 90
+MAX_CONNECTIONS = 3
 
 
 def _get_notification_channel(user_id: int) -> str:
-    """
-    生成用户通知频道名
-
-    作用：
-        为指定用户生成 Redis Pub/Sub 频道名。
-        格式：kb_qa:{env}:notifications:{user_id}
-
-    参数：
-        user_id: int - 用户 ID
-
-    返回：
-        str - Redis 频道名
-    """
     return f"{settings.redis_key_prefix}notifications:{user_id}"
 
 
-async def publish_notification(user_id: int, notification: Dict[str, Any]) -> None:
-    """
-    发布通知到用户频道
+def _allowed_origin(origin: str) -> bool:
+    parsed = urlsplit(settings.FRONTEND_BASE_URL)
+    frontend = f"{parsed.scheme}://{parsed.netloc}"
+    return not origin or origin in {*settings.CORS_ORIGINS, frontend}
 
-    作用：
-        将通知消息发布到 Redis 频道，所有订阅该频道的 WebSocket 连接
-        都会收到消息。用于审批完成、文档处理完成等事件通知。
 
-    参数：
-        user_id: int - 目标用户 ID
-        notification: Dict[str, Any] - 通知内容，包含 type 和 message
+def _ticket_key(ticket: str) -> str:
+    return RedisManager.make_key("auth:ws:ticket:" + hashlib.sha256(ticket.encode()).hexdigest())
 
-    示例：
-        await publish_notification(user_id=1, notification={
-            "type": "registration_approved",
-            "message": "您的注册申请已通过",
-            "timestamp": "2026-07-11T10:00:00Z",
-        })
-    """
+
+@router.post(settings.API_V1_PREFIX + "/auth/ws-ticket", dependencies=[Depends(rate_limit("ws_ticket", per_minute=12))])
+def create_ws_ticket(request: Request, response: Response,
+                     user: User = Depends(get_current_active_user), token: str = Depends(oauth2_scheme)):
+    origin = request.headers.get("origin", "")
+    if not _allowed_origin(origin):
+        raise HTTPException(403, detail="通知来源不在允许列表")
+    ticket = secrets.token_urlsafe(32)
     try:
-        channel = _get_notification_channel(user_id)
-        message = json.dumps(notification, ensure_ascii=False, default=str)
-        redis_client.publish(channel, message)
-    except Exception as e:
-        logger.error(f"发布通知失败: user_id={user_id}, error={e}")
+        if not redis_client.set(_ticket_key(ticket), json.dumps({"token": token, "origin": origin}), ex=TICKET_TTL):
+            raise RuntimeError("ticket not acknowledged")
+    except Exception:
+        raise HTTPException(503, detail="通知认证服务暂时不可用") from None
+    response.headers["Cache-Control"] = "no-store"
+    return {"ticket": ticket, "expires_in": TICKET_TTL}
+
+
+async def publish_notification(user_id: int, notification: dict) -> None:
+    try:
+        await asyncio.to_thread(redis_client.publish, _get_notification_channel(user_id),
+                                json.dumps(notification, ensure_ascii=False, default=str))
+    except Exception:
+        logger.warning("通知发布失败")
+
+
+def _active_user(token: str) -> int | None:
+    payload = decode_access_token(token)
+    if not payload or is_token_blacklisted(token):
+        return None
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        return user_id if user and user.is_active else None
+
+
+_LEASE_SCRIPT = """
+redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
+if not redis.call('zscore', KEYS[1], ARGV[3]) and redis.call('zcard', KEYS[1]) >= tonumber(ARGV[4]) then
+    return 0
+end
+redis.call('zadd', KEYS[1], ARGV[2], ARGV[3])
+redis.call('expire', KEYS[1], ARGV[5])
+return 1
+"""
 
 
 @router.websocket("/ws/notifications")
 async def websocket_notifications(websocket: WebSocket):
-    """
-    WebSocket 通知端点
-
-    作用：
-        建立 WebSocket 连接，实时向用户推送通知。
-        通过 query parameter ?token=<JWT> 进行认证。
-
-    认证流程：
-        1. 从 query parameter 提取 token
-        2. 解码 JWT 获取 user_id
-        3. 认证失败时关闭连接（code=4001）
-
-    消息格式：
-        服务端 → 客户端：
-        {
-            "type": "registration_approved",
-            "message": "您的注册申请已通过",
-            "timestamp": "2026-07-11T10:00:00Z"
-        }
-
-    实现方式：
-        - 使用 Redis Pub/Sub 订阅用户频道
-        - 在独立线程中监听 Redis 消息（redis-py 的 pubsub 是同步的）
-        - 通过 asyncio.to_thread 避免阻塞事件循环
-        - 心跳机制：每 30 秒发送 ping，检测连接是否存活
-    """
-    # 从 query parameter 提取 token
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001, reason="缺少认证 token")
+    ticket = websocket.query_params.get("ticket", "")
+    origin = websocket.headers.get("origin", "")
+    if not ticket or len(ticket) > 128 or not _allowed_origin(origin):
+        await websocket.close(code=4001)
         return
-
-    # 验证 JWT
+    pubsub = None
+    receiver = None
+    lease_key = None
+    lease_id = secrets.token_hex(16)
     try:
-        payload = decode_access_token(token)
-        if not payload:
-            await websocket.close(code=4001, reason="无效的 token")
+        raw = await asyncio.to_thread(redis_client.eval,
+            "local v=redis.call('get',KEYS[1]);redis.call('del',KEYS[1]);return v", 1, _ticket_key(ticket))
+        data = json.loads(raw) if raw else {}
+        if data.get("origin") != origin or not data.get("token"):
+            await websocket.close(code=4001)
             return
-        user_id_str = payload.get("sub")
-        if not user_id_str:
-            await websocket.close(code=4001, reason="token 中无用户信息")
+        token = data["token"]
+        user_id = await asyncio.to_thread(_active_user, token)
+        if user_id is None:
+            await websocket.close(code=4001)
             return
-        user_id = int(user_id_str)
-    except (JWTError, ValueError) as e:
-        logger.debug(f"WebSocket 认证失败: {e}")
-        await websocket.close(code=4001, reason="认证失败")
-        return
+        lease_key = RedisManager.make_key(f"auth:ws:connections:{user_id}")
 
-    # 接受 WebSocket 连接
-    await websocket.accept()
-    logger.info(f"WebSocket 连接建立: user_id={user_id}")
+        def renew():
+            now = time.time()
+            return redis_client.eval(_LEASE_SCRIPT, 1, lease_key, now, now + LEASE_TTL,
+                                     lease_id, MAX_CONNECTIONS, LEASE_TTL)
 
-    # 订阅 Redis 频道
-    channel = _get_notification_channel(user_id)
-    pubsub = redis_client.pubsub()
-    pubsub.subscribe(channel)
+        if not await asyncio.to_thread(renew):
+            await websocket.close(code=4008)
+            return
+        pubsub = redis_client.pubsub()
+        await asyncio.to_thread(pubsub.subscribe, _get_notification_channel(user_id))
+        await websocket.accept()
+        last_seen = time.monotonic()
 
-    try:
-        import asyncio
+        async def receive():
+            nonlocal last_seen
+            while True:
+                message = await websocket.receive_text()
+                if message != '{"type":"pong"}':
+                    await websocket.close(code=4008)
+                    return
+                last_seen = time.monotonic()
 
-        while True:
-            # 在线程中获取 Redis 消息（避免阻塞事件循环）
+        receiver = asyncio.create_task(receive())
+        checked = 0.0
+        heartbeat = 0.0
+        while not receiver.done():
+            now = time.monotonic()
+            if now - last_seen > LEASE_TTL:
+                await websocket.close(code=4008)
+                break
+            if now - checked >= 5:
+                if await asyncio.to_thread(_active_user, token) != user_id or not await asyncio.to_thread(renew):
+                    await websocket.close(code=4001)
+                    break
+                checked = now
+            if not decode_access_token(token):
+                await websocket.close(code=4001)
+                break
+            if now - heartbeat >= 25:
+                await websocket.send_json({"type": "ping"})
+                heartbeat = now
             message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
-
             if message and message["type"] == "message":
-                # 推送消息给客户端
-                data = message["data"]
-                if isinstance(data, bytes):
-                    data = data.decode("utf-8")
-                await websocket.send_text(data)
-
-            # 检查 WebSocket 是否仍连接
-            # WebSocketDisconnect 会在 send 时抛出
-
+                if await asyncio.to_thread(_active_user, token) != user_id:
+                    await websocket.close(code=4001)
+                    break
+                value = message["data"]
+                await websocket.send_text(value.decode() if isinstance(value, bytes) else value)
+            await asyncio.sleep(0.05)
     except WebSocketDisconnect:
-        logger.info(f"WebSocket 断开: user_id={user_id}")
-    except Exception as e:
-        logger.error(f"WebSocket 异常: user_id={user_id}, error={e}")
-    finally:
-        # 清理 Redis 订阅
+        pass
+    except Exception:
+        logger.warning("通知连接因依赖或认证异常关闭")
         try:
-            pubsub.unsubscribe(channel)
-            pubsub.close()
+            await websocket.close(code=1013)
         except Exception:
             pass
-        logger.info(f"WebSocket 连接清理完成: user_id={user_id}")
+    finally:
+        if receiver:
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+        if pubsub:
+            try:
+                await asyncio.to_thread(pubsub.close)
+            except Exception:
+                pass
+        if lease_key:
+            try:
+                await asyncio.to_thread(redis_client.zrem, lease_key, lease_id)
+            except Exception:
+                pass

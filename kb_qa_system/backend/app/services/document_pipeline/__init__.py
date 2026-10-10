@@ -36,10 +36,6 @@
     # ctx.chunks 可直接传给 VectorStoreService.add_chunks
 """
 
-from app.services.document_pipeline.pipeline import (
-    DocumentPipeline,
-    get_document_pipeline,
-)
 from app.services.document_pipeline.context import (
     PipelineContext,
     ProcessedChunk,
@@ -59,3 +55,11 @@ __all__ = [
     "ExtractedTable",
     "ExtractedImage",
 ]
+
+
+def __getattr__(name):
+    # Parser/resource-only callers do not need the embedding/chunking stack.
+    if name in {"DocumentPipeline", "get_document_pipeline"}:
+        from app.services.document_pipeline import pipeline
+        return getattr(pipeline, name)
+    raise AttributeError(name)

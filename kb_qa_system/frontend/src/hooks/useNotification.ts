@@ -34,6 +34,7 @@ import { useEffect, useRef } from "react";
 import { TOKEN_STORAGE_KEY } from "@/utils/constants";
 import { useAuthStore } from "@/store/authStore";
 import { useToastStore } from "@/store/toastStore";
+import { apiClient } from '@/api/client';
 
 /** 通知类型 → Toast 类型映射 */
 const NOTIFICATION_TYPE_MAP: Record<string, "success" | "error" | "warning" | "info"> = {
@@ -125,6 +126,7 @@ function getAccessToken(): string | null {
  */
 export function useNotification(): void {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const accessToken = useAuthStore((state) => state.tokens?.access_token);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef<number>(INITIAL_RECONNECT_DELAY);
@@ -142,6 +144,16 @@ export function useNotification(): void {
     }
 
     isManualCloseRef.current = false;
+    let disposed = false;
+    const controller = new AbortController();
+    const retry = () => {
+      if (disposed) return;
+      const delay = Math.min(reconnectDelayRef.current, MAX_RECONNECT_DELAY);
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectDelayRef.current = Math.min(delay * 2, MAX_RECONNECT_DELAY);
+        void connect();
+      }, delay);
+    };
 
     /**
      * 建立 WebSocket 连接
@@ -150,9 +162,15 @@ export function useNotification(): void {
      *   创建 WebSocket 实例，绑定 onmessage/onclose/onerror 事件处理器。
      *   连接断开时按指数退避策略自动重连。
      */
-    const connect = (): void => {
+    const connect = async (): Promise<void> => {
+      let ticket: string;
+      try {
+        const result = await apiClient.post<{ ticket: string }>('/auth/ws-ticket', {}, { signal: controller.signal });
+        if (disposed) return;
+        ticket = result.ticket;
+      } catch { retry(); return; }
       const wsUrl = buildWebSocketUrl(getAccountServer());
-      const url = `${wsUrl}?token=${encodeURIComponent(token)}`;
+      const url = `${wsUrl}?ticket=${encodeURIComponent(ticket)}`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
@@ -160,6 +178,7 @@ export function useNotification(): void {
       ws.onmessage = (event: MessageEvent) => {
         try {
           const notification = JSON.parse(event.data);
+          if (notification?.type === 'ping') { ws.send('{"type":"pong"}'); return; }
           const type = notification?.type ?? "system";
           const message = notification?.message ?? "";
           const toastType = NOTIFICATION_TYPE_MAP[type] ?? "info";
@@ -183,22 +202,12 @@ export function useNotification(): void {
         wsRef.current = null;
 
         // 手动关闭（组件卸载/登出）时不重连
-        if (isManualCloseRef.current) {
+        if (disposed || isManualCloseRef.current) {
           return;
         }
 
         // 指数退避重连：1s → 2s → 4s → 8s → 16s → 30s
-        const delay = Math.min(
-          reconnectDelayRef.current,
-          MAX_RECONNECT_DELAY
-        );
-        reconnectTimerRef.current = setTimeout(() => {
-          reconnectDelayRef.current = Math.min(
-            reconnectDelayRef.current * 2,
-            MAX_RECONNECT_DELAY
-          );
-          connect();
-        }, delay);
+        retry();
       };
 
       // 连接成功时重置重连延迟
@@ -212,10 +221,12 @@ export function useNotification(): void {
       };
     };
 
-    connect();
+    void connect();
 
     // 清理函数：组件卸载或 isAuthenticated 变为 false 时执行
     return () => {
+      disposed = true;
+      controller.abort();
       isManualCloseRef.current = true;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
@@ -226,5 +237,5 @@ export function useNotification(): void {
         wsRef.current = null;
       }
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, accessToken]);
 }

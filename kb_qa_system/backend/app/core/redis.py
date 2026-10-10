@@ -391,6 +391,19 @@ end
 """
 
     @staticmethod
+    def set_once_strict(key: str, value: str, ttl: int) -> bool:
+        """Security writes: NX rejects replay; connection failures must propagate."""
+        return bool(redis_client.set(RedisManager.make_key(key), value, nx=True, ex=ttl))
+
+    @staticmethod
+    def set_many_strict(entries: list[tuple[str, str, int]]) -> bool:
+        """Confirm all revocation tombstones in one Redis transaction."""
+        with redis_client.pipeline(transaction=True) as pipeline:
+            for key, value, ttl in entries:
+                pipeline.set(RedisManager.make_key(key), value, ex=ttl)
+            return all(pipeline.execute())
+
+    @staticmethod
     def acquire_lock(key: str, ttl: int) -> Optional[str]:
         """
         获取分布式锁（H-2 修复）

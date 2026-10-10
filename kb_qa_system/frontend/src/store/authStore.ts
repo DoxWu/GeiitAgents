@@ -27,6 +27,7 @@ import { USER_STORAGE_KEY } from "@/utils/constants";
 import { safeStorage } from "@/utils/safeStorage";
 import type { TokenResponse, UserResponse, LoginRequest } from "@/types/user";
 import { useDocumentStore } from "@/store/documentStore";
+import { useToastStore } from "@/store/toastStore";
 
 /** 认证 Store 状态接口 */
 interface AuthState {
@@ -167,7 +168,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       // 尝试通知后端登出（失败不阻塞）
       await authApi.logout();
     } catch {
-      // 忽略登出请求失败
+      if (generation === getAccountGeneration()) useToastStore.getState().addToast({
+        type: 'warning', title: '服务器未确认注销',
+        description: '本机登录信息已清除。服务器会话可能仍有效，请在网络恢复后重新登录并注销。',
+      });
     } finally {
       if (generation === getAccountGeneration()) {
       // 修复问题3：登出时重置 documentStore，清除前一个用户的分支/文档数据，
