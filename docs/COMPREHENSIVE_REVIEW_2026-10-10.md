@@ -2,6 +2,8 @@
 
 审查日期：2026-10-10（Asia/Shanghai）。审查基线：`develop/geiit-agents`，`807459e`。本次目标是发现问题并提供选择清单；没有修改业务代码、线上服务、用户数据或模型配置，没有发布、推送或重新制作安装包。
 
+补查版本：2026-10-10，在首轮审查提交 `1ef8f1a` 上复核，业务源码与上述基线一致。新增 **A29–A34 六项**及六组隔离复现，详见“补查：新增问题与证据”。下文原有全量测试、构建、浏览器和性能数字均为首轮结果，补查没有重跑这些项目，也没有实施修复。文档中的建议不是执行授权。
+
 结论：项目已经具备较完整的桌面办公和知识库核心功能，本次前端、后端、Rust 回归及两类备份恢复验证通过，但不能据此视为完成正式上线验收。优先处理认证一致性、云端向量空间约束、账号删除与隐私承诺、生产 Web 配置和敏感文件门禁，再安排完整压力、兼容性、故障和回滚验收。下文的 P0 是建议在正式上线前解决的事项，不表示现在需要操作生产。
 
 ## 证据与边界
@@ -33,14 +35,14 @@
 | --- | --- | --- | --- |
 | 1. 功能、内容、业务完整性 | 工作台对话、工具任务/成果版本、图表、笔记待办、文件整理、手动/条件工作流、本机定时触发、账号可选与模型直连均有入口和回归；云端知识库与桌面本地库分别管理 | FAQ 只有开关/Redis key，无业务读写接线；旧功能清单仍将其列为完成。早期 DOCX→PDF、任意 Office 保真、服务端工作流任务 API 等方案不能当作已实现。帮助/接手文档部分过期 | A20、A22、A23 |
 | 2. 搜索和查找体验 | 文件列表 300ms 防抖、中文 IME、历史和排序；云端有向量/英文关键词/中文 bigram、混合检索、权限交集、可选重排；本地 E5 来源定位与跨语种基准完成 | 文件列表迟到响应覆盖最新搜索；搜索历史跨账号共享。文件列表搜索是标题匹配，不是全文相关性排序；本地固定 Top 5 无低相关拒答阈值/高级筛选。云端向量缓存/降级缺少空间约束 | A02、A09、A10、A12、A24 |
-| 3. 权限和安全 | API Access/Refresh 类型区分、bcrypt、Redis 黑名单 fail-closed；SQL 值参数化/排序白名单；Markdown 不接原始 HTML；原生目录授权和摘要核验；SSRF 本机/内网/元数据/非 HTTP 样本全部拒绝 | WebSocket 没有账号状态/吊销检查；账号删除先删文件；QAEvent 保留正文不等于匿名化；本地知识库运行原文/向量未加密；Token localStorage 及四位口令需清楚说明安全边界 | A01、A03、A04、A10、A11、A25 |
-| 4. 性能、负载、压力 | 本次本地 E5 基准、Top 5 算法小基准、分页 10/50/100 并发测量完成，有延迟/吞吐/内存原始数据 | 没有生产等价 PostgreSQL/Redis/Celery/RAG 长时压力；未测 8 GB/大语料/极限备份/断电。现有 Locust 混合脚本会删除列表首条文档，不能直接用于已有数据环境 | A14、A21、A24、A27 |
+| 3. 权限和安全 | API Access/Refresh 类型区分、bcrypt、Redis 黑名单读取 fail-closed；SQL 值参数化/排序白名单；Markdown 不接原始 HTML；原生目录授权和摘要核验；SSRF 本机/内网/元数据/非 HTTP 静态样本拒绝 | WebSocket 没有账号状态/吊销检查；HTTP 吊销写入失败未处理、同秒 Token 不唯一；账号删除先删文件；QAEvent 保留正文不等于匿名化；本地知识库运行原文/向量未加密；URL 校验与连接存在 DNS 重解析窗口；Token localStorage 及四位口令需清楚说明安全边界 | A01、A03、A04、A10、A11、A25、A29、A30、A32 |
+| 4. 性能、负载、压力 | 本次本地 E5 基准、Top 5 算法小基准、分页 10/50/100 并发测量完成，有延迟/吞吐/内存原始数据 | 没有生产等价 PostgreSQL/Redis/Celery/RAG 长时压力；未测 8 GB/大语料/极限备份/断电。现有 Locust 混合脚本会删除列表首条文档，不能直接用于已有数据环境；网页图片完整读取后才检查大小，恶意输入资源预算需单独验收 | A14、A21、A24、A27、A33 |
 | 5. 多端兼容性 | Chromium 桌面和 390px、Windows Rust 命令测试通过；桌面默认 Windows/NSIS | Firefox/WebKit 二进制未安装；没有 Safari 真机、Android/iOS、macOS/Linux、当前 dev.68 WebView2 安装升级验证；现代 AbortSignal.any 等 API 需明确最低版本 | A15、A19 |
 | 6. 系统集成 | 模型目录/取消/超时、四种生成路径、账号服务器切换与 Token 绑定、邮件 outbox/unknown 状态、维护 API 均有实现和隔离回归 | CSP 与自定义账号/供应商端点冲突；Nginx 无 `/ws/notifications` Upgrade 反代；云端 embedding 默认参数/降级兼容有风险；模板没有启动 Celery beat；真实 provider/邮件未验 | A02、A05、A06、A26、A28 |
-| 7. 备份、恢复、迁移 | PostgreSQL 加密多版本、临时库恢复校验、空目标保护、独立持久任务和本次真实 PG 回归；工作台整库/本地知识库各有独立加密备份 | 数据库备份不包含上传文件/PVC/配置；工作台备份不包含向量库/云数据/外部文件；没有完整业务联合恢复、大容量/低内存/旧版本迁移验收 | A13、A18、A19、A27 |
+| 7. 备份、恢复、迁移 | PostgreSQL 加密多版本、临时库恢复校验、空目标保护、独立持久任务和本次真实 PG 回归；工作台整库/本地知识库各有独立加密备份 | 数据库备份不包含上传文件/PVC/配置；工作台备份不包含向量库/云数据/外部文件；没有完整业务联合恢复、大容量/低内存/旧版本迁移验收；覆盖上传失败可能使旧文档不可见，账号总导出遗漏个人模块 | A13、A18、A19、A27、A31、A34 |
 | 8. 监控、日志、告警 | /live 与 /ready 分离，请求编号、RAG 指标、独立 ops 告警状态与冷却；备份/告警测试通过 | HTTP 路径 label 在路由匹配前提取，复现 3 个 ID→3 个 label；SSE HTTP 耗时/在途只覆盖响应头。Alertmanager 使用未渲染环境占位符；日志异常脱敏不统一；beat 未启动会使定期清理和提醒不执行 | A06、A16、A17、A25 |
 | 9. 上线、回滚、仓库内容 | 开发分支与旧 main 分离，CI 容器构建门禁、不可变 SHA 方案、Sealos 单副本/RWO/Recreate 模板、Secret 示例/忽略规则已有 | 灰度/回滚/在线迁移 README 链接目标缺失；无回滚实测；破坏性 downgrade 不能作为默认回退。Docker COPY 与 .dockerignore 的 env 规则不完整，Git 未排除任意备份包/配置；前端 prod sourcemap 与开发定位标记进入产物 | A07、A08、A18、A19、A21、A25 |
-| 10. 用户引导、帮助与合规 | 公开帮助/隐私/协议、账号导出删除、逐次云端片段/附件授权、恢复预览与确认已有 | 隐私承诺与 QA 正文、审计身份残留、备份保留、超管访问、本地库明文不一致；帮助仍要求先注册并描述永久删除/不存在的反馈入口；缺实际处理者联系方式、供应商/跨境/保留流程与依赖许可清单 | A03、A11、A20、A22、A28 |
+| 10. 用户引导、帮助与合规 | 公开帮助/隐私/协议、账号导出删除、逐次云端片段/附件授权、恢复预览与确认已有 | 隐私承诺与 QA 正文、审计身份残留、备份保留、超管访问、本地库明文不一致；账号总导出未覆盖个人模块；帮助仍要求先注册并描述永久删除/不存在的反馈入口；缺实际处理者联系方式、供应商/跨境/保留流程与依赖许可清单 | A03、A11、A20、A22、A28、A34 |
 
 ## 改动建议清单（由用户选择执行）
 
@@ -76,6 +78,12 @@ P0：建议正式上线前处理。P1：下一轮可靠性/体验/验收。P2：
 | A26 | P1 / S | 补同源 WebSocket 反代 Upgrade/Connection 与空闲超时策略，增加端到端通知测试 | Web 同源 `/ws/notifications` 获得 101 并能接收 fixture 通知；断开/退出取消订阅；不回退到 SPA HTML |
 | A27 | P1 / L | 验证 8 GB 无独显、1000–2000 片段、接近 16 MiB 工作台/24 MiB 备份；跨物理卷/网络盘、强杀、断电与索引恢复 | 冷/热启动、峰值内存、UI 卡顿、失败保留旧数据、恢复时长有测量；按结果决定分块备份/断点索引和原子文件写入 |
 | A28 | P1 / M，需业务/供应商信息 | 对用户选定 provider、邮件与数据处理政策做正式联调和核查；隐私告知覆盖自选端点/片段出站/保留及可能的跨境，许可证审查独立于漏洞扫描 | 未授权数据不会出站；401/429/超时/截断/视觉/工具与 unknown 投递可追踪；供应商处理区域/期限/合同与真实操作流程匹配；不宣称代码审查即完成法律合规认证 |
+| A29 | P1 / S | Access/Refresh Token 每次签发加入随机唯一 jti，保持类型和有效期校验；与 A30 一起验证轮换 | 同账号同秒两次签发不同 Token；登录后立即刷新，返回的新 Refresh Token 不在旧 Token 黑名单中；不同会话注销互不误伤 |
+| A30 | P0 / M | 将认证吊销写入改为严格确认成功，刷新时旧 Token 未成功消费不得返回新 Token；明确登出失败状态，检查黑名单持久性和轮换原子性 | 黑名单读取成功但写入返回 False/抛错时不得返回成功；旧 Refresh Token 不能反复换取新 Token；Redis 故障恢复后无已确认注销会话复活；覆盖并发和锁到期 |
+| A31 | P0 / M | 覆盖上传先完成目录/权限/参数校验，旧文档替换与新记录建立采用一致事务或可恢复版本切换；失败清理临时文件，旧向量保留至新版本可用 | 相同内容选择 overwrite，目标目录不存在/无权、DB 提交失败、任务发布或解析失败时旧文档仍可访问检索；成功后只切换一次，无孤儿上传文件 |
+| A32 | P0 / M | 网页及图片抓取绑定已校验的公网 IP，正确保留 Host/TLS SNI；重定向每跳重新校验并绑定，明确环境代理与出口策略 | DNS 首次公网、连接时变内网的合成场景在传输前拒绝；覆盖 IPv4/IPv6/混合 DNS、跳转、代理；保留模型 relay 已有固定 IP 防护，不限制用户主动选择的客户端本机模型直连 |
+| A33 | P1 / M | 网页图片改为有累计上限的流式读取，并补总下载时限、关闭响应及解析资源预算；单文件压缩大小不能代替解压/像素/页数限制 | 缺失/虚假 Content-Length、分块/压缩响应超限时提前中止；小体积高解压比 DOCX、超大像素图片及复杂 PDF 有受限隔离用例；不以真实 OOM 作为验收方式 |
+| A34 | P1 / M | 明确账号导出的覆盖矩阵，纳入服务端笔记、待办、提醒及投递历史，或提供明确的分模块导出入口；区分账号导出、工作台备份和完整业务恢复 | 带各模块合成数据的导出可逐项核对；归档/软删除范围及原文附件排除明确；大账号分批/流式导出有一致快照、容量限制与 no-store；不能将仅 account/documents/conversations 宣称为全部个人数据 |
 
 ## 关键问题的具体依据
 
@@ -97,7 +105,27 @@ P0：建议正式上线前处理。P1：下一轮可靠性/体验/验收。P2：
 
 **A07/A25：Git 忽略与镜像忽略是两道独立边界。** 当前 Git 能忽略真实 env、secret.yaml、.tools、dev target、密钥库归档，但探测 `backups/private.dump/.sql/.zip`、无扩展 kubeconfig、credentials.json 没被忽略。后端 Dockerfile `COPY . /app`，后端 .dockerignore 只列 .env/.env.local/.env.*.local/.env.ops，缺 .env.production/.env.staging 等；Git 忽略不能阻止 Docker COPY。前端 `sourcemap: hidden` 仍输出 map，Docker 复制整个 dist；Vite 始终启用 react-dev-locator，本次产物 DOM 有源文件和开发 cwd 标记。不能把示例 `init-db.sql` 或经过审核的 `.env.desktop` 一刀切删除；需要明确允许列表。
 
-## 性能与检索质量的本次数据
+## 补查：新增问题与证据（2026-10-10）
+
+本轮以实际函数体执行和调用链复核补查，六组检查均得到预期的问题复现结果；这表示确认缺陷或覆盖缺口，**不表示修复通过**。脚本用 AST 提取原函数体，仅移除装饰器、默认依赖参数及立即求值的类型标注；数据库/Redis/身份为合成边界，上传只写审查目录内临时文件。没有启动真实账号请求、PostgreSQL、Redis、收费模型或邮件，也没有做生产渗透测试。
+
+本机复现命令：`python .tools/audit-20261010/supplement_review.py`；结果：`.tools/audit-20261010/supplement-review.json`。文件处于忽略目录，未随文档提交；复现需本机脚本及 Python 的 fastapi/python-jose/requests 依赖。后续按 A21 将脱敏的必要用例纳入正式回归，不能以本轮函数级 fixture 代替完整 HTTP/事务集成。
+
+**A29：同秒签发会产生相同 Token，可能返回已经被吊销的“新” Token。** [security.py:79](../kb_qa_system/backend/app/core/security.py#L79) 和 [security.py:164](../kb_qa_system/backend/app/core/security.py#L164) 仅加入 type/exp，没有随机 jti；JWT 日期编码到秒。固定同一秒的 100ms/900ms 两次签发，Access 与 Refresh 均完全相同。进一步执行实际 refresh 函数：同一秒内登录后立即刷新，返回的 Refresh Token 等于刚被拉黑的旧 Token，再用它刷新得到 401。触发条件是同用户、同 payload、同有效期且落在同一秒，不能泛称所有刷新都失败。常规等待 Access Token 到期后的刷新不属于此同秒触发场景。
+
+**A30：黑名单读取 fail-closed 不等于吊销写入可靠。** [security.py:242](../kb_qa_system/backend/app/core/security.py#L242) 返回 `RedisManager.set` 的布尔结果；[redis.py:122](../kb_qa_system/backend/app/core/redis.py#L122) 捕获写入异常后返回 False。[auth.py:540](../kb_qa_system/backend/app/api/routes/auth.py#L540) 的轮换及 [auth.py:623](../kb_qa_system/backend/app/api/routes/auth.py#L623) 的登出均忽略该结果。模拟锁/读取正常、吊销写入 False，同一旧 Refresh Token 连续两次调用都返回新凭证，登出也返回成功。这是“读成功但写失败”或操作间故障的条件，不是断言 Redis 完全不可用时认证还能通过；也没有绕过 JWT 签名。A01 的 WS 修复不能覆盖此 HTTP 缺口，A29 的 jti 修复也不能代替写入确认。
+
+**A31：覆盖失败可先破坏旧文档可用性，甚至无需数据库故障。** [documents.py:414](../kb_qa_system/backend/app/api/routes/documents.py#L414) 先软删除并 commit 旧文档，再调用删除旧向量；[documents.py:456](../kb_qa_system/backend/app/api/routes/documents.py#L456) 随后才检查目标分支存在性，新文档在更后面建立。使用实际上传函数、真实合成临时文件、旧文档/不存在目录 fixture：返回 `400 FOLDER_NOT_FOUND` 时已提交旧文档删除、调用旧向量删除，且新上传文件仍遗留。这里确认的是旧文档被隐藏/失去检索且替换未完成，没有证明旧原文件已物理永久丢失。A04 仅处理账号注销，不能自动解决覆盖上传事务。
+
+**A32：已有 SSRF 地址检查没有绑定网页抓取的实际连接 IP。** [url_validator.py:226](../kb_qa_system/backend/app/core/url_validator.py#L226) 校验一次 DNS 后返回原始域名 URL；[parsers.py:301](../kb_qa_system/backend/app/services/document_pipeline/parsers.py#L301) 随后用 `requests.get(url)` 再解析，图片下载亦走域名。补查让受控 DNS 首次返回公网、第二次返回回环，实际 requests 传输尝试连接第二个地址；socket.connect 在进入操作系统前被拦截，真实连接次数为 0。fixture 关闭环境代理以隔离直接连接路径，真实部署能否利用还取决于 DNS 缓存、代理和出口网络；首轮静态 IP 拒绝样本不覆盖此窗口。已有 [private_model.py:22](../kb_qa_system/backend/app/services/private_model.py#L22) 模型 relay 采取解析一次后固定公网 IP 的独立防护，本结论不应扩大到全部出站路径。
+
+**A33：网页图片的大小检查发生在完整载入内存之后。** [parsers.py:631](../kb_qa_system/backend/app/services/document_pipeline/parsers.py#L631) 虽传 `stream=True`，随后 [parsers.py:673](../kb_qa_system/backend/app/services/document_pipeline/parsers.py#L673) 读取 `response.content`，之后才检查长度。无 Content-Length 的合成响应中，上限 64 字节、内容 128 字节，函数先物化全部 128 字节再拒绝；本轮未制造大包或 OOM。应区别于 HTML 正文已有的 iter_content 累计限制。DOCX 解压、PDF 页数/渲染、图像像素和总处理时限属于同条验收扩展：本轮仅静态发现服务端 DOCX 直接交给 python-docx，未执行压缩炸弹或证明所有解析器均可耗尽资源；前端 DOCX 导入已有自己的解压预算，不能概括为两端都没有限制。
+
+**A34：账号“全部个人数据”导出仍是旧模块范围。** [auth.py:846](../kb_qa_system/backend/app/api/routes/auth.py#L846) 的返回结构经实际函数执行确认为 account/documents/conversations/exported_at；查询只包含未删除文档元数据和活跃对话，未接入服务端 Note/Todo/Reminder/ReminderDelivery。提醒已另有 [personal.py:255](../kb_qa_system/backend/app/api/routes/personal.py#L255) 导出接口（有数量/体积限制），因此不是“提醒没有导出能力”；问题是总导出承诺、入口和范围不一致。本轮用空集合 fixture 验证结构、源码核对查询范围，尚未运行含各模块数据的完整账号导出集成。客户端加密工作台/本地向量库仍应分别导出，不能让服务器导出承诺涵盖未上传的本机数据。
+
+补充后的实施次序建议：A30/A32 与 A01 一起处理认证和服务端出站边界；A31 与 A04 一起处理数据一致性；A29 随认证模块修复；A33/A34 纳入资源保护和数据导出模块。此顺序供选择，不代表本轮已修改应用或启动部署。
+
+## 性能与检索质量的首轮数据
 
 设备：Windows 11、Ryzen AI 9 HX 370、24 逻辑处理器、29,654,634,496 字节内存（约 27.6 GiB）。本地推理为 Transformers.js 单线程 CPU/WASM、固定默认 E5 q8。48 问中中文 24 问、英文问中文资料 24 问，均是合成办公制度语料。
 
