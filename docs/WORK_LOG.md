@@ -749,5 +749,5 @@
 - 上传路径复核：`effective_visibility` 与 `effective_folder_id` 均在文件写入前赋值；指定目录在保存前验证存在及归属权限，未发现未定义变量或绕过校验的路径。
 - 本次收尾定向验证：生命周期与上传冲突测试 **47 项通过**；新增服务/模型/迁移及对应测试的 Ruff 检查通过；`git diff --check` 通过。首次直接调用使用了无项目依赖的系统 Python，且 Windows 用户级 TEMP 目录受 ACL 限制；最终通过 `.tools` 隔离依赖、合法的临时 `DEBUG=false` 和仓库内 basetemp 完成测试。这些环境失败不计为项目用例失败。
 - 本轮实现阶段全量验证仍以本节当前状态及 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md) 所列为准：后端 **658 通过 / 16 跳过**、前端 **130 文件 / 1262 项通过**，check/lint/Web build、Compose、Sealos Kustomize、Alembic 单一 head 和改动 Python 文件检查通过。没有据此宣称完成线上/容器部署或真实服务验收。
-- Git：`git fetch agents develop/geiit-agents` 成功，刚获取的远端提交为 `f8ea869`，与本地 HEAD 相同；远端分支没有领先提交。本地修复提交尚待创建并普通推送，禁止强推且不修改 `main`。
+- Git：本轮修复提交为 `db5c2a8`，已普通推送至 `agents/develop/geiit-agents`；推送后 `git ls-remote`、重新 fetch 和本地跟踪分支均确认远端 SHA 为 `db5c2a8`。远端旧 `main` 未修改，未强推。该日志收尾更新会另作普通提交并同步。
 - 未完成项：A08 仍受 npm audit 镜像 API `404 NOT_IMPLEMENTED` 阻断；来源无法确认的旧云端向量须迁移后显式重处理；目标数据库尚未迁移。真实 Redis/通知、provider、SMTP、公开反馈联系方式与政策核查按约定留到最后，其他容器、桌面升级、备份恢复及部署验收未执行。
