@@ -295,7 +295,7 @@ class TestRateLimitIdentifier(unittest.TestCase):
         # H-11 修复：X-Forwarded-For 仅在直连 IP 属于可信代理时才使用
         # 作用：防止客户端伪造 X-Forwarded-For 绕过限流
         # 场景：直连 IP 127.0.0.1 是可信代理，X-Forwarded-For 含真实客户端 IP
-        with patch.object(settings, 'TRUSTED_PROXIES', '127.0.0.1'):
+        with patch.object(settings, 'TRUSTED_PROXIES', '127.0.0.1,10.0.0.0/8'):
             req = self._make_mock_request(
                 headers={"X-Forwarded-For": "203.0.113.50, 10.0.0.1"},
                 client_host="127.0.0.1"
@@ -308,7 +308,7 @@ class TestRateLimitIdentifier(unittest.TestCase):
         from app.core.rate_limit import _get_identifier
         from app.core.config import settings
         # 直连 IP 不在可信代理列表，X-Forwarded-For 应被忽略，使用直连 IP
-        with patch.object(settings, 'TRUSTED_PROXIES', '127.0.0.1'):
+        with patch.object(settings, 'TRUSTED_PROXIES', '127.0.0.1,10.0.0.0/8'):
             req = self._make_mock_request(
                 headers={"X-Forwarded-For": "203.0.113.50"},
                 client_host="198.51.100.20"

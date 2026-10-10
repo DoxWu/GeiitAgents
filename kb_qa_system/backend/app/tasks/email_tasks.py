@@ -85,6 +85,8 @@ def send_email_task(self, email_log_id: int) -> dict:
             logger.info(f"邮件已发送，跳过（email_log_id={email_log_id}）")
             return {"email_log_id": email_log_id, "status": "already_sent"}
 
+        if log.status == "cancelled" or not log.html_body:
+            return {"email_log_id": email_log_id, "status": "cancelled"}
         # 记录 Celery 任务 ID
         log.celery_task_id = self.request.id
         db.commit()

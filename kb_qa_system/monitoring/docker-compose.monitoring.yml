@@ -12,15 +12,15 @@
 #
 # 使用方式：
 #     启动监控栈：
-#     docker-compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+#     docker compose --env-file monitoring/.env -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
 #
 #     仅启动监控（需主服务已在运行）：
-#     docker-compose -f monitoring/docker-compose.monitoring.yml up -d
-#     （需确保监控容器与主服务在同一 Docker 网络）
+#     docker compose --env-file monitoring/.env --project-directory . -f monitoring/docker-compose.monitoring.yml up -d
+#     （project-directory 必须与主 Compose 项目目录相同）
 #
 # 访问地址：
 #     Prometheus:   http://localhost:9090
-#     Grafana:      http://localhost:3001 (admin/admin)
+#     Grafana:      http://localhost:3001 (admin / GRAFANA_ADMIN_PASSWORD)
 #     Alertmanager: http://localhost:9093
 #     Loki:         http://localhost:3100 (API，无 UI)
 #
@@ -36,19 +36,23 @@ services:
   # Prometheus 指标采集
   # --------------------------------------------
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.1
     container_name: kb_qa_prometheus
     restart: unless-stopped
+    environment:
+      PROMETHEUS_AUTH_USER: ${PROMETHEUS_AUTH_USER:-prometheus}
+      PROMETHEUS_AUTH_PASSWORD: ${PROMETHEUS_AUTH_PASSWORD:-}
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       # Prometheus 配置和告警规则
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       # 数据持久化
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--config.expand-env"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
       - "--web.console.libraries=/etc/prometheus/console_libraries"
@@ -62,18 +66,15 @@ services:
   # Grafana 可视化面板
   # --------------------------------------------
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.4.0
     container_name: kb_qa_grafana
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      # 默认管理员账号（仅开发环境，生产环境务必修改）
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      # 允许匿名访问（仅开发环境，生产环境设为 false）
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     volumes:
       # 数据源和面板自动配置
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -93,23 +94,24 @@ services:
   #           发送到 Alertmanager → 按路由分组 → 邮件通知管理员
   # SMTP 配置复用项目 Resend 邮件服务（通过环境变量注入）
   alertmanager:
-    image: prom/alertmanager:latest
+    build:
+      context: ./monitoring
+      dockerfile: alertmanager/Dockerfile
+    image: geiit/alertmanager-rendered:v0.28.1
     container_name: kb_qa_alertmanager
     restart: unless-stopped
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
     volumes:
-      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--storage.path=/alertmanager"
-    # SMTP 配置通过环境变量注入（复用 Resend 邮件配置）
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml.template:ro
+      - alertmanager_data:/alertmanager
+    # SMTP 配置通过监控专用环境文件注入；entrypoint renders a private config.
     # 作用：Alertmanager 读取这些变量替换 alertmanager.yml 中的 ${VAR} 占位符
     environment:
       ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-admin@example.com}
       ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-GeiIt企业知识库 <onboarding@resend.dev>}
       SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
-      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-resend}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     depends_on:
@@ -124,14 +126,14 @@ services:
   # 特点：只索引日志标签（metadata）不索引全文，存储成本远低于 ELK
   # 查询语言：LogQL（类似 PromQL，支持过滤、聚合、正则匹配）
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.3.2
     container_name: kb_qa_loki
     restart: unless-stopped
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       # Loki 配置文件
-      - ./loki-config.yml:/etc/loki/local-config.yaml:ro
+      - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
       # 数据持久化（日志块、索引、压缩数据）
       - loki_data:/loki
     command:
@@ -153,14 +155,14 @@ services:
   # 工作流程：监听 docker.sock → 发现 kb_qa_* 容器 → 读取 JSON 日志 → 解析标签 → 推送 Loki
   # 依赖：需挂载 /var/run/docker.sock 和 /var/lib/docker/containers
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.3.2
     container_name: kb_qa_promtail
     restart: unless-stopped
     ports:
-      - "9080:9080"  # Promtail Web UI（查看采集状态和targets）
+      - "127.0.0.1:9080:9080"  # Promtail target status
     volumes:
       # Promtail 配置文件
-      - ./promtail.yml:/etc/promtail/config.yml:ro
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
       # Docker socket：用于容器自动发现
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # 容器日志目录：Docker json-file 驱动日志存储位置
@@ -182,6 +184,7 @@ volumes:
   grafana_data:       # Grafana 配置和用户数据
   loki_data:          # Loki 日志块和索引（7 天保留，由 loki-config.yml 配置）
   promtail_data:      # Promtail positions 文件（记录日志读取位置）
+  alertmanager_data:  # Alertmanager silences and notification state
 
 # ============================================
 # 网络

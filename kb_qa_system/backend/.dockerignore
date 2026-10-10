@@ -19,6 +19,20 @@ ENV/
 .env.local
 .env.*.local
 .env.ops
+.env.*
+!.env.example
+backups/
+backup/
+*.dump
+*.sql.gz
+*.backup*
+kubeconfig*
+credentials*.json
+*.pem
+*.key
+secrets.json
+.aws/
+.kube/
 
 # 测试与覆盖率
 .pytest_cache/

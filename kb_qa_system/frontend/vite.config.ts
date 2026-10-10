@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   // The default browser entry uses document.createElement, which cannot run in
   // the DOCX Worker. The table-based entry also works in the main page and dev.
   resolve: { alias: { 'decode-named-character-reference': require.resolve('decode-named-character-reference') } },
@@ -17,13 +17,13 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**'] },
   },
   build: {
-    sourcemap: 'hidden',
+    sourcemap: false,
     // 优化2：显式配置 modulePreload
     // 作用：入口 chunk 的依赖 chunk 会通过 <link rel="modulepreload"> 预加载
     // polyfill: false → 不注入 modulepreload polyfill（~600 bytes）
     //   理由：目标浏览器（Chrome 61+/Firefox 60+/Safari 10.1+）原生支持 modulepreload，
     //         polyfill 仅为兼容已废弃的旧 Edge，本项目浏览器范围不需要
-    modulePreload: { polyfill: false },
+    modulePreload: { polyfill: true },
     // 资源文件名哈希（长期缓存策略）
     rollupOptions: {
       output: {
@@ -53,7 +53,7 @@ export default defineConfig({
     react({
       babel: {
         plugins: [
-          'react-dev-locator',
+          ...(command === 'serve' ? ['react-dev-locator'] : []),
         ],
       },
     }),
@@ -73,4 +73,4 @@ export default defineConfig({
         ]
       : []),
   ],
-})
+}))

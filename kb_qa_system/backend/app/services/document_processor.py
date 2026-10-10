@@ -40,7 +40,6 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from app.core.config import settings
-from app.services.document_pipeline.pipeline import get_document_pipeline
 from app.services.document_pipeline.context import PipelineContext
 from app.services.document_pipeline.parsers import (
     MarkdownParser,
@@ -48,7 +47,6 @@ from app.services.document_pipeline.parsers import (
     DocxParser,
     UrlParser,
 )
-from app.services.document_pipeline.chunker import TextChunker
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +92,14 @@ class DocumentProcessor:
 
         # 兼容接口使用的分块器
         # 作用：split_text 直接调用分块器
-        self.text_splitter = TextChunker().text_splitter
+        self._text_splitter = None
+
+    @property
+    def text_splitter(self):
+        if self._text_splitter is None:
+            from app.services.document_pipeline.chunker import TextChunker
+            self._text_splitter = TextChunker().text_splitter
+        return self._text_splitter
 
     # ============================================
     # 流水线接口（推荐）
@@ -133,6 +138,7 @@ class DocumentProcessor:
                 - ctx.quality_issues: 质量问题列表
                 - ctx.to_chunk_dicts(): 转为向量存储入参格式
         """
+        from app.services.document_pipeline.pipeline import get_document_pipeline
         pipeline = get_document_pipeline()
         return pipeline.process(
             file_path=file_path,

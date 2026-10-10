@@ -16,14 +16,14 @@
     符合项目"静态分析 + 行为测试，避免运行时依赖"策略。
 """
 
-import sys
-import os
-import types
-import logging
-import unittest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
 import importlib.util
+import logging
+import os
+import sys
+import types
+import unittest
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 # 添加项目根目录到 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,21 +55,16 @@ def _shared_task(*args, **kwargs):
 
 
 _celery.shared_task = _shared_task
-sys.modules.setdefault("celery", _celery)
 
 # Mock celery.utils.log（cleanup_tasks.py 使用 get_task_logger）
 _celery_utils = types.ModuleType("celery.utils")
-sys.modules.setdefault("celery.utils", _celery_utils)
 _celery_utils_log = types.ModuleType("celery.utils.log")
 _celery_utils_log.get_task_logger = lambda name: logging.getLogger(name)
-sys.modules.setdefault("celery.utils.log", _celery_utils_log)
 
 # Mock app.core.database（避免 create_engine 需要 psycopg 驱动）
 # 作用：SessionLocal 在测试中会被 patch 替换，此处仅提供占位
-_previous_database_module = sys.modules.get("app.core.database")
 _db_module = types.ModuleType("app.core.database")
 _db_module.SessionLocal = MagicMock()
-sys.modules.setdefault("app.core.database", _db_module)
 
 
 # ============================================
@@ -81,11 +76,22 @@ _cleanup_path = os.path.join(BACKEND_DIR, "app", "tasks", "cleanup_tasks.py")
 _spec = importlib.util.spec_from_file_location("app.tasks.cleanup_tasks", _cleanup_path)
 cleanup_module = importlib.util.module_from_spec(_spec)
 sys.modules["app.tasks.cleanup_tasks"] = cleanup_module
-_spec.loader.exec_module(cleanup_module)
-# cleanup_tasks has captured the mocked SessionLocal; do not leak this test-only
-# module into later tests that need the real SQLAlchemy Base/get_db exports.
-if _previous_database_module is None:
-    sys.modules.pop("app.core.database", None)
+_stubbed_modules = {
+    "celery": _celery,
+    "celery.utils": _celery_utils,
+    "celery.utils.log": _celery_utils_log,
+    "app.core.database": _db_module,
+}
+_previous_modules = {name: sys.modules.get(name) for name in _stubbed_modules}
+try:
+    sys.modules.update(_stubbed_modules)
+    _spec.loader.exec_module(cleanup_module)
+finally:
+    for name, module in _previous_modules.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 class TestCleanupExpiredData(unittest.TestCase):
@@ -197,7 +203,7 @@ class TestCleanupExpiredData(unittest.TestCase):
                     self.assertIsInstance(cutoff, datetime)
 
                 # 验证截止时间与保留期对应（允许几秒误差）
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 # 第 1 次：conversations，保留 90 天
                 conv_cutoff = calls[0].args[1]["cutoff"]
                 delta_days = (now - conv_cutoff).days

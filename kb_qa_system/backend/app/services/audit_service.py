@@ -30,6 +30,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from fastapi import Request
 
+from app.core.client_ip import get_client_ip
 from app.models.audit_log import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -123,23 +124,7 @@ class AuditService:
         返回：
             Optional[str] - 客户端 IP 地址
         """
-        try:
-            # 优先从 X-Forwarded-For 获取（取第一个 IP，即原始客户端）
-            forwarded_for = request.headers.get("X-Forwarded-For")
-            if forwarded_for:
-                return forwarded_for.split(",")[0].strip()
-
-            # 其次从 X-Real-IP 获取
-            real_ip = request.headers.get("X-Real-IP")
-            if real_ip:
-                return real_ip.strip()
-
-            # 最后使用直连 IP
-            if request.client:
-                return request.client.host
-        except Exception:
-            pass
-        return None
+        return get_client_ip(request)
 
     def _get_user_agent(self, request: Request) -> Optional[str]:
         """

@@ -290,6 +290,31 @@ async def upload_document(
     # 生产环境建议：接入 ClamAV 或云厂商内容安全服务对上传文件做异步扫描，
     #   扫描完成前文档状态保持 pending_scan，扫描通过后才进入处理流水线
 
+    # 校验可见性（普通用户请求 public 会被降级为 private）
+    effective_visibility = permission_service.validate_visibility(visibility, current_user)
+
+    # 修复问题3a：校验并设置 folder_id
+    # 作用：此前上传接口不接受 folder_id，文档一律归入未分类。
+    #       修复后支持上传时指定目标分支，并校验分支归属权限。
+    effective_folder_id = None
+    if folder_id is not None and folder_id > 0:
+        from app.models.document_folder import DocumentFolder
+        target_folder = db.query(DocumentFolder).filter(
+            DocumentFolder.id == folder_id,
+        ).first()
+        if not target_folder:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": "FOLDER_NOT_FOUND", "message": "目标分支不存在"}},
+            )
+        # 分支是用户私有的，只能上传到自己的分支（超管例外）
+        if target_folder.user_id != current_user.id and not current_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "FOLDER_ACCESS_DENIED", "message": "无权使用该分支"}},
+            )
+        effective_folder_id = folder_id
+
     # 2. 清洗文件名（防路径遍历攻击）
     # 作用：剥离路径前缀、移除危险字符、防止 ../../../etc/passwd 等攻击
     # 安全要求：file.filename 来自客户端，完全不可信
@@ -316,7 +341,6 @@ async def upload_document(
                 if file_size > settings.MAX_FILE_SIZE:
                     # L-15 修复：移除冗余的 f.close()，with 语句退出时自动关闭
                     #   原实现手动 f.close() 后 with 语句退出时会再次 close（已关闭文件句柄）
-                    os.remove(file_path)
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail={
@@ -328,6 +352,8 @@ async def upload_document(
                     )
                 f.write(chunk)
     except HTTPException:
+        if os.path.exists(file_path):
+            os.remove(file_path)
         raise
     except Exception as e:
         # 写入异常时清理临时文件
@@ -341,7 +367,11 @@ async def upload_document(
 
     # 4. 计算文件哈希（用于去重）
     # 作用：相同内容的文件不重复处理
-    file_hash = document_processor.compute_file_hash(file_path)
+    try:
+        file_hash = document_processor.compute_file_hash(file_path)
+    except Exception:
+        os.remove(file_path)
+        raise HTTPException(500, detail="文件校验失败") from None
 
     # 5. 检查是否已存在相同哈希的文档
     # M-2 修复：加 Redis 分布式锁防止 TOCTOU 竞态（两个并发请求同时通过检查）
@@ -362,6 +392,7 @@ async def upload_document(
                 detail={"error": {"code": "UPLOAD_IN_PROGRESS", "message": "相同文件正在上传中，请稍后重试"}},
             )
 
+    record_saved = False
     # M-2 修复：try 块覆盖"检查去重 → 创建记录 → DB 插入"全程，finally 释放锁
     try:
         # 文档重名/重传修复：仅检查当前用户的活跃文档（is_deleted=False），
@@ -407,23 +438,12 @@ async def upload_document(
                 # 重命名在下方创建记录时应用（修改 doc_title/safe_filename）
                 pass
             elif conflict_resolution == "overwrite":
-                # 覆盖：软删除冲突的旧文档及其向量分块，再上传新文档
-                logger.info(
-                    f"冲突处理=overwrite: 软删除旧文档 doc_id={existing.id}, user_id={current_user.id}"
-                )
-                existing.is_deleted = True
-                existing.deleted_at = datetime.now()
-                existing.status = "deleted"
-                db.commit()
-                # 删除旧文档的向量分块（best-effort，失败不影响主流程）
-                try:
-                    from app.services.vector_store import get_vector_store
-                    vector_store = get_vector_store()
-                    vector_store.delete_document_chunks(existing.id)
-                except Exception as e:
-                    logger.warning(
-                        f"覆盖上传时删除旧向量分块失败（doc_id={existing.id}），待定时任务清理: {e}"
-                    )
+                # A31: defer the switch until the replacement is indexed successfully.
+                logger.info(f"冲突处理=overwrite: 准备替换 doc_id={existing.id}")
+                pending = db.query(Document).filter(Document.supersedes_document_id == existing.id).first()
+                if pending:
+                    raise HTTPException(409, detail={"error": {"code": "REPLACEMENT_IN_PROGRESS",
+                        "message": "已有替换文档，请先重试或删除它", "document_id": pending.id}})
             elif conflict_resolution == "keep_both":
                 # 保留两者：跳过去重，直接作为新文档上传
                 logger.info(
@@ -437,31 +457,6 @@ async def upload_document(
             doc_title = _generate_unique_title(doc_title, current_user.id, db)
             safe_filename = _generate_unique_filename(safe_filename, current_user.id, db)
         tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()] if tags else []
-
-        # 校验可见性（普通用户请求 public 会被降级为 private）
-        effective_visibility = permission_service.validate_visibility(visibility, current_user)
-
-        # 修复问题3a：校验并设置 folder_id
-        # 作用：此前上传接口不接受 folder_id，文档一律归入未分类。
-        #       修复后支持上传时指定目标分支，并校验分支归属权限。
-        effective_folder_id = None
-        if folder_id is not None and folder_id > 0:
-            from app.models.document_folder import DocumentFolder
-            target_folder = db.query(DocumentFolder).filter(
-                DocumentFolder.id == folder_id,
-            ).first()
-            if not target_folder:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": "FOLDER_NOT_FOUND", "message": "目标分支不存在"}},
-                )
-            # 分支是用户私有的，只能上传到自己的分支（超管例外）
-            if target_folder.user_id != current_user.id and not current_user.is_superuser:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": "FOLDER_ACCESS_DENIED", "message": "无权使用该分支"}},
-                )
-            effective_folder_id = folder_id
 
         db_document = Document(
             title=doc_title,
@@ -477,51 +472,26 @@ async def upload_document(
             visibility=effective_visibility,
             folder_id=effective_folder_id,
             metadata_={"category": category, "tags": tag_list} if tag_list else None,
+            supersedes_document_id=existing.id if existing and conflict_resolution == "overwrite" else None,
         )
 
-        # file_hash 唯一约束已移除（迁移 20260715_0006），IntegrityError 不再因哈希冲突触发。
-        # 兼容性修复：若迁移未应用（DB 仍有 file_hash 唯一约束），其他用户上传过相同内容
-        # 会触发 IntegrityError。此时将 file_hash 设为 None 重试插入（去重逻辑已在应用层完成，
-        # 仅检查当前用户的活跃文档，不影响业务正确性）。
         try:
             db.add(db_document)
             db.commit()
+            record_saved = True
             db.refresh(db_document)
         except IntegrityError:
             db.rollback()
-            # 兼容性修复：检测是否为 file_hash 唯一约束冲突（迁移未应用的情况）
-            # 若是，将 file_hash 设为 None 后重试，允许当前用户上传相同内容
-            if file_hash:
-                logger.warning(
-                    f"file_hash 唯一约束可能仍在（迁移 20260715_0006 未应用），"
-                    f"将 file_hash 设为 None 重试插入: user_id={current_user.id}, file={safe_filename}"
-                )
-                db_document.file_hash = None
-                try:
-                    db.add(db_document)
-                    db.commit()
-                    db.refresh(db_document)
-                except IntegrityError:
-                    # 非 file_hash 冲突的其他唯一约束冲突
-                    db.rollback()
-                    try:
-                        os.remove(file_path)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={"error": {"code": "FILE_ALREADY_EXISTS", "message": "文档记录冲突，请重试"}},
-                    )
-            else:
-                # 无 file_hash 仍冲突，说明是其他唯一约束
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={"error": {"code": "FILE_ALREADY_EXISTS", "message": "文档记录冲突，请重试"}},
-                )
+            raise HTTPException(409, detail={"error": {"code": "FILE_ALREADY_EXISTS",
+                "message": "文档记录冲突，请检查是否已有替换任务或数据库迁移尚未完成"}}) from None
+    except Exception:
+        db.rollback()
+        if not record_saved:
+            try:
+                os.remove(file_path)
+            except OSError:
+                logger.warning("未完成上传的临时文件清理失败")
+        raise
     finally:
         # M-2 修复：无论成功失败，释放上传去重锁
         if upload_lock_key and upload_lock_token:
@@ -712,6 +682,7 @@ def list_documents(
             query = query.filter(
                 func.to_tsvector("simple", Document.title).match(search_term)
                 | Document.title.ilike(f"%{search_term}%")
+                | Document.file_name.ilike(f"%{search_term}%")
             )
 
     # 获取总数
@@ -746,7 +717,7 @@ def list_documents(
         # offset/limit 分页（支持自定义排序）
         # 作用：sort_by 传入时按指定字段排序；未传入时按默认 created_at desc
         offset = (page - 1) * page_size
-        documents = query.order_by(order_col).offset(offset).limit(page_size).all()
+        documents = query.order_by(order_col, Document.id.asc()).offset(offset).limit(page_size).all()
 
     return {
         "items": documents,
@@ -892,6 +863,7 @@ def delete_document(
     #       导致数据不一致（文档显示可用但检索不到）。
     # 修复后：先 commit 标记软删除（DB 一致性优先），再删向量（失败可重试，不影响一致性）。
     # 数据一致性原则：DB 是 source of truth，向量可重建，不可逆向恢复。
+    document.supersedes_document_id = None
     document.is_deleted = True
     document.deleted_at = datetime.now()
     document.status = "deleted"

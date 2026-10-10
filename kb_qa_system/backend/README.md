@@ -1,12 +1,12 @@
 # GeiIt企业知识库 - 后端
 
-> 基于 RAG（检索增强生成）的生产级GeiIt企业知识库，支持文档上传、向量检索、智能问答、流式输出、多轮对话、权限隔离、质量监控等完整能力。
+> GeiIt 企业知识库服务端的开发说明。代码能力、部署模板和本地测试不表示目标线上环境已完成配置或验收。
 
 ## 📋 项目简介
 
 本系统是一个面向企业场景的 RAG 问答后端，核心特性包括：
 
-- 📄 **多格式文档处理**：PDF（含版面分析/表格/OCR）、Markdown、Word、TXT、网页导入
+- 📄 **多格式文档处理**：PDF、Markdown、Word、TXT、网页导入；图片 OCR 受 Tesseract 二进制、语言包和解析路径限制，不保证所有扫描 PDF 均可识别
 - 🔍 **混合检索**：pgvector 向量检索 + 关键词全文检索 + 重排序（Reranker）
 - 🤖 **RAG 问答**：基于知识库的智能问答，附带引用来源
 - 💬 **流式输出**：SSE 实时返回，打字机效果
@@ -23,7 +23,7 @@
 ```
 kb_qa_system/
 ├── docker-compose.yml              # 本地开发编排（PostgreSQL+pgvector / Redis / API / Worker / Flower）
-├── DEPLOYMENT.md                   # 部署指南（Railway 生产环境）
+├── docs/                           # Sealos 部署与备份恢复参考
 ├── monitoring/                     # Prometheus + Grafana 监控栈
 │   ├── docker-compose.monitoring.yml
 │   ├── prometheus.yml
@@ -93,7 +93,7 @@ kb_qa_system/
     ├── scripts/
     │   └── init-db.sql             # pgvector 扩展与全文检索初始化
     ├── tests/                      # 测试（Critical / Phase C 修复验证）
-    ├── Dockerfile                  # 生产镜像（多角色：api/worker/flower）
+    ├── Dockerfile                  # 容器镜像（api/worker/beat/flower 等角色）
     ├── entrypoint.sh               # 容器入口（按 ROLE 启动不同服务）
     ├── railway.json                # Railway 部署配置（入口自动检查迁移）
     ├── alembic.ini
@@ -231,10 +231,10 @@ celery -A app.tasks.celery_app worker --loglevel=info
 | 异步任务 | Celery + Flower | 文档处理流水线 |
 | RAG 框架 | LangChain | 检索增强生成编排 |
 | LLM | OpenAI 兼容接口 | 支持 OpenAI / 智谱 / Ollama |
-| 文档解析 | PyMuPDF / pdfplumber / python-docx / pypdf / pytesseract | 多格式 + OCR |
+| 文档解析 | PyMuPDF / pdfplumber / python-docx / pypdf / pytesseract | 多格式；图片 OCR 依赖系统 Tesseract 和语言包 |
 | 认证 | python-jose 3.4.0 + passlib | JWT 双 Token + bcrypt |
 | 监控 | prometheus-client + structlog + Sentry | 指标 + 日志 + 错误追踪 |
-| 部署 | Docker + Railway | 容器化 + 云部署 |
+| 部署 | Docker Compose + Sealos templates | 模板不是部署验收证明 |
 
 ## 📖 核心流程
 
@@ -310,13 +310,12 @@ celery -A app.tasks.celery_app worker --loglevel=info
 
 ## 🚢 部署
 
-生产环境部署详见 [`DEPLOYMENT.md`](../DEPLOYMENT.md)。关键要点：
+部署参考见 [`../docs/Sealos部署指导.md`](../docs/Sealos部署指导.md) 与 [`../docs/SEALOS_RECOVERY_AND_BACKUP.md`](../docs/SEALOS_RECOVERY_AND_BACKUP.md)。旧 Railway 配置仍在仓库中，但不代表当前生产平台或线上状态：
 
-- **平台**：Railway（PostgreSQL + Redis + 应用服务）
-- **数据库迁移**：容器入口和应用生命周期自动检查/迁移，默认 `MIGRATE_ON_STARTUP=true`，支持数据库恢复重试
-- **Redis 持久化**：必须开启 AOF，支持 fail-closed 安全策略（Token 黑名单/限流）
-- **环境变量**：生产环境必须显式设置 `SECRET_KEY`（≥32 字符）、`DEBUG=False`、`ENVIRONMENT=production`
-- **多角色镜像**：同一 Dockerfile 通过 `ROLE` 环境变量启动 api / worker / flower
+- **迁移**：先在隔离环境验证备份与迁移兼容性；不要把启动迁移视为回滚方案
+- **调度**：同一数据库和队列只应运行一个 Beat 实例；确认 Worker 和调度器健康
+- **代理**：仅配置实际可信代理网段，不使用 `*` 信任任意转发头
+- **供应商**：provider、SMTP/TLS 和隐私告知须由部署运营方按实际接收方核实
 
 ## 🔧 配置说明
 
@@ -329,13 +328,13 @@ OPENAI_API_KEY=sk-xxx
 DATABASE_URL=postgresql+psycopg://...
 REDIS_URL=redis://...
 
-# LLM（支持 OpenAI / 智谱 / Ollama，切换 API_BASE + MODEL_NAME 即可）
+# 服务端模型 provider（具体兼容性、维度及端点行为须逐家验证）
 OPENAI_API_BASE=https://api.openai.com/v1
 LLM_MODEL_NAME=gpt-3.5-turbo
 EMBEDDING_MODEL_NAME=text-embedding-ada-002
 
-# 可信代理（反向代理场景识别真实客户端 IP，逗号分隔）
-TRUSTED_PROXIES=
+# 可信代理 CIDR（逗号分隔；仅填写实际代理网段）
+TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
 ## 🧪 测试
@@ -349,8 +348,9 @@ python -m pytest tests/ -v --tb=short
 
 ## 📁 相关文档
 
-- [部署指南 DEPLOYMENT.md](../DEPLOYMENT.md)
+- [Sealos 部署参考](../docs/Sealos部署指导.md)
+- [备份恢复边界](../docs/SEALOS_RECOVERY_AND_BACKUP.md)
 - [监控栈说明 monitoring/README.md](../monitoring/README.md)
-- [全面审查报告 docs/COMPREHENSIVE_REVIEW_REPORT.md](docs/COMPREHENSIVE_REVIEW_REPORT.md)
-- [Critical 修复计划 docs/CRITICAL_FIX_PLAN.md](docs/CRITICAL_FIX_PLAN.md)
-- [Phase C 修复报告 docs/PHASE_C_REPAIR_REPORT.md](docs/PHASE_C_REPAIR_REPORT.md)
+- [仓库审查报告](../../docs/COMPREHENSIVE_REVIEW_2026-10-10.md)
+- [修复实施跟踪](../../docs/REVIEW_REMEDIATION_2026-10-10.md)
+- [发布与 Schema 安全说明](../../docs/RELEASE_AND_SCHEMA_SAFETY.md)

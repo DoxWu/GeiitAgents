@@ -205,3 +205,18 @@ secret_key.txt
 *.geiitkb
 *.geiitkb.json
 *.geiitwork
+
+# Private backup and runtime configuration; source SQL/migrations stay tracked.
+backups/
+backup/
+*.dump
+*.sql.gz
+*.backup
+*.backup.zip
+*.backup.tar*
+kubeconfig
+kubeconfig.*
+credentials.json
+credentials.*.json
+.aws/
+.kube/

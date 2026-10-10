@@ -356,7 +356,7 @@ npm run dev
 | `EMBEDDING_FALLBACK_API_KEY` | 云端备用 Embedding 的 API Key（不设则复用 `LLM_FALLBACK_API_KEY`） | （空） |
 | `EMBEDDING_FALLBACK_API_BASE` | 云端备用 Embedding 的 API 地址 | （空） |
 | `EMBEDDING_FALLBACK_MODEL_NAME` | 云端备用 Embedding 模型名 | （复用 `EMBEDDING_MODEL_NAME`） |
-| `LOCAL_EMBEDDING_ENABLED` | 是否启用本地 Embedding 兜底（HuggingFace，首次约 100MB） | `true` |
+| `LOCAL_EMBEDDING_ENABLED` | 是否启用服务器端 HuggingFace Embedding provider（与客户端本地 E5 分开；默认关闭） | `false` |
 
 > 💡 **嵌套占位符**：`providers.yaml` 使用 `${VAR1:${VAR2:${VAR3}}}` 语法实现三级回退。例如 Embedding 的 cloud_fallback 提供者：`${EMBEDDING_FALLBACK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}` 表示依次查找这三个变量。
 >
@@ -483,10 +483,11 @@ docker-compose --profile monitoring up -d
 
 > 💡 **轻量化优化**：Flower 已改为按需启动（profile），默认不消耗资源。需要监控时加 `--profile monitoring` 参数。
 
-> 💡 **本地 ML 依赖**：默认 Docker 镜像不安装 `sentence-transformers`（节省 ~800MB torch）。需要本地 Embedding 兜底 / CrossEncoder 重排序时，在 `.env` 中设置 `INSTALL_LOCAL_ML=true` 后重新构建：
+> 💡 **本地 ML 依赖**：默认 Docker 镜像不安装 `sentence-transformers`（节省约 800MB torch），服务器本地 Embedding provider 默认关闭。它与桌面客户端按需下载的 `Xenova/multilingual-e5-small` 是两套独立配置；只有先确认服务端模型输出维度和现有向量列/索引兼容，再显式启用时才安装：
 > ```bash
 > # 在 kb_qa_system/.env 或环境变量中设置
 > INSTALL_LOCAL_ML=true
+> LOCAL_EMBEDDING_ENABLED=true
 > docker-compose build --no-cache api worker
 > ```
 

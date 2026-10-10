@@ -616,11 +616,11 @@ class TestProvidersYamlIntegrity:
         assert 'LOCAL_LLM_ENABLED:false' in source, \
             "本地 LLM 兜底应默认关闭"
 
-    def test_embedding_has_local_fallback_enabled(self):
-        """验证本地 Embedding 兜底默认开启"""
+    def test_embedding_has_local_fallback_disabled_by_default(self):
+        """服务端本地 Embedding 必须显式启用，避免模型自动下载和混用。"""
         source = read_source("app/core/model_provider/providers.yaml")
-        assert 'LOCAL_EMBEDDING_ENABLED:true' in source, \
-            "本地 Embedding 兜底应默认开启"
+        assert 'LOCAL_EMBEDDING_ENABLED:false' in source, \
+            "本地 Embedding 兜底应默认关闭"
 
     def test_vision_fallback_disabled_by_default(self):
         """验证 Vision 降级默认关闭"""

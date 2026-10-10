@@ -6,7 +6,7 @@ import * as authApi from '@/api/auth';
 import type { TokenResponse } from '@/types/user';
 
 vi.mock('@/api/auth', () => ({ login: vi.fn(), guestLogin: vi.fn() }));
-vi.mock('@/store/documentStore', () => ({ useDocumentStore: { getState: () => ({ reset: vi.fn() }) } }));
+vi.mock('@/store/documentStore', () => ({ useDocumentStore: { getState: () => ({ reset: vi.fn(), loadSearchHistoryForCurrentAccount: vi.fn() }) } }));
 const tokens = { access_token: 'fixture-access', refresh_token: 'fixture-refresh', user: { id: 1 }, token_type: 'bearer', expires_in: 3600 } as TokenResponse;
 beforeEach(() => { localStorage.clear(); setAccountServer('https://accounts-one.example'); vi.clearAllMocks(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });

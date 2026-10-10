@@ -117,14 +117,13 @@ class OpenAIEmbeddingClient(EmbeddingModelClient):
 
         try:
             # 构建 API 调用参数
-            # dimensions 参数：显式指定输出维度，确保与 DB 向量列维度一致
-            # 兼容性：阿里云 text-embedding-v4 / OpenAI text-embedding-3-* 支持；
-            #         旧模型（如 ada-002）不支持，API 会返回错误（由路由器降级处理）
+            # Only opt in when this endpoint/model explicitly supports dimensions.
+            # dimension also describes fixed-size models; ada-002 rejects the parameter.
             kwargs = {
                 "model": self.config.model,
                 "input": text,
             }
-            if self.config.dimension:
+            if self.config.dimension and self.config.supports_dimensions:
                 kwargs["dimensions"] = self.config.dimension
 
             response = self.client.embeddings.create(**kwargs)

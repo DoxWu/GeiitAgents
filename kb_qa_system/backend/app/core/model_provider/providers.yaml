@@ -93,14 +93,15 @@ providers:
   # ===== Embedding 向量模型 =====
   embedding:
     # 主模型（在线 API）
-    # 注意：若主 API（如 DeepSeek）不提供 /embeddings 端点，健康探测会失败并
-    #       自动降级到 cloud_fallback 端点，不影响业务功能。
+    # Fallback vectors remain in their own model space. Reprocess documents when
+    # changing model/endpoint; equal dimensions do not imply compatible vectors.
     - name: "primary"
       type: openai
       model: "${EMBEDDING_MODEL_NAME:text-embedding-ada-002}"
       api_key: "${OPENAI_API_KEY}"
       api_base: "${OPENAI_API_BASE:https://api.openai.com/v1}"
       dimension: "${EMBEDDING_DIMENSION:1536}"
+      supports_dimensions: "${EMBEDDING_SUPPORTS_DIMENSIONS:false}"
       timeout: "${EMBEDDING_TIMEOUT:15}"
       max_retries: 2
       enabled: true
@@ -118,6 +119,7 @@ providers:
       api_key: "${EMBEDDING_FALLBACK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}"
       api_base: "${EMBEDDING_FALLBACK_API_BASE:${LLM_FALLBACK_API_BASE:${OPENAI_API_BASE}}}"
       dimension: "${EMBEDDING_DIMENSION:1536}"
+      supports_dimensions: "${EMBEDDING_FALLBACK_SUPPORTS_DIMENSIONS:false}"
       timeout: "${EMBEDDING_TIMEOUT:15}"
       max_retries: 2
       enabled: "${LLM_FALLBACK_ENABLED:true}"
@@ -127,14 +129,15 @@ providers:
         timeout: 10
       tags: ["fallback", "cloud"]
 
-    # 本地兜底模型（在线不可用时使用）
+    # Optional server-hosted fallback. Disabled by default; only enable after
+    # confirming its output dimension matches the database vector column.
     - name: "local_fallback"
       type: local_hf
       model: "${LOCAL_EMBEDDING_MODEL:BAAI/bge-small-zh-v1.1}"
       dimension: 512
       timeout: 30
       max_retries: 1
-      enabled: "${LOCAL_EMBEDDING_ENABLED:true}"
+      enabled: "${LOCAL_EMBEDDING_ENABLED:false}"
       health_check:
         enabled: false
       tags: ["fallback", "local"]

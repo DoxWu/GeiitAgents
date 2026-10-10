@@ -70,6 +70,7 @@ class ProviderEndpointConfig(BaseModel):
     api_key: str = ""
     api_base: str = ""
     dimension: Optional[int] = None
+    supports_dimensions: bool = False
     temperature: float = 0.1
     timeout: int = 30
     max_retries: int = 3

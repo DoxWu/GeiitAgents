@@ -27,7 +27,9 @@ import type {
   UploadDocumentParams,
   BatchOperationResponse,
 } from "@/types/document";
-import { POLL_INTERVAL, MAX_POLL_COUNT } from "@/utils/constants";
+import { POLL_INTERVAL, MAX_POLL_COUNT, USER_STORAGE_KEY } from "@/utils/constants";
+import { safeStorage } from "@/utils/safeStorage";
+import { getAccountServer } from "@/services/accountServer";
 
 /** 文档 Store 状态接口 */
 interface DocumentState {
@@ -161,6 +163,8 @@ interface DocumentState {
 
   /** 清除错误 */
   clearError: () => void;
+  /** 按当前账号和服务器重新载入搜索历史 */
+  loadSearchHistoryForCurrentAccount: () => void;
 
   /**
    * 重置 Store 到初始状态
@@ -168,7 +172,7 @@ interface DocumentState {
    * 作用：
    *   在用户登出/切换账户时调用，清除所有用户特定的文档数据（分支、文档列表、预览、多选等），
    *   防止前一个用户的数据残留到下一个用户的会话中。
-   *   注意：不清除 searchHistory（localStorage 持久化，非用户特定）。
+   *   搜索历史按账号和服务器隔离；重置时清空内存态，登录后再载入当前账号历史。
    */
   reset: () => void;
 }
@@ -256,8 +260,21 @@ const DEFAULT_SORT_ORDER: SortOrder = "desc";
 
 /** D2-03 搜索历史：localStorage 存储键名 */
 const SEARCH_HISTORY_KEY = "geiit-search-history";
+const SEARCH_HISTORY_PREFIX = "geiit-search-history:v2:";
 /** D2-03 搜索历史：最大保存条数 */
 const MAX_HISTORY_ITEMS = 10;
+let latestDocumentListRequest = 0;
+
+function currentSearchHistoryKey(): string {
+  let userId = "anonymous";
+  try {
+    const user = JSON.parse(safeStorage.getItem(USER_STORAGE_KEY) || "null");
+    if (user?.id !== undefined && user?.id !== null) userId = String(user.id);
+  } catch {
+    // Invalid or unavailable identity uses the isolated anonymous namespace.
+  }
+  return `${SEARCH_HISTORY_PREFIX}${encodeURIComponent(getAccountServer())}:${encodeURIComponent(userId)}`;
+}
 
 /**
  * 从 localStorage 加载搜索历史（D2-03）
@@ -269,7 +286,9 @@ const MAX_HISTORY_ITEMS = 10;
  */
 function loadSearchHistory(): string[] {
   try {
-    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+    // The previous shared key could expose one account's searches to another.
+    safeStorage.removeItem(SEARCH_HISTORY_KEY);
+    const raw = safeStorage.getItem(currentSearchHistoryKey());
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY_ITEMS) : [];
@@ -285,7 +304,7 @@ function loadSearchHistory(): string[] {
  */
 function saveSearchHistory(history: string[]): void {
   try {
-    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+    safeStorage.setItem(currentSearchHistoryKey(), JSON.stringify(history));
   } catch {
     // localStorage 写入失败（如隐私模式），忽略
   }
@@ -397,6 +416,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // ===== 文档操作 =====
   loadDocuments: async () => {
+    const requestId = ++latestDocumentListRequest;
     const state = get();
     set({ loading: true, error: null });
     try {
@@ -411,6 +431,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         scope: state.currentScope,
       };
       const response = await documentApi.getDocuments(params);
+      if (requestId !== latestDocumentListRequest) return;
       set({
         documents: response.items,
         total: response.total,
@@ -419,6 +440,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // 加载完成后，检查是否需要启动轮询
       get().startPollingIfNeeded();
     } catch (err) {
+      if (requestId !== latestDocumentListRequest) return;
       set({
         loading: false,
         error: err instanceof Error ? err.message : "加载文档失败",
@@ -485,6 +507,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // ===== 搜索与排序 =====
   setSearchKeyword: (keyword: string) => {
+    latestDocumentListRequest += 1;
     set({ searchKeyword: keyword, page: 1 });
   },
 
@@ -505,11 +528,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   setSort: (field: SortField, order: SortOrder) => {
+    latestDocumentListRequest += 1;
     set({ sortBy: field, sortOrder: order, page: 1 });
     get().loadDocuments();
   },
 
   setPage: (page: number) => {
+    latestDocumentListRequest += 1;
     set({ page });
     get().loadDocuments();
   },
@@ -651,7 +676,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
+  loadSearchHistoryForCurrentAccount: () => set({ searchHistory: loadSearchHistory() }),
+
   reset: () => {
+    latestDocumentListRequest += 1;
     // 停止所有轮询，避免轮询回调写入已重置的状态
     stopAllDocumentPolls();
     set({
@@ -668,6 +696,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       error: null,
       // 搜索与排序
       searchKeyword: "",
+      searchHistory: [],
       sortBy: DEFAULT_SORT_FIELD,
       sortOrder: DEFAULT_SORT_ORDER,
       // 预览

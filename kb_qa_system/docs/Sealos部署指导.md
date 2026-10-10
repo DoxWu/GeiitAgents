@@ -894,10 +894,10 @@ EMBEDDING_FALLBACK_API_BASE=https://ws-fpzje8gjl9rtqogw.cn-beijing.maas.aliyuncs
 #### 6.3.10 本地 Embedding 兜底
 
 ```env
-LOCAL_EMBEDDING_ENABLED=true
+LOCAL_EMBEDDING_ENABLED=false
 ```
 
-> 在线 Embedding API 不可用时，使用本地 sentence-transformers 模型兜底。首次使用会自动下载模型（约 100MB）。
+> 服务端本地 Embedding provider 默认关闭。启用前必须安装 `requirements-local-ml.txt` 对应依赖，并确认模型输出维度、数据库向量列和索引属于同一向量空间；它不是桌面客户端本地知识库的 E5 开关，也不会自动下载客户端模型。
 
 #### 6.3.11 RAG 优化配置
 

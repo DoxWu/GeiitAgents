@@ -39,6 +39,8 @@ spec:
               value: "2"
             - name: CELERY_MAX_TASKS_PER_CHILD
               value: "100"
+            - name: CELERY_BEAT_SCHEDULE_FILE
+              value: /app/data/celerybeat-schedule
           ports:
             - name: http
               containerPort: 8000

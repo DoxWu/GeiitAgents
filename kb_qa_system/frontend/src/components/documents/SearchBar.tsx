@@ -141,7 +141,7 @@ export function SearchBar() {
         onCompositionEnd={handleCompositionEnd}
         onKeyDown={handleKeyDown}
         onFocus={() => setShowHistory(true)}
-        placeholder="搜索文件名..."
+        placeholder="搜索标题或文件名..."
         className={cn(
           "h-9 w-full rounded-md border border-line bg-surface pl-9 pr-9",
           "text-sm text-ink placeholder:text-ink-tertiary",

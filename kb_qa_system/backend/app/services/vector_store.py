@@ -22,6 +22,7 @@
 import time
 import re
 import hashlib
+import json
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -76,7 +77,21 @@ class VectorStoreService:
     # 作用：Embedding 客户端由 ModelProviderManager 统一管理
     # 降级路由由 FailoverRouter 基于 CircuitBreaker 状态自动决策
 
-    def generate_embedding(self, text: str) -> tuple[Optional[List[float]], str]:
+    @staticmethod
+    def _embedding_space_id(client) -> str:
+        config = client.config
+        identity = {
+            "type": config.type,
+            "model": config.model,
+            "api_base": config.api_base,
+            "dimension": int(client.dimension),
+        }
+        encoded = json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _generate_embedding_with_space(
+        self, text: str
+    ) -> tuple[Optional[List[float]], str, Optional[str]]:
         """
         生成文本的向量表示
 
@@ -103,16 +118,7 @@ class VectorStoreService:
         示例：
             vector, model = store.generate_embedding("异步编程")
         """
-        # 1. 查缓存
-        # 作用：相同文本不重复计算向量，节省 API 调用
-        cache_key = RedisKeys.llm_cache(
-            hashlib.sha256(text.encode()).hexdigest()[:32]
-        )
-        cached = RedisManager.get(cache_key)
-        if cached and isinstance(cached, dict):
-            return cached.get("vector"), cached.get("model", "cached")
-
-        # 2. 从 manager 获取主客户端 + 降级客户端列表
+        # 1. 从 manager 获取主客户端 + 降级客户端列表
         # 作用：FailoverRouter 按熔断器状态选择健康端点，主模型健康时永远用主模型
         from app.core.model_provider.exceptions import (
             ModelInvocationError,
@@ -123,24 +129,51 @@ class VectorStoreService:
             primary, fallbacks = self._manager.get_embedding_client_with_fallback()
         except ModelClientUnavailableError:
             logger.error("无可用 Embedding 客户端（未注册或全部 disabled）")
-            return None, "none"
+            return None, "none", None
 
         all_clients = [primary] + list(fallbacks)
 
-        # 3. 遍历客户端列表，依次尝试
+        # A cache entry is valid only for the current ordered set of model spaces.
+        candidate_spaces = [self._embedding_space_id(client) for client in all_clients]
+        cache_identity = hashlib.sha256(
+            ("\0".join(candidate_spaces) + "\0" + text).encode("utf-8")
+        ).hexdigest()[:32]
+        cache_key = RedisKeys.llm_cache(cache_identity)
+        cached = RedisManager.get(cache_key)
+        if cached and isinstance(cached, dict):
+            vector = cached.get("vector")
+            space = cached.get("embedding_space")
+            if (space in candidate_spaces and isinstance(vector, list)
+                    and len(vector) == settings.EMBEDDING_DIMENSION):
+                return vector, cached.get("model", "cached"), space
+
+        # 2. 遍历客户端列表，依次尝试
         for client in all_clients:
             try:
+                space = self._embedding_space_id(client)
+                if int(client.dimension) != settings.EMBEDDING_DIMENSION:
+                    logger.warning(
+                        "跳过向量维度不兼容的 Embedding 端点（name=%s, dimension=%s, required=%s）",
+                        client.name, client.dimension, settings.EMBEDDING_DIMENSION,
+                    )
+                    continue
                 vector = client.embed_query(text)
+                if len(vector) != settings.EMBEDDING_DIMENSION:
+                    logger.warning(
+                        "跳过返回维度不兼容的 Embedding 端点（name=%s, dimension=%s, required=%s）",
+                        client.name, len(vector), settings.EMBEDDING_DIMENSION,
+                    )
+                    continue
                 model_used = client.config.model
 
                 # 缓存结果（7天过期）
                 RedisManager.set(
                     cache_key,
-                    {"vector": vector, "model": model_used},
+                    {"vector": vector, "model": model_used, "embedding_space": space},
                     ttl=7 * 24 * 3600
                 )
 
-                return vector, model_used
+                return vector, model_used, space
 
             except CircuitBreakerOpenError:
                 # 此客户端熔断器打开，尝试下一个降级客户端
@@ -157,9 +190,14 @@ class VectorStoreService:
                 logger.warning(f"Embedding 客户端({client.name})未知错误: {e}，尝试下一个")
                 continue
 
-        # 4. 所有端点均失败
+        # 3. 所有端点均失败
         logger.error(f"所有 Embedding 端点均失败: {[c.name for c in all_clients]}")
-        return None, "none"
+        return None, "none", None
+
+    def generate_embedding(self, text: str) -> tuple[Optional[List[float]], str]:
+        """Return a vector and model name for existing callers."""
+        vector, model, _ = self._generate_embedding_with_space(text)
+        return vector, model
 
     # ============================================
     # 添加文档块
@@ -206,7 +244,7 @@ class VectorStoreService:
                 metadata = chunk_data.get("metadata", {})
 
                 # 生成向量
-                vector, model_used = self.generate_embedding(chunk_text)
+                vector, model_used, embedding_space = self._generate_embedding_with_space(chunk_text)
 
                 # fail-fast：向量化失败则中止整篇文档处理
                 # 作用：embedding 全部端点不可用时 generate_embedding 返回 (None, "none")，
@@ -217,7 +255,8 @@ class VectorStoreService:
                         f"文档块向量化失败：所有 Embedding 端点不可用"
                         f"（model_used={model_used}）。"
                         f"请检查 OPENAI_API_KEY / EMBEDDING_FALLBACK_API_KEY 有效性，"
-                        f"或启用本地 Embedding 兜底（INSTALL_LOCAL_ML=true）。"
+                        f"如需使用服务端本地 Embedding，请安装可选 ML 依赖、显式启用 provider，"
+                        f"并先确认模型维度与现有向量列/索引兼容。"
                     )
 
                 # 创建块记录
@@ -226,6 +265,7 @@ class VectorStoreService:
                     chunk_index=metadata.get("chunk_index", success_count),
                     content=chunk_text,
                     content_vector=vector,
+                    embedding_space=embedding_space,
                     token_count=metadata.get("token_count", 0),
                     page_number=metadata.get("page_number"),
                     char_start=metadata.get("char_start"),
@@ -297,7 +337,7 @@ class VectorStoreService:
             top_k = settings.SEARCH_TOP_K
 
         # 1. 生成查询向量
-        query_vector, model_used = self.generate_embedding(query)
+        query_vector, model_used, embedding_space = self._generate_embedding_with_space(query)
         if query_vector is None:
             logger.error("生成查询向量失败，无法进行向量检索")
             return []
@@ -331,9 +371,14 @@ class VectorStoreService:
                 JOIN documents d ON dc.document_id = d.id
                 WHERE dc.content_vector IS NOT NULL
                   AND d.is_deleted = false
+                  AND d.status IN ('completed', 'low_quality')
+                  AND dc.embedding_space = :embedding_space
             """
 
-            params: Dict[str, Any] = {"query_vector": str(query_vector)}
+            params: Dict[str, Any] = {
+                "query_vector": str(query_vector),
+                "embedding_space": embedding_space,
+            }
 
             # 文档ID过滤（权限隔离关键）
             # 语义：
@@ -456,6 +501,7 @@ class VectorStoreService:
                     JOIN documents d ON dc.document_id = d.id
                     WHERE to_tsvector('simple', dc.content) @@ to_tsquery('simple', :tsquery)
                       AND d.is_deleted = false
+                      AND d.status IN ('completed', 'low_quality')
                 """
                 params_en: Dict[str, Any] = {"tsquery": tsquery}
                 if document_ids is not None:
@@ -514,6 +560,7 @@ class VectorStoreService:
                     JOIN documents d ON dc.document_id = d.id
                     WHERE ({where_clause})
                       AND d.is_deleted = false
+                      AND d.status IN ('completed', 'low_quality')
                 """
                 params_cn = dict(like_params)
                 if document_ids is not None:

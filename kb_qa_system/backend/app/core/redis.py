@@ -710,16 +710,6 @@ class RedisKeys:
         return f"lock:{resource}"
 
     @staticmethod
-    def faq_cache(question_hash: str) -> str:
-        """
-        FAQ 缓存 key
-
-        作用：
-            缓存已回答过的问题，相同问题不重复调用 LLM。
-        """
-        return f"faq:{question_hash}"
-
-    @staticmethod
     def idempotency_lock(user_id: int, key: str) -> str:
         """
         幂等性处理锁 key

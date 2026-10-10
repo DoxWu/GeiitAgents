@@ -7,16 +7,14 @@
 
 测试策略：
     1. 静态分析测试：直接读取源码文件内容，验证安全结构存在（不导入模块，避免运行时依赖）
-    2. 覆盖端点结构、密码确认、物理文件删除、级联删除、Token 吊销、Schema 验证六大维度
+    2. 覆盖端点结构、密码确认、持久文件清理、关联数据清理、Token 吊销、Schema 验证
 
 运行方式：
     cd backend
     python -m pytest tests/test_account_deletion.py -v
 """
 
-import pytest
 from pathlib import Path
-
 
 # ============================================
 # 辅助函数：读取源码文件内容（不导入模块，避免依赖问题）
@@ -97,33 +95,34 @@ class TestPasswordConfirmation:
 
 
 # ============================================
-# 3. 物理文件删除验证（GDPR 数据彻底删除）
+# 3. 持久文件清理验证
 # ============================================
 
-class TestPhysicalFileDeletion:
-    """物理文件删除验证"""
+class TestDurableFileCleanup:
+    """账号删除提交后由持久任务清理文件"""
 
     def test_queries_user_documents(self):
-        """验证查询用户所有文档（用于遍历删除文件）"""
+        """验证账号删除收集用户文档以创建清理任务"""
         source = read_source("app/api/routes/auth.py")
         assert "db.query(Document).filter(Document.user_id == current_user.id)" in source, \
             "应查询用户所有文档记录"
 
-    def test_deletes_files_from_upload_dir(self):
-        """验证从 UPLOAD_DIR 删除物理文件"""
+    def test_enqueues_document_cleanup(self):
+        """验证账号删除事务内创建持久文件清理任务"""
         source = read_source("app/api/routes/auth.py")
-        assert "os.path.join(settings.UPLOAD_DIR" in source, \
-            "应拼接 UPLOAD_DIR 路径定位文件"
-        assert "os.remove(" in source, \
-            "应调用 os.remove 删除物理文件"
+        cleanup_source = read_source("app/services/file_cleanup.py")
+        assert "enqueue_document_cleanup(db, user_documents)" in source, \
+            "账号删除应在删除用户记录前持久化文件清理任务"
+        assert "FileCleanupJob" in cleanup_source and "paths" in cleanup_source, \
+            "清理任务应保存待删除路径，供提交后重试"
 
-    def test_file_deletion_failure_non_blocking(self):
-        """验证文件删除失败不阻塞数据库删除流程（容错）"""
-        source = read_source("app/api/routes/auth.py")
-        assert "except OSError" in source, \
-            "应捕获 OSError 文件删除异常"
-        assert "logger.warning" in source, \
-            "文件删除失败应记日志而非阻塞流程"
+    def test_cleanup_failure_is_retryable(self):
+        """验证文件系统失败由清理服务持久重试"""
+        source = read_source("app/services/file_cleanup.py")
+        assert "status = 'retry'" in source, \
+            "清理失败应保留 retry 状态"
+        assert "attempts" in source and "available_at" in source, \
+            "清理失败应记录次数和下次尝试时间"
 
 
 # ============================================
@@ -148,17 +147,19 @@ class TestCascadeDeletion:
             "应捕获数据库操作异常"
         assert "db.rollback()" in source, \
             "数据库删除失败应回滚事务"
-        assert "HTTP_500_INTERNAL_SERVER_ERROR" in source, \
+        assert "HTTPException(500" in source, \
             "数据库删除失败应返回 500 状态码"
         assert "DELETE_FAILED" in source, \
             "数据库删除失败应返回 DELETE_FAILED 错误码"
 
-    def test_qaevent_anonymization_documented(self):
-        """验证 QAEvent.user_id 被 SET NULL（保留匿名化统计数据）"""
+    def test_qaevent_payload_is_erased(self):
+        """验证账号删除清除 QA 正文，不以 SET NULL 保留个人内容"""
         source = read_source("app/api/routes/auth.py")
-        # 级联删除注释中应说明 QAEvent 的匿名化处理
-        assert "SET NULL" in source or "匿名化" in source, \
-            "应说明 QAEvent.user_id 被 SET NULL 保留匿名化统计数据"
+        privacy_source = read_source("app/services/account_privacy.py")
+        assert "erase_account_payloads" in source, \
+            "账号删除应调用隐私数据清理服务"
+        assert "db.query(QAEvent)" in privacy_source and ".delete(" in privacy_source, \
+            "账号关联 QA 正文应在删除事务中清除"
 
 
 # ============================================

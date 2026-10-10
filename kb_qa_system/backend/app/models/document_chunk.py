@@ -92,6 +92,10 @@ class DocumentChunk(Base):
         nullable=True,  # 可空，向量化可能失败
     )
 
+    # Hash of provider type, model, endpoint and dimension. NULL means legacy
+    # vectors whose model cannot be verified and therefore must not be compared.
+    embedding_space: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
     # 全文检索向量
     # 作用：支持 PostgreSQL 原生全文检索（关键词搜索）
     # 使用 to_tsvector 自动生成，支持中文（需 zhparser 扩展或简单分词）

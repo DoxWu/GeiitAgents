@@ -31,11 +31,10 @@
 """
 
 import ast
-import textwrap
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 
 # ============================================
 # 辅助函数：读取源码文件内容（不导入模块，避免依赖问题）
@@ -146,14 +145,16 @@ class TestModelFileHashNoLongerUnique:
     def test_file_hash_not_unique(self):
         """验证 file_hash 字段定义不含 unique=True"""
         source = read_source("app/models/document.py")
-        # 定位 file_hash 字段定义上下文（从 "file_hash" 到下一个字段的范围）
-        start = source.find("file_hash: Mapped[Optional[str]]")
-        assert start > 0, "应找到 file_hash 字段定义"
-        # 截取该字段定义块（约 200 字符足够覆盖 mapped_column 参数）
-        snippet = source[start:start + 300]
-        assert "unique=True" not in snippet, \
+        document = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.ClassDef) and node.name == "Document")
+        field = next(node for node in document.body
+                     if isinstance(node, ast.AnnAssign)
+                     and isinstance(node.target, ast.Name)
+                     and node.target.id == "file_hash")
+        field_definition = ast.unparse(field.value)
+        assert "unique=True" not in field_definition, \
             "file_hash 不应再含 unique=True（应改为普通索引）"
-        assert "index=True" in snippet, \
+        assert "index=True" in field_definition, \
             "file_hash 应保留 index=True 以维持查询性能"
 
     def test_file_hash_doc_explains_design(self):
@@ -220,22 +221,14 @@ class TestUploadEndpointConflictStructure:
         assert "Document.is_deleted == False" in source, \
             "去重查询应过滤 is_deleted=False"
 
-    def test_overwrite_soft_deletes_old_document(self):
-        """验证 overwrite 策略软删除旧文档"""
+    def test_overwrite_defers_switch_until_indexed(self):
+        """验证 overwrite 将旧文档关联到待处理替换项，不提前删除旧版本"""
         source = read_source("app/api/routes/documents.py")
-        # overwrite 分支应将 is_deleted 设为 True
-        # 使用片段匹配避免与 delete_document 混淆——
-        # overwrite 分支的 soft-delete 紧邻 "冲突处理=overwrite" 日志
-        overwrite_pos = source.find('冲突处理=overwrite')
-        assert overwrite_pos > 0, "应有 overwrite 日志输出"
-        # 在 overwrite 日志之后 500 字符内应找到 is_deleted = True
-        following = source[overwrite_pos:overwrite_pos + 500]
-        assert "is_deleted = True" in following, \
-            "overwrite 分支应将旧文档 is_deleted 设为 True"
-        assert "deleted_at = datetime.now()" in following, \
-            "overwrite 分支应记录 deleted_at"
-        assert '"deleted"' in following or 'status = "deleted"' in following, \
-            "overwrite 分支应将 status 设为 deleted"
+        task_source = read_source("app/tasks/document_tasks.py")
+        assert "supersedes_document_id=existing.id if existing and conflict_resolution == \"overwrite\" else None" in source, \
+            "新文档应记录待替换的旧文档"
+        assert "activate_replacement(db, document)" in task_source, \
+            "旧文档应在新文档成功索引后切换"
 
     def test_overwrite_deletes_vector_chunks(self):
         """验证 overwrite 策略删除旧文档的向量分块"""
@@ -517,18 +510,13 @@ class TestBusinessFlowIntegrity:
         assert "is_deleted = True" not in following, \
             "rename 分支不应软删除旧文档"
 
-    def test_overwrite_path_soft_deletes_then_creates(self):
-        """overwrite 路径：软删除旧文档后再上传新文档"""
+    def test_overwrite_path_preserves_old_until_replacement_ready(self):
+        """overwrite 路径：准备替换项，索引成功后再原子切换"""
         source = read_source("app/api/routes/documents.py")
-        overwrite_pos = source.find('conflict_resolution == "overwrite"')
-        following = source[overwrite_pos:overwrite_pos + 1000]
-        assert "is_deleted = True" in following, \
-            "overwrite 分支应软删除旧文档"
-        assert "delete_document_chunks" in following, \
-            "overwrite 分支应删除向量分块"
-        # 软删除后应 commit 提交
-        assert "db.commit()" in following, \
-            "overwrite 分支软删除后应提交事务"
+        assert "REPLACEMENT_IN_PROGRESS" in source, \
+            "同一旧版本已有待处理替换时应拒绝重复覆盖"
+        assert "supersedes_document_id=existing.id" in source, \
+            "新文档应保留替换关联直到处理完成"
 
     def test_celery_task_triggered_after_upload(self):
         """上传后触发 Celery 异步任务（处理流水线）"""

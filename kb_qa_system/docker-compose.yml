@@ -232,6 +232,34 @@ services:
           memory: 2G
           cpus: '2.0'
 
+  # Celery Beat must have exactly one active instance per broker/database.
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kb_qa_beat
+    restart: unless-stopped
+    environment:
+      ROLE: beat
+      CELERY_BEAT_SCHEDULE_FILE: /app/data/celerybeat-schedule
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/kb_qa
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      TZ: Asia/Shanghai
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
   # --------------------------------------------
   # Flower（Celery 任务监控面板）
   # --------------------------------------------

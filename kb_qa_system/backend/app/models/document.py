@@ -102,6 +102,9 @@ class Document(Base):
     file_hash: Mapped[Optional[str]] = mapped_column(
         String(64), index=True, nullable=True
     )
+    supersedes_document_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, unique=True
+    )
 
     # 文档全文内容（可选，存储解析后的文本，用于全文搜索）
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

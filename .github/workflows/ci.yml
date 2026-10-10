@@ -10,6 +10,9 @@
 
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, develop, 'develop/**']
@@ -18,6 +21,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  secret-scan:
+    name: Secret and private artifact scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan repository history and current diff
+        uses: gitleaks/gitleaks-action@v2
+
   # --------------------------------------------
   # 后端测试
   # --------------------------------------------
@@ -27,6 +40,30 @@ jobs:
     defaults:
       run:
         working-directory: kb_qa_system/backend
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -50,10 +87,10 @@ jobs:
           # development 下 SECRET_KEY 校验宽松，适合 CI 场景
           ENVIRONMENT: development
           SECRET_KEY: ci-test-secret-key-not-for-production
-          DATABASE_URL: postgresql://test:test@localhost:5432/test
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
           REDIS_URL: redis://localhost:6379/0
         run: |
-          python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-fail-under=0
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
 
   # --------------------------------------------
   # 前端测试

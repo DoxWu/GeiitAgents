@@ -117,7 +117,7 @@ class ImageProcessor:
             # 作用：提取的图片保存到磁盘，便于后续引用
             image_dir = os.path.join(
                 os.path.dirname(ctx.file_path),
-                f"images_{os.path.splitext(ctx.file_name)[0]}"
+                f"images_{ctx.document_id}"
             )
             os.makedirs(image_dir, exist_ok=True)
 

@@ -6,8 +6,7 @@
 #     复用项目 Resend SMTP 配置发送告警邮件。
 #
 # 使用方式：
-#     由 docker-compose.monitoring.yml 挂载到 Alertmanager 容器
-#     SMTP 配置通过环境变量传入（见 docker-compose.monitoring.yml）
+#     由 Alertmanager 镜像内的启动器将受控环境变量渲染到临时配置
 #
 # 告警流程：
 #     Prometheus 检测异常 → 触发告警规则(alerts.yml) →
@@ -38,13 +37,13 @@ receivers:
     # 作用：将告警通过邮件发送给管理员
     # SMTP 配置由环境变量注入（见 docker-compose.monitoring.yml）
     email_configs:
-      - to: '${ALERT_EMAIL_TO:admin@example.com}'
-        from: '${ALERT_EMAIL_FROM:GeiIt企业知识库 <onboarding@resend.dev>}'
-        smarthost: '${SMTP_HOST:smtp.resend.com}:${SMTP_PORT:465}'
-        auth_username: '${SMTP_USER:resend}'
-        auth_password: '${SMTP_PASSWORD:}'
-        # Resend 使用 SSL（端口 465），不需要 STARTTLS
-        require_tls: false
+      - to: @@ALERT_EMAIL_TO@@
+        from: @@ALERT_EMAIL_FROM@@
+        smarthost: @@SMTP_ADDRESS@@
+        auth_username: @@SMTP_USER@@
+        auth_password: @@SMTP_PASSWORD@@
+        require_tls: true
+        send_resolved: true
         # 邮件主题模板
         headers:
           subject: '{{ .GroupLabels.alertname }} - GeiIt企业知识库告警'

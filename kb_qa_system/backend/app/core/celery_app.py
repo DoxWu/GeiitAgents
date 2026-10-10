@@ -51,6 +51,7 @@ celery_app = Celery(
         "app.tasks.email_tasks",     # 邮件发送任务
         "app.tasks.cleanup_tasks",   # D10-03 数据清理任务
         "app.tasks.reminder_tasks",
+        "app.tasks.file_cleanup_tasks",
     ],  # 自动发现的任务模块
 )
 
@@ -160,6 +161,10 @@ celery_app.conf.update(
     # 作用：由 Celery beat 进程调度，按 crontab 定义的时间执行指定任务
     # 部署：需单独启动 beat 进程（celery -A app.core.celery_app beat）
     beat_schedule={
+        "cleanup-file-outbox": {
+            "task": "app.tasks.file_cleanup_tasks.cleanup_files",
+            "schedule": 60.0,
+        },
         "cleanup-expired-data": {
             "task": "app.tasks.cleanup_tasks.cleanup_expired_data",
             "schedule": crontab(hour=3, minute=0),  # 每日凌晨 03:00 执行

@@ -116,6 +116,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         error: null,
         loginDiagnostic: finishLoginDiagnostic(attempt),
       });
+      useDocumentStore.getState().loadSearchHistoryForCurrentAccount();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "登录失败，请重试";
@@ -153,6 +154,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         error: null,
         loginDiagnostic: finishLoginDiagnostic(attempt),
       });
+      useDocumentStore.getState().loadSearchHistoryForCurrentAccount();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "游客登录失败，请重试";
@@ -174,9 +176,6 @@ export const useAuthStore = create<AuthState>((set) => ({
       });
     } finally {
       if (generation === getAccountGeneration()) {
-      // 修复问题3：登出时重置 documentStore，清除前一个用户的分支/文档数据，
-      // 防止切换账户后数据残留（如普通账户→游客→换回时分支丢失或看到他人分支）
-      useDocumentStore.getState().reset();
       clearTokens();
       safeStorage.removeItem(USER_STORAGE_KEY);
       set({
@@ -185,6 +184,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: false,
         error: null,
       });
+      // Clear account-bound state after removing identity so no old history remains in memory.
+      useDocumentStore.getState().reset();
       }
     }
   },
@@ -202,7 +203,6 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 清除本地状态（不调用 logout API，避免重复黑名单请求）
-      useDocumentStore.getState().reset();
       clearTokens();
       safeStorage.removeItem(USER_STORAGE_KEY);
       set({
@@ -212,6 +212,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         loading: false,
         error: null,
       });
+      useDocumentStore.getState().reset();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "删除账号失败，请重试";

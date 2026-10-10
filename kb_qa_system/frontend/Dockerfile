@@ -37,6 +37,7 @@ RUN apk add --no-cache curl gettext
 
 # nginx 配置复制为模板（启动时由 start.sh 通过 envsubst 替换变量）
 COPY nginx.conf /etc/nginx/conf.d/default.conf.template
+COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY start.sh /app/start.sh
 
 RUN chmod +x /app/start.sh && \

@@ -31,7 +31,7 @@ const { mockDocumentApi } = vi.hoisted(() => ({
 vi.mock("@/api/document", () => mockDocumentApi);
 
 import { useDocumentStore } from "@/store/documentStore";
-import type { DocumentResponse, DocumentFolder } from "@/types/document";
+import type { DocumentResponse, DocumentFolder, DocumentListResponse } from "@/types/document";
 
 /** 创建测试用文档数据 */
 function createMockDocument(overrides?: Partial<DocumentResponse>): DocumentResponse {
@@ -89,6 +89,7 @@ describe("documentStore", () => {
       searchKeyword: "",
       sortBy: "created_at",
       sortOrder: "desc",
+      searchHistory: [],
       previewDocument: null,
       previewOpen: false,
     });
@@ -153,6 +154,26 @@ describe("documentStore", () => {
       // 加载完成
       expect(useDocumentStore.getState().loading).toBe(false);
     });
+
+    it("旧请求晚返回时不覆盖较新的搜索结果", async () => {
+      let resolveOld!: (value: DocumentListResponse) => void;
+      let resolveNew!: (value: DocumentListResponse) => void;
+      mockDocumentApi.getDocuments
+        .mockImplementationOnce(() => new Promise<DocumentListResponse>((resolve) => { resolveOld = resolve; }))
+        .mockImplementationOnce(() => new Promise<DocumentListResponse>((resolve) => { resolveNew = resolve; }));
+
+      useDocumentStore.getState().setSearchKeyword("旧查询");
+      const oldRequest = useDocumentStore.getState().loadDocuments();
+      useDocumentStore.getState().setSearchKeyword("新查询");
+      const newRequest = useDocumentStore.getState().loadDocuments();
+      resolveNew({ items: [createMockDocument({ id: 2 })], total: 1, page: 1, page_size: 20 });
+      await newRequest;
+      resolveOld({ items: [createMockDocument({ id: 1 })], total: 1, page: 1, page_size: 20 });
+      await oldRequest;
+
+      expect(useDocumentStore.getState().documents.map((document) => document.id)).toEqual([2]);
+      expect(useDocumentStore.getState().loading).toBe(false);
+    });
   });
 
   describe("setSearchKeyword", () => {
@@ -167,6 +188,38 @@ describe("documentStore", () => {
       setSearchKeyword("关键词");
       setSearchKeyword("");
       expect(useDocumentStore.getState().searchKeyword).toBe("");
+    });
+  });
+
+  describe("search history isolation", () => {
+    it("keeps history separate by user and account server", async () => {
+      const { safeStorage } = await import("@/utils/safeStorage");
+      const { USER_STORAGE_KEY } = await import("@/utils/constants");
+      const { getAccountServer, setAccountServer } = await import("@/services/accountServer");
+      const originalServer = getAccountServer();
+      try {
+        setAccountServer("https://search-a.example");
+        safeStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ id: 1 }));
+        useDocumentStore.getState().addSearchHistory("alpha private query");
+
+        safeStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ id: 2 }));
+        useDocumentStore.getState().reset();
+        useDocumentStore.getState().loadSearchHistoryForCurrentAccount();
+        expect(useDocumentStore.getState().searchHistory).toEqual([]);
+
+        safeStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ id: 1 }));
+        useDocumentStore.getState().loadSearchHistoryForCurrentAccount();
+        expect(useDocumentStore.getState().searchHistory).toEqual(["alpha private query"]);
+
+        setAccountServer("https://search-b.example");
+        safeStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ id: 1 }));
+        useDocumentStore.getState().loadSearchHistoryForCurrentAccount();
+        expect(useDocumentStore.getState().searchHistory).toEqual([]);
+      } finally {
+        setAccountServer(originalServer);
+        safeStorage.removeItem(USER_STORAGE_KEY);
+        useDocumentStore.getState().reset();
+      }
     });
   });
 

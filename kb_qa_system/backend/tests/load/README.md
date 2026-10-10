@@ -286,7 +286,11 @@ Locust Web UI 和 headless 模式输出以下关键指标：
 
 - MixedUser 会创建和删除文档，**压测后知识库内容会变化**
 - 建议在专用测试环境运行，不要在生产环境运行 MixedUser
-- 压测后可手动清理测试文档
+- MixedUser 写操作默认关闭；只有在专用隔离环境设置 `ALLOW_MUTATIONS=true` 后才会上传，并且只删除本轮成功上传且收到 ID 的文档。
+- `QAUser` 默认停止。只有明确设置 `ENABLE_LLM_TRAFFIC=true` 才发送可能计费的问题。
+- 所有 HTTP 调用使用 `LOCUST_REQUEST_TIMEOUT_SECONDS` 超时；登录失败用户会停止。
+- 测试账号需由运维在隔离环境准备。本脚本不自动创建/清理账号或数据库夹具，也不配置并发账号池。
+- 生产等价 PostgreSQL/Redis/Celery/RAG 阶梯和故障压力未在本机验收，生产环境不得运行混合写入测试。
 
 ### 8.5 监控配合
 
@@ -296,6 +300,7 @@ Locust Web UI 和 headless 模式输出以下关键指标：
 - `http_requests_total`：请求总量（按状态码分组）
 - `rag_total_duration_seconds`：RAG 处理耗时分布
 - `rag_degradation_total`：降级次数（LLM 熔断时增加）
+- `http_stream_duration_seconds`、`http_streams_in_progress`：完整流生命周期指标
 
 ---
 

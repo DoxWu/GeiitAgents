@@ -4,7 +4,7 @@
 # 安装方法：pip install -r requirements-dev.txt
 # 说明：此文件包含 requirements.txt 中的所有依赖，
 #       额外添加开发、测试、lint 工具，以及本地 ML 可选依赖
-#       （开发环境默认启用本地 Embedding 兜底和 CrossEncoder 重排序）。
+#       （安装依赖不会启用服务端本地 Embedding；仍需显式配置）。
 # ============================================
 
 -r requirements.txt

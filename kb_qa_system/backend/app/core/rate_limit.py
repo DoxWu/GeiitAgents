@@ -29,6 +29,7 @@ from fastapi import HTTPException, status, Request
 
 from app.core.redis import RedisManager, RedisKeys
 from app.core.config import settings
+from app.core.client_ip import get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -175,33 +176,10 @@ def _get_identifier(request: Request) -> str:
                 # Token 解码失败（无效/过期），回退到 IP 限流
                 pass
 
-    # 3. 回退到客户端 IP
-    # H-11 修复：反向代理场景优先使用 X-Forwarded-For 获取真实客户端 IP
-    # 作用：原实现 request.client.host 优先，反向代理下返回代理 IP（如 127.0.0.1），
-    #       所有请求被当作同一 IP 限流，限流失效；X-Forwarded-For 逻辑是死代码。
-    # 修复：当直连 IP 在可信代理列表时，从 X-Forwarded-For 取真实客户端 IP；
-    #       否则用直连 IP（非代理场景）。可信代理列表由 config.TRUSTED_PROXIES 配置。
-    client = request.client
-    direct_ip = client.host if client else None
-
-    # 解析可信代理列表（逗号分隔字符串 → set）
-    trusted_proxies = {
-        p.strip() for p in settings.TRUSTED_PROXIES.split(",") if p.strip()
-    }
-
-    # 来自可信代理：从 X-Forwarded-For 取最原始的客户端 IP
-    if direct_ip and direct_ip in trusted_proxies:
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            # X-Forwarded-For: client, proxy1, proxy2
-            # 取第一个（最原始的客户端 IP）
-            real_ip = forwarded.split(",")[0].strip()
-            if real_ip:
-                return f"ip:{real_ip}"
-
-    # 非代理场景或无 X-Forwarded-For：用直连 IP
-    if direct_ip:
-        return f"ip:{direct_ip}"
+    # Only trust forwarding headers from configured proxy peers.
+    client_ip = get_client_ip(request)
+    if client_ip:
+        return f"ip:{client_ip}"
 
     return "unknown"
 

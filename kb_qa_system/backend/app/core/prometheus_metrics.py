@@ -93,6 +93,29 @@ http_requests_in_progress = Gauge(
     "Number of HTTP requests currently in progress",
 )
 
+http_streams_in_progress = Gauge(
+    "http_streams_in_progress",
+    "Number of streaming HTTP responses currently being delivered",
+    ["endpoint"],
+)
+http_stream_duration_seconds = Histogram(
+    "http_stream_duration_seconds",
+    "Time from request start until a streaming response is fully delivered",
+    ["endpoint", "status"],
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0],
+)
+http_stream_first_event_seconds = Histogram(
+    "http_stream_first_event_seconds",
+    "Time from request start until the first non-empty streaming response body",
+    ["endpoint"],
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+)
+http_stream_cancelled_total = Counter(
+    "http_stream_cancelled_total",
+    "Streaming responses interrupted before the final body event",
+    ["endpoint"],
+)
+
 
 # ============================================
 # RAG 链路指标（由 rag_chain.py 主动埋点）

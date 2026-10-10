@@ -96,7 +96,7 @@ describe("auth API - 真实接口", () => {
   it("logout - 调用 POST /auth/logout", async () => {
     mockApiClient.post.mockResolvedValueOnce(undefined);
     await logout();
-    expect(mockApiClient.post).toHaveBeenCalledWith("/auth/logout");
+    expect(mockApiClient.post).toHaveBeenCalledWith("/auth/logout", { refresh_token: undefined }, { autoRefresh: false });
   });
 
   it("getCurrentUser - 调用 GET /auth/me", async () => {

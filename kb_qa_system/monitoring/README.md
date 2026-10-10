@@ -67,8 +67,14 @@ ENABLE_PROMETHEUS=true
 监控栈需与主服务一起启动（共享 Docker 网络）：
 
 ```bash
-# 在 kb_qa_system 目录下执行
-docker-compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+# 在 kb_qa_system 目录下执行。monitoring/.env 仅存监控凭据，不要提交。
+docker compose --env-file monitoring/.env -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+```
+
+若主服务已经运行，只启动监控栈时使用相同项目目录和 Compose 环境文件：
+
+```bash
+docker compose --env-file monitoring/.env --project-directory . -f monitoring/docker-compose.monitoring.yml up -d
 ```
 
 ### 3. 访问监控面板
@@ -76,7 +82,7 @@ docker-compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml
 | 服务         | 地址                      | 账号         |
 | ------------ | ------------------------- | ------------ |
 | Prometheus   | http://localhost:9090     | 无需认证     |
-| Grafana      | http://localhost:3001     | admin/admin  |
+| Grafana      | http://localhost:3001     | 用户名 `admin`；密码由 `GRAFANA_ADMIN_PASSWORD` 设置 |
 | Alertmanager | http://localhost:9093     | 无需认证     |
 | Loki API     | http://localhost:3100     | 无需认证（API，无 UI） |
 | Promtail     | http://localhost:9080     | 无需认证（查看采集状态） |
@@ -192,25 +198,32 @@ Grafana 仪表盘 `rag_dashboard.json` 包含 6 大区块、30+ 面板：
 
 ### 配置告警通知（Alertmanager）
 
-Alertmanager 已包含在监控栈中，告警通过邮件通知管理员。配置流程：
+Alertmanager 已包含在监控栈中。配置后可发送告警邮件；本仓库没有执行真实收件箱验收。
 
 ```bash
-# 1. 在 backend/.env 中配置环境变量（复用 Resend SMTP 配置）：
-#    ALERT_EMAIL_TO=admin@example.com          # 告警接收邮箱
+# 1. 在 Compose 的环境或私有 env 文件中配置：
+#    ALERT_EMAIL_TO=ops@example.com            # 告警接收邮箱
 #    ALERT_EMAIL_FROM=GeiIt企业知识库 <onboarding@resend.dev>  # 发件人
 #    SMTP_HOST=smtp.resend.com                 # SMTP 主机
-#    SMTP_PORT=465                             # SMTP 端口
+#    SMTP_PORT=587                             # STARTTLS 端口
 #    SMTP_USER=resend                          # SMTP 用户
-#    SMTP_PASSWORD=<your_resend_api_key>       # Resend API Key
+#    SMTP_PASSWORD=<smtp-password>             # 不写入仓库
+#    GRAFANA_ADMIN_PASSWORD=<long-random-value>
 
-# 2. 启动监控栈（Alertmanager 自动启动）
-docker-compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+# 2. 将以上值保存在未跟踪的 monitoring/.env，然后在 kb_qa_system 目录启动
+docker compose --env-file monitoring/.env -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
 
 # 3. 验证 Alertmanager 状态
 #    访问 http://localhost:9093，查看告警路由和静默规则
 ```
 
-Alertmanager 配置文件 `alertmanager.yml` 使用环境变量占位符（`${VAR}`），启动时由 Docker 自动注入。
+Compose 构建的 Alertmanager 镜像会将配置模板中的专用标记替换为 YAML 转义后的值，再以仅当前用户可读的临时文件启动。SMTP 主机和端口会校验格式；使用 STARTTLS 的 587 端口，465 隐式 TLS 未接入此模板。SMTP 用户名和密码不会写入渲染日志。监控 UI/API 只绑定本机回环地址，匿名 Grafana 访问关闭。真实 SMTP 投递仍须由运营方使用测试收件箱验收。
+
+从仓库根目录校验 Compose 配置时，`monitoring/.env` 必须包含 `GRAFANA_ADMIN_PASSWORD`：
+
+```bash
+docker compose --env-file kb_qa_system/monitoring/.env -f kb_qa_system/docker-compose.yml -f kb_qa_system/monitoring/docker-compose.monitoring.yml config --quiet
+```
 
 ## 日志聚合（Loki + Promtail）
 
@@ -285,20 +298,27 @@ curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
 ### 生产环境安全加固
 
 ```bash
-# 1. 启用 /metrics 端点 Basic Auth
+# backend/.env: enable and protect the API endpoint
+ENABLE_PROMETHEUS=true
 PROMETHEUS_AUTH_ENABLED=true
 PROMETHEUS_AUTH_USER=prometheus
-PROMETHEUS_AUTH_PASSWORD=<强密码>
+PROMETHEUS_AUTH_PASSWORD=<random secret using letters, digits, _ and ->
 
-# 2. 修改 Grafana 管理员密码
+# monitoring/.env: Prometheus uses the same credentials to scrape the API
+PROMETHEUS_AUTH_USER=prometheus
+PROMETHEUS_AUTH_PASSWORD=<same secret>
+
+# monitoring/.env: change the Grafana administrator password
 GF_SECURITY_ADMIN_PASSWORD=<强密码>
 
-# 3. 关闭 Grafana 匿名访问
+# 关闭 Grafana 匿名访问
 GF_AUTH_ANONYMOUS_ENABLED=false
 
-# 4. 关闭路径标签（降低 label 基数，防内存爆炸）
+# 关闭路径标签（降低 label 基数，防内存爆炸）
 PROMETHEUS_INCLUDE_PATH_LABEL=false
 ```
+
+Prometheus expands its scrape credentials from the process environment. Keep `monitoring/.env` untracked and use a random secret made from letters, digits, `_` and `-`; the same values must be present in `backend/.env`. The monitoring Compose service passes these values to Prometheus and enables config environment expansion.
 
 ## 文件结构
 
@@ -325,7 +345,7 @@ monitoring/
 
 ### Q: Prometheus target 显示 DOWN？
 
-- 检查 api 服务是否正常运行：`docker-compose ps`
+- 检查 api 服务是否正常运行：`docker compose --env-file monitoring/.env ps`
 - 检查 api 容器是否在同一个 Docker 网络：`docker network inspect kb_qa_system_default`
 - 检查 `ENABLE_PROMETHEUS` 是否设为 `true`
 - 在 api 容器内测试：`curl http://api:8000/metrics`
@@ -333,8 +353,8 @@ monitoring/
 ### Q: Grafana 没有显示仪表盘？
 
 - 检查 `grafana/dashboards/` 目录是否正确挂载
-- 查看 Grafana 日志：`docker-compose logs grafana`
-- 手动刷新 provisioning：`curl -X POST http://admin:admin@localhost:3001/api/admin/provisioning/dashboards/reload`
+- 查看 Grafana 日志：`docker compose --env-file monitoring/.env --project-directory . -f monitoring/docker-compose.monitoring.yml logs grafana`
+- 手动刷新 provisioning：使用配置的 Grafana 管理员凭据调用 `/api/admin/provisioning/dashboards/reload`
 
 ### Q: 指标 label 基数过高导致内存增长？
 
@@ -344,14 +364,14 @@ monitoring/
 ### Q: 如何在生产环境只监控关键指标？
 
 - 在 Railway 上设置 `ENABLE_PROMETHEUS=true` 即可启用
-- Prometheus 通过公网抓取需配置 `PROMETHEUS_AUTH_ENABLED=true` 保护端点
+- 认证启用时，Prometheus 抓取任务也必须配置相同用户名和密码；按上面的配置同时设置 `backend/.env` 与 `monitoring/.env`
 - 可在 `prometheus.yml` 中调整 `scrape_interval` 降低采集频率
 
 ### Q: Loki/Promtail 日志查询为空？
 
 - 检查 Promtail 是否发现容器：访问 http://localhost:9080/targets
 - 确认容器名以 `kb_qa_` 前缀开头（promtail.yml 中配置的过滤器）
-- 检查 Promtail 日志：`docker-compose -f monitoring/docker-compose.monitoring.yml logs promtail`
+- 检查 Promtail 日志：`docker compose --env-file monitoring/.env --project-directory . -f monitoring/docker-compose.monitoring.yml logs promtail`
 - 检查 Loki 健康：`curl http://localhost:3100/ready` 应返回 `ready`
 - 确认 Grafana 数据源已配置：进入 Configuration → Data Sources，应有 Loki
 
@@ -362,9 +382,8 @@ monitoring/
 - 检查是否有高基数标签：`curl http://localhost:3100/loki/api/v1/cardinality/labels`
 - 避免将 request_id、user_id 等高基数字段作为标签（promtail.yml 已规避）
 
-### Q: 生产环境（Railway）如何使用日志聚合？
+### Q: 云托管环境如何使用本地 Docker 日志聚合？
 
-- Railway 不支持 Docker Compose，Loki/Promtail 仅适用于本地 Docker 部署
-- Railway 自带日志查看功能（Dashboard → Service → Logs）
-- 生产环境推荐方案：Railay 原生日志 + Sentry 错误监控（已集成）
+- 部分云托管环境不支持 Docker Compose，Loki/Promtail 仅适用于可访问 Docker socket 的主机
+- 使用托管平台提供的日志查看功能，或单独设计并验证集中式日志服务
 - 如需集中式日志聚合，可将日志发送到外部服务（如 Grafana Cloud、Datadog）

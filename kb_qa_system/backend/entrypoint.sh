@@ -72,14 +72,48 @@ start_api_with_worker() {
         --loglevel=info \
         --concurrency="${CELERY_WORKER_CONCURRENCY:-2}" \
         --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}" &
+    WORKER_PID=$!
+
+    mkdir -p "$(dirname "${CELERY_BEAT_SCHEDULE_FILE:-/app/data/celerybeat-schedule}")"
+    echo "🕒 启动 Celery Beat（持久化调度状态）..."
+    celery -A app.core.celery_app:celery_app beat \
+        --loglevel=info \
+        --schedule="${CELERY_BEAT_SCHEDULE_FILE:-/app/data/celerybeat-schedule}" &
+    BEAT_PID=$!
 
     echo "🚀 启动 FastAPI 服务（${WORKERS} workers）..."
-    exec uvicorn app.main:app \
+    uvicorn app.main:app \
         --host 0.0.0.0 \
         --port "${PORT:-8000}" \
         --workers "${WORKERS}" \
         --proxy-headers \
-        --forwarded-allow-ips='*'
+        --forwarded-allow-ips="${FORWARDED_ALLOW_IPS:-${TRUSTED_PROXIES:-127.0.0.1}}" &
+    API_PID=$!
+    supervise_api_worker
+}
+
+stop_api_worker_children() {
+    trap - INT TERM
+    for child_pid in "${WORKER_PID:-}" "${BEAT_PID:-}" "${API_PID:-}"; do
+        if [ -n "$child_pid" ]; then kill -TERM "$child_pid" 2>/dev/null || true; fi
+    done
+    for child_pid in "${WORKER_PID:-}" "${BEAT_PID:-}" "${API_PID:-}"; do
+        if [ -n "$child_pid" ]; then wait "$child_pid" 2>/dev/null || true; fi
+    done
+}
+
+supervise_api_worker() {
+    trap 'stop_api_worker_children; exit 143' TERM
+    trap 'stop_api_worker_children; exit 130' INT
+    set +e
+    wait -n "$WORKER_PID" "$BEAT_PID" "$API_PID"
+    CHILD_STATUS=$?
+    set -e
+    echo "A required worker/scheduler process exited; stopping the API container."
+    kill -TERM "$API_PID" 2>/dev/null || true
+    wait "$API_PID" 2>/dev/null || true
+    stop_api_worker_children
+    return "$CHILD_STATUS"
 }
 
 # --------------------------------------------
@@ -97,7 +131,7 @@ start_api() {
         --port "${PORT:-8000}" \
         --workers "${WORKERS}" \
         --proxy-headers \
-        --forwarded-allow-ips='*'
+        --forwarded-allow-ips="${FORWARDED_ALLOW_IPS:-${TRUSTED_PROXIES:-127.0.0.1}}"
 }
 
 # --------------------------------------------
@@ -153,6 +187,12 @@ case "${ROLE}" in
     worker)
         start_worker
         ;;
+    beat)
+        mkdir -p "$(dirname "${CELERY_BEAT_SCHEDULE_FILE:-/app/data/celerybeat-schedule}")"
+        exec celery -A app.core.celery_app:celery_app beat \
+            --loglevel=info \
+            --schedule="${CELERY_BEAT_SCHEDULE_FILE:-/app/data/celerybeat-schedule}"
+        ;;
     flower)
         start_flower
         ;;
@@ -160,7 +200,7 @@ case "${ROLE}" in
         exec python -m app.ops.cli monitor
         ;;
     *)
-        echo "❌ 未知角色: ${ROLE}，可选值: api / api+worker / worker / flower / ops"
+        echo "❌ 未知角色: ${ROLE}，可选值: api / api+worker / worker / beat / flower / ops"
         exit 1
         ;;
 esac

@@ -96,6 +96,8 @@ def process_document_task(self, document_id: int) -> dict:
         if not document:
             logger.error(f"文档不存在: {document_id}")
             raise ValueError(f"文档不存在: {document_id}")
+        if document.is_deleted:
+            return {"document_id": document_id, "status": "deleted"}
 
         # 2. 更新状态为处理中
         document.status = "processing"
@@ -204,15 +206,18 @@ def process_document_task(self, document_id: int) -> dict:
         # 计算 total_tokens
         total_tokens = sum(c.token_count for c in ctx.chunks)
         document.total_tokens = total_tokens
-        db.commit()
-
         # 8. 标记低质量文档
         if ctx.quality_score < settings.DOCUMENT_QUALITY_THRESHOLD:
             document.status = "low_quality"
-            db.commit()
             logger.warning(
                 f"文档质量分偏低（{ctx.quality_score}），标记为 low_quality"
             )
+
+        # A31: success and old-version retirement share one commit. On failure
+        # the old document and vectors remain active; new partial vectors stay hidden.
+        from app.services.document_lifecycle import activate_replacement
+        activate_replacement(db, document)
+        db.commit()
 
         result = {
             "document_id": document.id,

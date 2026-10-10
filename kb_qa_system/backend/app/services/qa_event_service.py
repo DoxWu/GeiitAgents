@@ -112,16 +112,14 @@ class QAEventService:
 
             # 限制 answer 字段长度（避免超长回答撑爆数据库）
             # 作用：Text 类型虽然能存长文本，但埋点无需完整回答，截断到 2000 字
-            truncated_answer = None
-            if answer:
-                truncated_answer = answer[:2000] if len(answer) > 2000 else answer
+            # A03: telemetry contains metrics, never copied conversation payloads.
 
             event = QAEvent(
                 message_id=message_id,
                 conversation_id=conversation_id,
                 user_id=user_id,
-                question=question[:2000] if len(question) > 2000 else question,
-                answer=truncated_answer,
+                question="",
+                answer=None,
                 status=status,
                 degraded=degraded,
                 degrade_reason=degrade_reason,
@@ -139,7 +137,7 @@ class QAEventService:
                 total_time_ms=total_time_ms,
                 # 错误信息
                 error_code=error_code,
-                error_message=error_message,
+                error_message=None,
             )
 
             # M-11 修复：使用独立 session 隔离埋点写入，避免 rollback 影响 caller session

@@ -14,6 +14,7 @@ from app.models.registration import RegistrationApplication
 from app.models.email_log import EmailLog
 from app.models.audit_log import AuditLog
 from app.models.personal import Note, Todo, Reminder, ReminderDelivery
+from app.models.file_cleanup import FileCleanupJob
 
 __all__ = [
     "User",
@@ -27,4 +28,5 @@ __all__ = [
     "EmailLog",
     "AuditLog",
     "Note", "Todo", "Reminder", "ReminderDelivery",
+    "FileCleanupJob",
 ]

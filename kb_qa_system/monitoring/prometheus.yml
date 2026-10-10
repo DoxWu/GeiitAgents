@@ -36,6 +36,9 @@ scrape_configs:
   - job_name: "kb_qa_api"
     metrics_path: /metrics
     scrape_interval: 15s
+    basic_auth:
+      username: "$PROMETHEUS_AUTH_USER"
+      password: "$PROMETHEUS_AUTH_PASSWORD"
     static_configs:
       - targets: ["api:8000"]
         labels:

@@ -36,7 +36,7 @@ import io
 import logging
 from typing import Optional
 
-from locust import HttpUser, task, between
+from locust import HttpUser, StopUser, task, between
 
 # ============================================
 # 配置（从环境变量读取）
@@ -47,6 +47,9 @@ TEST_USERNAME: str = os.getenv("TEST_USERNAME", "testuser")
 TEST_PASSWORD: str = os.getenv("TEST_PASSWORD", "Test1234")
 TEST_USER2_USERNAME: str = os.getenv("TEST_USER2_USERNAME", "testuser2")
 TEST_USER2_PASSWORD: str = os.getenv("TEST_USER2_PASSWORD", "Test1234")
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("LOCUST_REQUEST_TIMEOUT_SECONDS", "20"))
+ALLOW_MUTATIONS = os.getenv("ALLOW_MUTATIONS", "false").lower() == "true"
+ENABLE_LLM_TRAFFIC = os.getenv("ENABLE_LLM_TRAFFIC", "false").lower() == "true"
 
 # API 前缀
 API_PREFIX: str = "/api/v1"
@@ -75,21 +78,32 @@ def login_and_get_token(client, username: str, password: str) -> Optional[str]:
     返回：
         Optional[str] — Access Token 字符串，登录失败返回 None
     """
-    response = client.post(
+    with client.post(
         f"{API_PREFIX}/auth/login",
         json={"username": username, "password": password},
         name="登录",
-    )
-    if response.status_code == 200:
-        data = response.json()
-        token = data.get("access_token")
-        if token:
-            logger.info(f"登录成功（username={username}）")
-            return token
-    logger.error(
-        f"登录失败（username={username}, status={response.status_code}）: {response.text[:200]}"
-    )
+        catch_response=True,
+    ) as response:
+        if response.status_code == 200:
+            try:
+                token = response.json().get("access_token")
+            except (ValueError, AttributeError):
+                token = None
+            if token:
+                response.success()
+                return token
+        response.failure(f"登录失败：HTTP {response.status_code}")
     return None
+
+
+def configure_request_timeout(client) -> None:
+    original_request = client.request
+
+    def request_with_timeout(method, url, **kwargs):
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT_SECONDS)
+        return original_request(method, url, **kwargs)
+
+    client.request = request_with_timeout
 
 
 # ============================================
@@ -173,13 +187,14 @@ class ReadOnlyUser(HttpUser):
             每个虚拟用户启动时登录一次获取 Token，后续请求复用。
             登录限流 5次/分钟，因此不在 task 中重复登录。
         """
+        configure_request_timeout(self.client)
         self.token: Optional[str] = login_and_get_token(
             self.client, TEST_USERNAME, TEST_PASSWORD
         )
         if self.token:
             self.auth_headers = {"Authorization": f"Bearer {self.token}"}
         else:
-            self.auth_headers = {}
+            raise StopUser()
 
     @task(3)
     def list_documents(self) -> None:
@@ -291,13 +306,17 @@ class QAUser(HttpUser):
         作用：
             登录获取 Token，初始化问题计数器。
         """
+        configure_request_timeout(self.client)
+        if not ENABLE_LLM_TRAFFIC:
+            logger.warning("QAUser 已停止：设置 ENABLE_LLM_TRAFFIC=true 才会产生模型请求")
+            raise StopUser()
         self.token: Optional[str] = login_and_get_token(
             self.client, TEST_USERNAME, TEST_PASSWORD
         )
         if self.token:
             self.auth_headers = {"Authorization": f"Bearer {self.token}"}
         else:
-            self.auth_headers = {}
+            raise StopUser()
         self._question_index: int = 0
 
     @task(3)
@@ -396,13 +415,15 @@ class MixedUser(HttpUser):
         作用：
             使用第二个测试账号登录（避免与只读/问答场景账号冲突）。
         """
+        configure_request_timeout(self.client)
+        self._created_document_ids: list[int] = []
         self.token: Optional[str] = login_and_get_token(
             self.client, TEST_USER2_USERNAME, TEST_USER2_PASSWORD
         )
         if self.token:
             self.auth_headers = {"Authorization": f"Bearer {self.token}"}
         else:
-            self.auth_headers = {}
+            raise StopUser()
 
     @task(1)
     def upload_document(self) -> None:
@@ -417,6 +438,9 @@ class MixedUser(HttpUser):
             上传限流 20次/小时，权重设为最低。
             文件内容为简单的测试文本，避免大文件传输耗时。
         """
+        if not ALLOW_MUTATIONS:
+            return
+
         # 生成内存测试文件（避免磁盘 IO）
         file_content = "这是一个压测测试文档。\n" * 20
         file_data = io.BytesIO(file_content.encode("utf-8"))
@@ -429,6 +453,13 @@ class MixedUser(HttpUser):
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201):
+                try:
+                    data = response.json()
+                    document_id = data.get("id") or data.get("document", {}).get("id")
+                    if document_id:
+                        self._created_document_ids.append(int(document_id))
+                except (ValueError, AttributeError, TypeError):
+                    pass
                 response.success()
             elif response.status_code == 429:
                 response.failure("上传触发限流（20次/小时）")
@@ -459,6 +490,8 @@ class MixedUser(HttpUser):
             POST /api/v1/chat/ask
             简单提问，测试 RAG 链路。
         """
+        if not ENABLE_LLM_TRAFFIC:
+            return
         with self.client.post(
             f"{API_PREFIX}/chat/ask",
             json={"question": "测试问题", "stream": False},
@@ -485,24 +518,11 @@ class MixedUser(HttpUser):
         注意：
             如果没有文档则跳过。
         """
-        # 先获取文档列表
-        list_resp = self.client.get(
-            f"{API_PREFIX}/documents?page=1&page_size=5",
+        if not ALLOW_MUTATIONS or not self._created_document_ids:
+            return
+        doc_id = self._created_document_ids.pop(0)
+        self.client.delete(
+            f"{API_PREFIX}/documents/{doc_id}",
             headers=self.auth_headers,
-            name="文档列表（删除前查询）",
+            name="删除本用户创建的压测文档",
         )
-        if list_resp.status_code != 200:
-            return
-
-        data = list_resp.json()
-        items = data.get("items") or data.get("documents") or []
-        if not items:
-            return
-
-        doc_id = items[0].get("id")
-        if doc_id:
-            self.client.delete(
-                f"{API_PREFIX}/documents/{doc_id}",
-                headers=self.auth_headers,
-                name="删除文档",
-            )

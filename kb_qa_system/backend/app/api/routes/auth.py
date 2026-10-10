@@ -714,21 +714,12 @@ async def delete_account(
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
     """
-    删除当前用户账号（生产版：GDPR/PIPL 合规）
+    删除当前用户账号（数据库删除及持久文件清理）
 
     作用：
-        永久删除当前用户账号及其所有个人数据，包括文档、对话、消息等。
-        删除后 Token 立即失效，用户需重新注册。
-        满足 GDPR"被遗忘权"和 PIPL 个人信息删除权要求。
-
-    实现流程：
-        1. 密码确认：验证当前密码，防止误操作和 CSRF 攻击
-        2. 删除物理文件：遍历用户文档，删除服务器上存储的原始文件
-        3. 删除数据库记录：db.delete(user) + commit，
-           级联删除 documents/document_chunks/conversations/messages
-           QAEvent.user_id 被 SET NULL（保留匿名化统计数据）
-        4. 吊销 Token：将 Access Token 和 Refresh Token（如有）加入黑名单
-        5. 返回删除成功消息
+        删除在线账号和关联记录；文件在提交后由持久任务清理。
+        QA 正文及关联审计身份字段在事务中清除，保留无身份的删除结果。
+        已发送邮件和既有备份无法借账号接口撤回，实际保留范围见隐私说明。
 
     请求体：
         {
@@ -755,51 +746,21 @@ async def delete_account(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 2. 删除用户上传的物理文件
-    # 作用：GDPR 要求彻底删除个人数据，文件系统中的文档文件也需删除
-    # 容错：文件删除失败记日志但不阻塞 DB 删除（DB 记录删除优先，文件残留可由清理任务处理）
+    user_id = current_user.id
     user_documents = db.query(Document).filter(Document.user_id == current_user.id).all()
-    for doc in user_documents:
-        if doc.file_path:
-            try:
-                # file_path 是相对路径，与 UPLOAD_DIR 拼接为绝对路径
-                file_abs_path = os.path.join(settings.UPLOAD_DIR, os.path.basename(doc.file_path))
-                if os.path.exists(file_abs_path):
-                    os.remove(file_abs_path)
-            except OSError as e:
-                # 文件删除失败记日志，不阻塞流程
-                logger.warning(
-                    f"删除用户文件失败（user_id={current_user.id}, "
-                    f"doc_id={doc.id}, path={doc.file_path}）: {e}"
-                )
-
-    # 3. 删除数据库记录（级联删除关联数据）
-    # 作用：User 模型配置了 cascade="all, delete-orphan"，
-    #       db.delete(user) 会级联删除 documents/document_chunks/conversations/messages
-    #       QAEvent.user_id 外键为 SET NULL，保留匿名化统计数据用于系统分析
-
-    # D10-01 审计日志：在删除用户前记录审计（删除后 user_id 将被 SET NULL）
-    # 作用：账号删除是敏感操作，需留痕便于合规审计
-    audit_service.log(
-        db=db,
-        user_id=current_user.id,
-        action="account.delete",
-        resource_type="user",
-        resource_id=current_user.id,
-        detail={"username": current_user.username, "email": current_user.email},
-        request=request,
-    )
-
+    user_conversations = db.query(Conversation).filter(Conversation.user_id == current_user.id).all()
+    from app.services.file_cleanup import enqueue_document_cleanup
+    from app.services.account_privacy import erase_account_payloads
     try:
+        # A04: no filesystem IO before the deleting transaction commits.
+        cleanup_job = enqueue_document_cleanup(db, user_documents)
+        erase_account_payloads(db, current_user, [d.id for d in user_documents], [c.id for c in user_conversations])
         db.delete(current_user)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.exception(f"删除用户数据库记录失败（user_id={current_user.id}）: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": "DELETE_FAILED", "message": "账号删除失败，请稍后重试"}},
-        )
+        logger.warning("账号删除事务失败")
+        raise HTTPException(500, detail={"error": {"code": "DELETE_FAILED", "message": "账号删除失败，请稍后重试"}}) from None
 
     # 4. 吊销 Token（立即使其失效）
     # 作用：删除账号后即使 Token 未过期也不能再使用，防止会话残留
@@ -826,9 +787,9 @@ async def delete_account(
         except Exception as e:
             logger.warning(f"删除账号后吊销 Refresh Token 失败: {e}")
 
-    logger.info(f"用户账号已删除（user_id={current_user.id}, username={current_user.username}）")
+    logger.info("账号数据库删除完成，文件清理已排队")
 
-    return {"message": "账号已删除"}
+    return {"message": "账号已删除，服务器文件已进入清理队列", "file_cleanup_status": cleanup_job.status, "file_cleanup_job_id": cleanup_job.id}
 
 
 # ============================================
@@ -838,7 +799,7 @@ async def delete_account(
 @router.get(
     "/export-data",
     summary="导出当前用户个人数据",
-    description="返回当前登录用户的所有个人数据（JSON 格式），包括账号信息、文档列表、对话历史。满足 GDPR 数据可携权要求。",
+    description="导出服务端账号、文档元数据、对话、笔记、待办、提醒及投递历史；包含归档/软删除记录，排除附件、向量和客户端本机数据。导出受数量及 16 MiB 大小限制。",
     status_code=status.HTTP_200_OK,
     # 限流：每小时最多 5 次导出
     # 作用：防止接口被滥用，数据导出是重查询操作
@@ -848,116 +809,6 @@ def export_user_data(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
-    """
-    导出当前用户个人数据（GDPR 数据可携权）
-
-    作用：
-        返回用户的所有个人数据，以 JSON 格式组织，便于用户迁移或备份。
-        满足 GDPR 第 20 条"数据可携权"和 PIPL 第 45 条个人信息转移权要求。
-
-    导出内容：
-        1. account: 账号信息（用户名、邮箱、注册时间等，不含密码）
-        2. documents: 用户上传的文档列表（元数据，不含文件内容）
-        3. conversations: 用户的所有对话和消息历史
-
-    响应示例：
-        {
-            "account": {
-                "id": 1,
-                "username": "alice",
-                "email": "alice@example.com",
-                "is_active": true,
-                "created_at": "2025-01-01T00:00:00"
-            },
-            "documents": [...],
-            "conversations": [...]
-        }
-
-    错误：
-        401: 未登录
-        429: 操作过于频繁（限流）
-    """
-    # 1. 账号信息（排除敏感字段）
-    # 作用：导出基本账号信息，不包含密码哈希等敏感数据
-    user_data = {
-        "id": current_user.id,
-        "username": current_user.username,
-        "email": current_user.email,
-        "is_active": current_user.is_active,
-        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
-        "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None,
-    }
-
-    # 2. 文档列表（元数据，不含文件内容）
-    # 作用：导出用户上传的所有文档元数据，不含文件全文（文件全文可通过单独接口获取）
-    user_documents = db.query(Document).filter(
-        Document.user_id == current_user.id,
-        Document.is_deleted == False,  # noqa: E712 - SQLAlchemy 需要 == False
-    ).all()
-
-    documents_data = [
-        {
-            "id": doc.id,
-            "title": doc.title,
-            "file_name": doc.file_name,
-            "file_type": doc.file_type,
-            "file_size": doc.file_size,
-            "status": doc.status,
-            "visibility": doc.visibility,
-            "quality_score": doc.quality_score,
-            "chunk_count": doc.chunk_count,
-            "total_tokens": doc.total_tokens,
-            "created_at": doc.created_at.isoformat() if doc.created_at else None,
-            "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-        }
-        for doc in user_documents
-    ]
-
-    # 3. 对话历史（含消息）
-    # 作用：导出用户的所有对话和消息，是用户数据的核心部分
-    user_conversations = db.query(Conversation).filter(
-        Conversation.user_id == current_user.id,
-        Conversation.is_active == True,  # noqa: E712 - SQLAlchemy 需要 == True
-    ).all()
-
-    conversations_data = []
-    for conv in user_conversations:
-        # 查询对话下的所有消息
-        messages = db.query(Message).filter(
-            Message.conversation_id == conv.id
-        ).order_by(Message.created_at).all()
-
-        messages_data = [
-            {
-                "id": msg.id,
-                "role": msg.role,
-                "content": msg.content,
-                "token_count": msg.token_count,
-                "model_used": msg.model_used,
-                "response_time_ms": msg.response_time_ms,
-                "feedback": msg.feedback,
-                "feedback_text": msg.feedback_text,
-                "is_degraded": msg.is_degraded,
-                "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            }
-            for msg in messages
-        ]
-
-        conversations_data.append({
-            "id": conv.id,
-            "title": conv.title,
-            "turn_count": conv.turn_count,
-            "is_pinned": conv.is_pinned,
-            "created_at": conv.created_at.isoformat() if conv.created_at else None,
-            "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
-            "messages": messages_data,
-        })
-
-    logger.info(f"用户数据已导出（user_id={current_user.id}, 文档数={len(documents_data)}, 对话数={len(conversations_data)}）")
-
-    return {
-        "account": user_data,
-        "documents": documents_data,
-        "conversations": conversations_data,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
-    }
+    """One consistent server snapshot; coverage and limits are included in JSON."""
+    from app.services.account_export import export_account
+    return export_account(db, current_user.id)

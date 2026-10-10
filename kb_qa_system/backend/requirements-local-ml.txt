@@ -2,9 +2,9 @@
 # GeiIt企业知识库 - 本地 ML 可选依赖
 # ============================================
 # 作用：
-#     启用本地 Embedding 兜底（LocalHuggingFaceEmbeddingClient）
-#     和 CrossEncoder 重排序（RerankerService）。
-#     未安装时两者自动降级，不影响主流程。
+#     为可选的服务端 LocalHuggingFaceEmbeddingClient 和 CrossEncoder
+#     重排序提供依赖。安装依赖本身不会启用本地 Embedding provider；
+#     LOCAL_EMBEDDING_ENABLED 默认关闭，启用前须核对向量维度与索引空间。
 #
 # 安装方法（需要本地 ML 能力时）：
 #     pip install -r requirements.txt -r requirements-local-ml.txt
@@ -14,7 +14,7 @@
 #
 # 体积影响：
 #     sentence-transformers 会拉入 torch（CPU 版约 200MB，完整版约 800MB）
-#     建议在不需要本地兜底的生产环境（如 Railway）不要安装。
+#     不需要这些可选能力的环境不要安装。
 # ============================================
 
 sentence-transformers==3.1.1  # 本地 Embedding + CrossEncoder 重排序

@@ -32,10 +32,8 @@ High 级别问题修复验证测试
     python -m pytest tests/test_high_fixes.py -v
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 from pathlib import Path
-
+from unittest.mock import MagicMock
 
 # ============================================
 # 辅助函数：读取源码文件内容（不导入模块，避免依赖问题）
@@ -108,6 +106,7 @@ class TestDistributedLockUuidLua:
     def test_acquire_lock_method_exists(self):
         """验证 RedisManager.acquire_lock 方法存在"""
         import inspect
+
         from app.core.redis import RedisManager
 
         assert hasattr(RedisManager, "acquire_lock"), "H-2: 应有 acquire_lock 方法"
@@ -118,6 +117,7 @@ class TestDistributedLockUuidLua:
     def test_release_lock_method_exists(self):
         """验证 RedisManager.release_lock 方法存在"""
         import inspect
+
         from app.core.redis import RedisManager
 
         assert hasattr(RedisManager, "release_lock"), "H-2: 应有 release_lock 方法"
@@ -412,15 +412,15 @@ class TestRateLimitIdentifier:
     def test_h11_logic_in_rate_limit(self):
         """验证 rate_limit.py 有 X-Forwarded-For 处理逻辑"""
         source = read_source("app/core/rate_limit.py")
-        assert "H-11" in source, "应有 H-11 修复标记"
-        assert "X-Forwarded-For" in source, "应读取 X-Forwarded-For 头"
-        assert "TRUSTED_PROXIES" in source, "应使用 TRUSTED_PROXIES 配置"
-        assert "trusted_proxies" in source, "应有可信代理集合变量"
+        client_ip_source = read_source("app/core/client_ip.py")
+        assert "get_client_ip(request)" in source
+        assert "X-Forwarded-For" in client_ip_source
+        assert "TRUSTED_PROXIES" in client_ip_source
 
     def test_get_identifier_uses_real_ip_when_trusted(self, monkeypatch):
         """可信代理场景下使用 X-Forwarded-For 真实 IP"""
-        from app.core.rate_limit import _get_identifier
         from app.core.config import settings
+        from app.core.rate_limit import _get_identifier
 
         # 模拟请求：未认证（无 user_id、无 Authorization），直连 IP 是可信代理
         mock_request = MagicMock()
@@ -432,7 +432,7 @@ class TestRateLimitIdentifier:
             "X-Forwarded-For": "203.0.113.50, 10.0.0.1"
         }.get(key, default)
 
-        monkeypatch.setattr(settings, "TRUSTED_PROXIES", "127.0.0.1")
+        monkeypatch.setattr(settings, "TRUSTED_PROXIES", "127.0.0.1,10.0.0.0/8")
 
         identifier = _get_identifier(mock_request)
         assert "203.0.113.50" in identifier, \
@@ -440,8 +440,8 @@ class TestRateLimitIdentifier:
 
     def test_get_identifier_uses_direct_ip_when_untrusted(self, monkeypatch):
         """非可信代理场景下使用直连 IP"""
-        from app.core.rate_limit import _get_identifier
         from app.core.config import settings
+        from app.core.rate_limit import _get_identifier
 
         mock_request = MagicMock()
         mock_request.state.user_id = None
@@ -459,8 +459,8 @@ class TestRateLimitIdentifier:
 
     def test_get_identifier_fallback_unknown(self, monkeypatch):
         """无 client 信息时返回 unknown"""
-        from app.core.rate_limit import _get_identifier
         from app.core.config import settings
+        from app.core.rate_limit import _get_identifier
 
         mock_request = MagicMock()
         mock_request.state.user_id = None

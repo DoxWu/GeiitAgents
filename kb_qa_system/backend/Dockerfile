@@ -51,7 +51,8 @@ COPY requirements-local-ml.txt .
 
 # 可选：本地 ML 依赖开关
 # 作用：默认不安装 sentence-transformers（节省 ~800MB torch），
-#       需要本地 Embedding 兜底 / CrossEncoder 重排序时启用。
+#       需要可选服务端 Embedding provider / CrossEncoder 重排序依赖时启用；
+#       本地 provider 仍须单独配置开关并校验向量空间兼容性。
 # 启用方式：docker build --build-arg INSTALL_LOCAL_ML=true -t kb-qa-backend .
 ARG INSTALL_LOCAL_ML=false
 
