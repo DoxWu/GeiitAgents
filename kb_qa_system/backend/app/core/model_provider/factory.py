@@ -80,8 +80,8 @@ class ModelClientFactory:
             raise
         except Exception as e:
             raise ModelClientUnavailableError(
-                f"创建文本客户端失败 [{config.name}/{config.type}]: {e}"
-            ) from e
+                f"创建文本客户端失败 [{config.name}/{config.type}]: {type(e).__name__}"
+            ) from None
 
     @staticmethod
     def create_embedding_client(config: ProviderEndpointConfig) -> EmbeddingModelClient:
@@ -113,8 +113,8 @@ class ModelClientFactory:
             raise
         except Exception as e:
             raise ModelClientUnavailableError(
-                f"创建 Embedding 客户端失败 [{config.name}/{config.type}]: {e}"
-            ) from e
+                f"创建 Embedding 客户端失败 [{config.name}/{config.type}]: {type(e).__name__}"
+            ) from None
 
     @staticmethod
     def create_vision_client(config: ProviderEndpointConfig) -> VisionModelClient:
@@ -144,8 +144,8 @@ class ModelClientFactory:
             raise
         except Exception as e:
             raise ModelClientUnavailableError(
-                f"创建 Vision 客户端失败 [{config.name}/{config.type}]: {e}"
-            ) from e
+                f"创建 Vision 客户端失败 [{config.name}/{config.type}]: {type(e).__name__}"
+            ) from None
 
     @staticmethod
     def create_client(config: ProviderEndpointConfig, model_type: str):

@@ -1,5 +1,5 @@
 """
-邮件系统验证测试（Resend SMTP 集成）
+邮件系统验证测试（Resend HTTP API 与 SMTP 兼容路径）
 
 作用：
     验证邮件发送服务、Celery 任务、注册审批路由的安全结构和核心逻辑，
@@ -120,7 +120,8 @@ class TestEmailServiceStructure:
         """验证 HTTP API 主通道发送函数存在"""
         source = read_source("app/services/email_service.py")
         assert "def _send_via_http_api(" in source, "应定义 _send_via_http_api 函数"
-        assert "def _get_resend_client()" in source, "应定义 _get_resend_client 懒加载函数"
+        assert '"https://api.resend.com/emails"' in source
+        assert "EmailDeliveryOutcomeUnknown" in source
 
     def test_dual_channel_smtp_backup_exists(self):
         """验证 SMTP 备用通道发送函数存在"""
@@ -138,10 +139,11 @@ class TestEmailServiceStructure:
         assert "_send_via_smtp_sync(to, subject, html_body)" in source, \
             "smtp 通道应调用 _send_via_smtp_sync"
 
-    def test_http_api_uses_resend_sdk(self):
-        """验证 HTTP API 通道使用 Resend SDK"""
+    def test_http_api_is_single_attempt_and_keeps_credentials_private(self):
+        """Resend is called once so an ambiguous timeout cannot trigger a duplicate."""
         source = read_source("app/services/email_service.py")
-        assert "import resend" in source, "应导入 resend SDK"
+        assert "httpx.Client(timeout=30, follow_redirects=False)" in source
+        assert "import resend" not in source
         # 兼容回退：优先 RESEND_API_KEY，缺失时回退 SMTP_PASSWORD
         assert "settings.RESEND_API_KEY or settings.SMTP_PASSWORD" in source, \
             "应支持 RESEND_API_KEY 回退到 SMTP_PASSWORD"
@@ -178,6 +180,8 @@ class TestEmailTasksStructure:
         assert 'autoretry_for=(Exception,)' in source, "应配置自动重试"
         assert '"max_retries": 3' in source, "最大重试次数应为 3"
         assert "retry_backoff=True" in source, "应启用指数退避"
+        assert "STATUS_SENDING" in source and "STATUS_UNKNOWN" in source
+        assert "delivery_outcome_unknown" in source
         assert "acks_late=True" in source, "应配置 acks_late（消息确认延迟）"
         assert 'queue="email"' in source, "应路由到 email 队列"
 

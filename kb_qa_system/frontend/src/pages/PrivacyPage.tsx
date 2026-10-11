@@ -11,6 +11,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, BookOpen, Shield } from "lucide-react";
+import { getPublicConfig, getPublicContactEmail } from "@/config/publicConfig";
 
 /** 隐私政策章节 */
 interface PrivacySection {
@@ -101,17 +102,28 @@ const SECTIONS: PrivacySection[] = [
   {
     title: "八、联系方式",
     paragraphs: [
-      "数据权利请求和隐私问题由当前部署的运营方受理。此构建未配置经核实的公开反馈邮箱或服务期限，请联系提供该系统的组织管理员获取有效渠道。",
+      "本部署公开的运营主体、数据处理和联系方式如下。未公开的事项请向组织管理员核实；默认配置不代表实际处理区域或跨境情况已经确认。",
     ],
   },
 ];
 
 /** 最后更新日期 */
-const LAST_UPDATED = "2026年10月10日";
+const LAST_UPDATED = "2026年10月11日";
 
 /** PrivacyPage 组件 */
 export default function PrivacyPage() {
   const navigate = useNavigate();
+  const publicConfig = getPublicConfig();
+  const contactEmail = getPublicContactEmail();
+  const notPublished = "此部署尚未公开，请向部署运营方核实。";
+  const deploymentDetails = [
+    `运营主体：${publicConfig.operatorName || notPublished}`,
+    `运营主体所在地：${publicConfig.operatorLocation || notPublished}`,
+    `第三方服务：${publicConfig.thirdPartyNotice || notPublished}`,
+    `数据处理区域：${publicConfig.processingRegion || notPublished}`,
+    `数据保留：${publicConfig.retentionNotice || notPublished}`,
+    `跨境处理：${publicConfig.crossBorderNotice || notPublished}`,
+  ];
 
   /** 返回上一页 */
   const handleBack = () => {
@@ -180,6 +192,23 @@ export default function PrivacyPage() {
                     {para}
                   </p>
                 ))}
+                {section.title === "八、联系方式" && (
+                  <>
+                    {deploymentDetails.map((detail) => (
+                      <p key={detail} className="text-sm leading-relaxed text-ink-secondary">
+                        {detail}
+                      </p>
+                    ))}
+                    {contactEmail && (
+                      <p className="text-sm leading-relaxed text-ink-secondary">
+                        反馈与隐私请求：{" "}
+                        <a className="text-brand underline" href={`mailto:${contactEmail}`}>
+                          {contactEmail}
+                        </a>
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             </section>
           ))}

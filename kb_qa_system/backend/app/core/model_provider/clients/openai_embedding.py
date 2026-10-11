@@ -25,6 +25,7 @@ from typing import List
 from app.core.circuit_breaker import CircuitBreakerOpenError
 from app.core.model_provider.base import EmbeddingModelClient
 from app.core.model_provider.clients._retry_utils import is_retryable
+from app.core.model_provider.diagnostics import safe_error_label
 from app.core.model_provider.exceptions import ModelInvocationError
 from app.core.model_provider.schemas import ProviderEndpointConfig
 
@@ -135,13 +136,13 @@ class OpenAIEmbeddingClient(EmbeddingModelClient):
                 self.breaker.record_failure()
             logger.warning(
                 f"[{self.model_type}:{self.name}] Embedding 调用失败: "
-                f"{type(e).__name__}: {e}"
+                f"{safe_error_label(e)}"
             )
             raise ModelInvocationError(
-                f"[{self.name}] Embedding 调用失败: {type(e).__name__}: {e}",
+                f"[{self.name}] Embedding 调用失败: {safe_error_label(e)}",
                 provider_name=self.name,
                 original_exc=e,
-            ) from e
+            ) from None
 
     def close(self):
         """

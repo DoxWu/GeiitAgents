@@ -12,6 +12,7 @@
 """
 
 from typing import Any, Tuple
+from app.core.model_provider.diagnostics import safe_error_label
 
 
 def is_retryable(exc: BaseException) -> bool:

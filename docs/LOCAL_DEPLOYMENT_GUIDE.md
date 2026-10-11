@@ -89,11 +89,17 @@ cp frontend/.env.example frontend/.env.local
 # 必填：JWT 签名密钥（生成方法见 2.3）
 SECRET_KEY=你的生成的密钥
 
-# 必填：LLM API
-OPENAI_API_KEY=sk-your-api-key
-OPENAI_API_BASE=https://api.openai.com/v1
-LLM_MODEL_NAME=gpt-3.5-turbo
-EMBEDDING_MODEL_NAME=text-embedding-ada-002
+# 按部署者选定的阿里云兼容端点/模型填写
+ALIYUN_API_KEY=由部署密钥管理器注入
+ALIYUN_API_BASE=按地域和账号填写
+ALIYUN_LLM_MODEL=按控制台填写
+ALIYUN_EMBEDDING_MODEL=按控制台填写
+EMBEDDING_DIMENSION=与模型输出和数据库向量列一致
+# DeepSeek 仅作为文本 LLM 备用
+DEEPSEEK_API_KEY=由部署密钥管理器注入
+DEEPSEEK_API_BASE=https://api.deepseek.com/v1
+DEEPSEEK_LLM_MODEL=按控制台填写
+DEEPSEEK_LLM_ENABLED=true
 
 # 可选：邮件（不填则邮件功能降级）
 EMAIL_ENABLED=False
@@ -338,29 +344,29 @@ npm run dev
 
 系统支持 LLM 和 Embedding 的多级降级链路，当主 API 不可用时自动切换备用提供者。配置文件位于 [providers.yaml](file:///c:/Users/DOXIA/Desktop/企业知识库问答系统/kb_qa_system/backend/app/core/model_provider/providers.yaml)，环境变量优先级高于 YAML 默认值。
 
-**LLM 降级链路**：`primary`（主模型） → `fallback`（降级模型） → `local_fallback`（本地 Ollama）
+**LLM 降级链路**：阿里云 OpenAI 兼容主端点 → DeepSeek OpenAI 兼容文本备用端点。服务端本地 Ollama 默认为关闭。
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `LLM_FALLBACK_API_KEY` | 降级 LLM 的独立 API Key（不设则复用 `OPENAI_API_KEY`） | （空） |
-| `LLM_FALLBACK_API_BASE` | 降级 LLM 的 API 地址（不设则复用 `OPENAI_API_BASE`） | （空） |
-| `LLM_FALLBACK_ENABLED` | 是否启用降级 LLM | `true` |
+| `DEEPSEEK_API_KEY` | DeepSeek 文本 LLM 备用 Key | 由部署者配置 |
+| `DEEPSEEK_API_BASE` | DeepSeek OpenAI 兼容 API 地址 | `https://api.deepseek.com/v1` |
+| `DEEPSEEK_LLM_MODEL` | DeepSeek 文本模型名 | 由部署者配置 |
+| `DEEPSEEK_LLM_ENABLED` | 是否启用 DeepSeek 文本备用 | `true` |
 | `LOCAL_LLM_ENABLED` | 是否启用本地 LLM 兜底（Ollama） | `false` |
 | `LOCAL_LLM_MODEL` | 本地 LLM 模型名 | `qwen2.5:7b` |
 | `LOCAL_LLM_BASE` | Ollama API 地址 | `http://localhost:11434/v1` |
 
-**Embedding 降级链路**：`primary`（主模型） → `cloud_fallback`（云端备用） → `local_fallback`（HuggingFace 本地）
+**Embedding 路径**：阿里云 OpenAI 兼容主端点；云端和服务端本地备用默认关闭。DeepSeek 端点不会用于 Embedding。
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `EMBEDDING_FALLBACK_API_KEY` | 云端备用 Embedding 的 API Key（不设则复用 `LLM_FALLBACK_API_KEY`） | （空） |
+| `EMBEDDING_FALLBACK_ENABLED` | 显式启用独立且向量空间兼容的 Embedding 备用端点 | `false` |
+| `EMBEDDING_FALLBACK_API_KEY` | 独立云端备用 Embedding Key | （空） |
 | `EMBEDDING_FALLBACK_API_BASE` | 云端备用 Embedding 的 API 地址 | （空） |
 | `EMBEDDING_FALLBACK_MODEL_NAME` | 云端备用 Embedding 模型名 | （复用 `EMBEDDING_MODEL_NAME`） |
 | `LOCAL_EMBEDDING_ENABLED` | 是否启用服务器端 HuggingFace Embedding provider（与客户端本地 E5 分开；默认关闭） | `false` |
 
-> 💡 **嵌套占位符**：`providers.yaml` 使用 `${VAR1:${VAR2:${VAR3}}}` 语法实现三级回退。例如 Embedding 的 cloud_fallback 提供者：`${EMBEDDING_FALLBACK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}` 表示依次查找这三个变量。
->
-> ⚠️ **DeepSeek 用户注意**：DeepSeek API **不支持** `/embeddings` 端点（仅 `/chat/completions`）。如使用 DeepSeek 作为主 LLM，必须配置 `EMBEDDING_FALLBACK_API_BASE` 指向支持 Embedding 的服务（如阿里云、OpenAI）。
+> 变更 Embedding 模型或维度前，先确认数据库 `pgvector` schema 与既有向量的处理方案；仅仅输出维度相同不表示两个模型的向量可以混用。
 
 ### 4.2 前端配置（frontend/.env.local）
 

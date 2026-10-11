@@ -751,3 +751,13 @@
 - 本轮实现阶段全量验证仍以本节当前状态及 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md) 所列为准：后端 **658 通过 / 16 跳过**、前端 **130 文件 / 1262 项通过**，check/lint/Web build、Compose、Sealos Kustomize、Alembic 单一 head 和改动 Python 文件检查通过。没有据此宣称完成线上/容器部署或真实服务验收。
 - Git：本轮修复提交为 `db5c2a8`，已普通推送至 `agents/develop/geiit-agents`；推送后 `git ls-remote`、重新 fetch 和本地跟踪分支均确认远端 SHA 为 `db5c2a8`。远端旧 `main` 未修改，未强推。该日志收尾更新会另作普通提交并同步。
 - 未完成项：A08 仍受 npm audit 镜像 API `404 NOT_IMPLEMENTED` 阻断；来源无法确认的旧云端向量须迁移后显式重处理；目标数据库尚未迁移。真实 Redis/通知、provider、SMTP、公开反馈联系方式与政策核查按约定留到最后，其他容器、桌面升级、备份恢复及部署验收未执行。
+
+### 2026-10-11：A28 供应商、邮件与隐私验收准备
+
+- 用户确认：阿里云 OpenAI 兼容端点提供主 LLM 和 Embedding；DeepSeek OpenAI 兼容端点只作 LLM 备用；邮件使用 Resend；管理员/反馈邮箱按部署实例配置，未配置或地址无效时隐藏。运营主体及所在地由部署者决定。云端部署和“绝大多数情况非跨境”不作为已核实的数据流事实，处理区域、保留、跨境及第三方服务说明留待部署者核实。
+- 实际实现：新增 `app.ops.provider_acceptance` 部署验收脚本及 A28 操作说明；更新 provider 环境变量、部署模板和帮助/隐私页运行时公开配置。真实探测只使用进程环境，不加载 `.env`；以只读数据库查询检查向量列，再分别探测两家 LLM、工具调用和主 Embedding，Resend 显式收件人只投递一封合成邮件。邮箱空值/无效时不产生公开邮件链接。
+- 途中修复：邮件任务用数据库条件更新原子领取 pending 记录，避免并发队列消息重复发送；同一 Celery 任务重投时把中断中的发送标为 unknown。停用邮件时保留 pending，不再把未发送标成 sent；清除 SMTP 成功和禁用日志中的收件人/主题。
+- 本次验证：后端全量 **678 通过 / 16 跳过**（此前首次运行因缺少 python-multipart 有 9 项初始化失败；加入已存在的隔离依赖目录后全量重跑通过）；前端 **131 个测试文件 / 1264 项通过**，TypeScript check、lint、Web build 通过。改动 Python 文件 compileall、`bash -n`、Sealos Kustomize 展开和 `git diff --check` 通过。构建有两条模块动态/静态导入提示；本机 Ruff 二进制不可用，本次未重跑 Ruff。
+- 本地 preflight 因当前进程未配置供应商密钥、模型端点/模型名、数据库和邮件发件环境而按设计拒绝通过。没有读取 `kb_qa_system/backend/.env`，没有真实模型/数据库/邮件请求；未发邮件、未构建容器、未应用迁移、未部署或触碰线上服务。本地 Web production bundle 构建成功。
+- A28 尚需部署者提供/核对：阿里云具体地域兼容端点、LLM/Embedding 模型 ID、向量维度及目标库 pgvector 列维度；DeepSeek 备用模型 ID 和运行时密钥；API 容器中的数据库/供应商运行时配置；Resend API Key、已验证发件地址和一次测试收件箱。真实注册/审批邮件还需后端 `ADMIN_NOTIFY_EMAIL` 并单独验证队列流程；它不同于可选公开的 `PUBLIC_CONTACT_EMAIL` 和脚本收件人。运行 `--live --email-to <测试收件箱>` 会产生模型用量并发送一封合成邮件。管理员公开邮箱是可选的部署配置，隐私运营信息必须由部署者核实后填写。
+- 其他待办仍包括 A08 依赖审计、检索业务基准、真实 Redis/多服务/浏览器兼容与压力验收、完整备份恢复/回滚/桌面升级部署验收，以及 A30/A31/A32/A33/A34 所列的线上等价验证。详细状态见 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md)。本次 GitHub fetch 因连接 443 失败，无法检查当前远端差异，因此本地保存提交、不推送；旧 `main` 未改。网络恢复后需重新 fetch/核对，再普通推送，不强推。

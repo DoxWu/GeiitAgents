@@ -858,18 +858,19 @@ PASSWORD_TOKEN_EXPIRE_HOURS=24
 #### 6.3.7 LLM 大模型配置
 
 ```env
-OPENAI_API_KEY=sk-你的deepseek_key
-OPENAI_API_BASE=https://api.deepseek.com
-LLM_MODEL_NAME=deepseek-v4-pro
-LLM_FALLBACK_MODEL_NAME=deepseek-v4-flash
-EMBEDDING_MODEL_NAME=text-embedding-v4
+ALIYUN_API_KEY=在部署密钥中设置
+ALIYUN_API_BASE=按所选阿里云产品和地域填写 OpenAI 兼容端点
+ALIYUN_LLM_MODEL=按阿里云控制台填写
+ALIYUN_EMBEDDING_MODEL=按阿里云控制台填写
+DEEPSEEK_API_KEY=在部署密钥中设置
+DEEPSEEK_API_BASE=https://api.deepseek.com/v1
+DEEPSEEK_LLM_MODEL=按 DeepSeek 控制台填写
+DEEPSEEK_LLM_ENABLED=true
+# 必须匹配所选 Embedding 模型输出维度和数据库 pgvector 列；切换维度需先规划迁移/重处理。
 EMBEDDING_DIMENSION=1536
-VISION_MODEL_NAME=qwen3.6-plus
-```
-
-#### 6.3.8 LLM 容错配置
-
-```env
+EMBEDDING_SUPPORTS_DIMENSIONS=false
+EMBEDDING_FALLBACK_ENABLED=false
+ALIYUN_VISION_ENABLED=false
 LLM_MAX_RETRIES=3
 LLM_TIMEOUT=60
 LLM_STREAM_FIRST_TOKEN_TIMEOUT=30
@@ -877,17 +878,19 @@ CIRCUIT_BREAKER_THRESHOLD=10
 CIRCUIT_BREAKER_RECOVERY_TIME=60
 ```
 
-> `LLM_STREAM_FIRST_TOKEN_TIMEOUT=30`：推理模型首字延迟较长，不能设太小，否则熔断器误开。
+模型名称、阿里云区域端点、Embedding 输出维度必须由部署者核对实际账号权限与数据库 schema。本配置选择不包含视觉模型。
 
-#### 6.3.9 多 API 降级配置
+#### 6.3.8 部署验收命令
 
-```env
-LLM_FALLBACK_API_KEY=你的阿里云key
-LLM_FALLBACK_API_BASE=https://ws-fpzje8gjl9rtqogw.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-LLM_FALLBACK_ENABLED=true
-EMBEDDING_FALLBACK_API_KEY=你的阿里云key
-EMBEDDING_FALLBACK_API_BASE=https://ws-fpzje8gjl9rtqogw.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+先在后端容器内做无网络配置检查，再执行真实模型/Resend 检查。真实命令会分别调用主 LLM、Embedding、备用 LLM 和工具调用探测，并给指定邮箱发送一封测试邮件；每个模型调用会产生供应商用量。网络结果不明的邮件必须先在 Resend Events 核对，不要直接重跑。
+
+```bash
+cd /app
+python -m app.ops.provider_acceptance --preflight
+python -m app.ops.provider_acceptance --live --email-to admin@example.com
 ```
+
+验收脚本只读容器进程环境变量，不加载 `.env`，错误输出不含 API Key、收件地址、模型返回正文或供应商错误正文。脚本未配置视觉模型时会明确标记为未测试。该命令是供应商直连检查，不替代应用队列、真实 RAG、合同/区域/保留策略或法规核查。
 
 > **重要**：DeepSeek 不支持 `/embeddings` 端点，Embedding 降级必须指向阿里云。`EMBEDDING_FALLBACK_API_KEY` 与 `LLM_FALLBACK_API_KEY` 通常是同一个阿里云密钥。
 
@@ -1087,12 +1090,22 @@ docker push registry.cn-hangzhou.aliyuncs.com/geiit/kb-qa-frontend:latest
 ```env
 BACKEND_URL=http://kb-qa-api:8000
 PORT=80
+# 以下值仅进入公开的 runtime-config.js；严禁放密钥或内部连接信息。
+PUBLIC_CONTACT_EMAIL=
+PUBLIC_OPERATOR_NAME=
+PUBLIC_OPERATOR_LOCATION=
+PUBLIC_DATA_PROCESSING_REGION=
+PUBLIC_DATA_RETENTION_NOTICE=
+PUBLIC_CROSS_BORDER_NOTICE=
+PUBLIC_THIRD_PARTY_PROCESSING_NOTICE=
 ```
 
 | 变量            | 说明                      |
 | ------------- | ----------------------- |
 | `BACKEND_URL` | 后端内网地址（`http://应用名:端口`） |
 | `PORT`        | nginx 监听端口              |
+| `PUBLIC_CONTACT_EMAIL` | 可公开的管理员/反馈邮箱；留空时隐私页与帮助页不显示邮箱 |
+| `PUBLIC_*` 部署说明字段 | 主体、区域、保留、跨境和第三方处理信息；由运营方核实后填写，会公开给访问者 |
 
 > **关键**：
 >
@@ -1741,16 +1754,15 @@ initdb: detail: It contains a lost+found directory, perhaps due to it being a mo
 
 | 变量名                           | 必填 | 说明                   |
 | ----------------------------- | -- | -------------------- |
-| `OPENAI_API_KEY`              | ✅  | 主 LLM API Key        |
-| `OPENAI_API_BASE`             | ✅  | LLM API 地址           |
-| `LLM_MODEL_NAME`              | ✅  | 主模型名                 |
-| `LLM_FALLBACK_MODEL_NAME`     | ❌  | 降级模型名                |
-| `EMBEDDING_MODEL_NAME`        | ✅  | Embedding 模型名        |
-| `EMBEDDING_DIMENSION`         | ✅  | 向量维度（必须 1536）        |
-| `LLM_FALLBACK_API_KEY`        | ❌  | 降级 LLM API Key       |
-| `LLM_FALLBACK_API_BASE`       | ❌  | 降级 LLM API 地址        |
-| `EMBEDDING_FALLBACK_API_KEY`  | ❌  | 降级 Embedding API Key |
-| `EMBEDDING_FALLBACK_API_BASE` | ❌  | 降级 Embedding API 地址  |
+| `ALIYUN_API_KEY`              | ✅  | 阿里云主 LLM/Embedding Key |
+| `ALIYUN_API_BASE`             | ✅  | 按账号地域配置的兼容端点 |
+| `ALIYUN_LLM_MODEL`            | ✅  | 阿里云主文本模型名 |
+| `ALIYUN_EMBEDDING_MODEL`      | ✅  | 阿里云 Embedding 模型名 |
+| `DEEPSEEK_API_KEY`             | ✅  | DeepSeek 文本备用 Key |
+| `DEEPSEEK_API_BASE`            | ✅  | DeepSeek OpenAI 兼容端点 |
+| `DEEPSEEK_LLM_MODEL`           | ✅  | DeepSeek 文本模型名 |
+| `EMBEDDING_DIMENSION`          | ✅  | 必须匹配模型输出和数据库列维度 |
+| `EMBEDDING_FALLBACK_ENABLED`   | ❌  | 默认关闭；不可指向 DeepSeek |
 
 ### A.2 前端环境变量
 
@@ -1758,6 +1770,9 @@ initdb: detail: It contains a lost+found directory, perhaps due to it being a mo
 | ------------- | -- | --------------------------------- |
 | `BACKEND_URL` | ✅  | 后端地址（反代用，`http://kb-qa-api:8000`） |
 | `PORT`        | ✅  | nginx 监听端口（`80`）                  |
+| `PUBLIC_CONTACT_EMAIL` | ❌ | 公共反馈邮箱；留空则帮助页/隐私页隐藏邮箱链接 |
+| `PUBLIC_OPERATOR_NAME`、`PUBLIC_OPERATOR_LOCATION` | ❌ | 经核实后公开的运营主体信息 |
+| `PUBLIC_DATA_PROCESSING_REGION`、`PUBLIC_DATA_RETENTION_NOTICE`、`PUBLIC_CROSS_BORDER_NOTICE`、`PUBLIC_THIRD_PARTY_PROCESSING_NOTICE` | ❌ | 经核实后公开的数据处理说明；不要放密钥或内部网络信息 |
 
 ***
 

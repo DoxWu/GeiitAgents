@@ -116,7 +116,10 @@ class ModelProviderManager:
                         self._registry.register(model_type, endpoint_config)
                     except Exception as e:
                         logger.error(
-                            f"注册端点失败 [{model_type}:{endpoint_config.name}]: {e}"
+                            "注册端点失败 [%s:%s]: %s",
+                            model_type,
+                            endpoint_config.name,
+                            type(e).__name__,
                         )
 
             self._initialized = True

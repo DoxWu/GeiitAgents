@@ -7,11 +7,11 @@
 
 技术决策：
     1. 双通道设计：
-       - 主通道 HTTP API（Resend 官方 SDK，HTTPS 443，不受 Railway SMTP 限制）
+       - 主通道 HTTP API（Resend HTTPS API，不依赖 SMTP 端口）
        - 备用通道 SMTP（aiosmtplib，本地开发或无 SMTP 限制环境）
        - 通过 EMAIL_PROVIDER 配置切换（http / smtp）
     2. SMTP 通道使用 email.message.EmailMessage 构建 MIME 邮件（非字符串拼接，防注入）
-    3. HTTP API 通道使用 resend SDK，参数为字典（SDK 内部处理编码，防注入）
+    3. HTTP API 通道使用 httpx，关闭重定向并区分明确拒绝和未知投递结果
     4. HTML 模板中所有用户输入经 html.escape() 转义（防 XSS）
     5. EMAIL_ENABLED=False 时仅记录日志不发送（开发环境降级）
 
@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Optional
 
 import aiosmtplib
+import httpx
 from email.message import EmailMessage
 
 from app.core.config import settings
@@ -39,44 +40,28 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class EmailDeliveryOutcomeUnknown(RuntimeError):
+    """The provider may have accepted a message but did not confirm its outcome."""
+
+
+class EmailDeliveryRejected(RuntimeError):
+    """The provider explicitly rejected a message and returned an HTTP status."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        self.error_code = f"resend_http_{status_code}"
+        super().__init__(self.error_code)
+
+
 # ============================================
-# Resend HTTP API 客户端（懒加载，避免无 API Key 时报错）
+# Resend HTTP API configuration
 # ============================================
 
-_resend_client = None
-
-
-def _get_resend_client():
-    """
-    获取 Resend HTTP API 客户端（懒加载）
-
-    作用：
-        延迟初始化 resend 客户端，避免在模块导入时（如测试环境）因缺少 API Key 报错。
-        每次 API 调用前都会检查 Key 是否已设置。
-
-    兼容设计：
-        RESEND_API_KEY 和 SMTP_PASSWORD 是同一个 Resend API Key。
-        如果 RESEND_API_KEY 未设置，回退到 SMTP_PASSWORD，保持向后兼容
-        （用户原本只配置了 SMTP_PASSWORD，升级后无需额外添加 RESEND_API_KEY）。
-
-    返回：
-        resend.Emails 模块（已设置 api_key）
-
-    异常：
-        ValueError - RESEND_API_KEY 和 SMTP_PASSWORD 均未配置
-    """
-    global _resend_client
-    # 兼容回退：优先使用 RESEND_API_KEY，缺失时回退到 SMTP_PASSWORD
+def _resend_api_key() -> str:
     api_key = settings.RESEND_API_KEY or settings.SMTP_PASSWORD
     if not api_key:
-        raise ValueError(
-            "RESEND_API_KEY 和 SMTP_PASSWORD 均未配置，无法使用 HTTP API 通道"
-        )
-    if _resend_client is None:
-        import resend
-        resend.api_key = api_key
-        _resend_client = resend.Emails
-    return _resend_client
+        raise ValueError("RESEND_API_KEY 未配置，无法使用 HTTP API 通道")
+    return api_key
 
 
 # ============================================
@@ -357,9 +342,9 @@ def _send_via_http_api(
 
     异常：
         ValueError - RESEND_API_KEY 未配置
-        resend.ResendError - API 调用失败（由 Celery 重试机制处理）
+        EmailDeliveryRejected - Resend explicitly rejected the request
+        EmailDeliveryOutcomeUnknown - provider acceptance could not be confirmed
     """
-    client = _get_resend_client()
     # 解析发件人地址：从 "Name <email>" 格式提取纯邮箱
     # Resend HTTP API 的 from 字段支持 "Name <email>" 格式
     params = {
@@ -368,11 +353,30 @@ def _send_via_http_api(
         "subject": subject,
         "html": html_body,
     }
-    result = client.send(params)
-    email_id = result.get("id", "unknown") if isinstance(result, dict) else "unknown"
+    api_key = _resend_api_key()
+    try:
+        with httpx.Client(timeout=30, follow_redirects=False) as client:
+            response = client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": "Bearer " + api_key},
+                json=params,
+            )
+    except httpx.RequestError:
+        raise EmailDeliveryOutcomeUnknown("resend_delivery_outcome_unknown") from None
+    if 400 <= response.status_code < 500:
+        raise EmailDeliveryRejected(response.status_code)
+    if response.status_code >= 500:
+        raise EmailDeliveryOutcomeUnknown("resend_delivery_outcome_unknown")
+    try:
+        result = response.json()
+        email_id = result.get("id") if isinstance(result, dict) else None
+    except ValueError:
+        email_id = None
+    if not isinstance(email_id, str) or not email_id.strip():
+        raise EmailDeliveryOutcomeUnknown("resend_delivery_outcome_unknown")
     logger.info(
-        "邮件发送成功（HTTP API）| to=%s | subject=%s | id=%s",
-        to, subject, email_id
+        "邮件发送成功（HTTP API）| id=%s",
+        email_id
     )
     return email_id
 
@@ -426,7 +430,7 @@ async def _send_via_smtp_async(
         start_tls=settings.SMTP_START_TLS,
         timeout=settings.SMTP_TIMEOUT,
     )
-    logger.info("邮件发送成功（SMTP）| to=%s | subject=%s", to, subject)
+    logger.info("邮件发送成功（SMTP）")
 
 
 def _send_via_smtp_sync(
@@ -473,17 +477,17 @@ def send_email_sync(
     # EMAIL_ENABLED=False 时仅记录日志，不连接任何邮件服务
     # 作用：开发环境降级，邮件不发送但业务流程正常
     if not settings.EMAIL_ENABLED:
-        logger.info(
-            "[EMAIL DISABLED] 邮件未发送（EMAIL_ENABLED=False）| to=%s | subject=%s",
-            to, subject
-        )
+        logger.info("[EMAIL DISABLED] 邮件未发送（EMAIL_ENABLED=False）")
         return
 
     provider = settings.EMAIL_PROVIDER.lower()
     if provider == "http":
         _send_via_http_api(to, subject, html_body)
     elif provider == "smtp":
-        _send_via_smtp_sync(to, subject, html_body)
+        try:
+            _send_via_smtp_sync(to, subject, html_body)
+        except Exception:
+            raise EmailDeliveryOutcomeUnknown("smtp_delivery_outcome_unknown") from None
     else:
         raise ValueError(
             f"EMAIL_PROVIDER 配置非法（{settings.EMAIL_PROVIDER}），必须为 http 或 smtp"

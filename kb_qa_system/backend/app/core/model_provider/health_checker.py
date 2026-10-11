@@ -30,6 +30,7 @@ import time
 from typing import Optional
 
 from app.core.model_provider.base import BaseModelClient
+from app.core.model_provider.diagnostics import safe_error_label
 from app.core.model_provider.call_logger import get_call_logger
 from app.core.model_provider.registry import ModelServiceRegistry
 
@@ -165,7 +166,7 @@ class HealthChecker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"健康检查循环异常: {e}", exc_info=True)
+                logger.error("健康检查循环异常: %s", safe_error_label(e))
                 await asyncio.sleep(30)
 
     def _get_probe_targets(self) -> dict:
@@ -211,7 +212,7 @@ class HealthChecker:
             )
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
-            logger.error(f"[{key}] 健康探测异常: {e}")
+            logger.error("[%s] 健康探测异常: %s", key, safe_error_label(e))
             self._call_logger.log_health_probe(
                 model_type=client.model_type,
                 provider_name=client.name,

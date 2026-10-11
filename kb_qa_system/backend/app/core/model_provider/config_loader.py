@@ -181,7 +181,10 @@ class ConfigLoader:
             logger.warning(f"配置文件不存在: {path}，回退到纯环境变量模式")
             return ConfigLoader._fallback_from_env()
         except Exception as e:
-            logger.error(f"加载配置文件失败: {e}，回退到纯环境变量模式")
+            logger.error(
+                "加载模型服务配置失败（%s），回退到纯环境变量模式",
+                type(e).__name__,
+            )
             return ConfigLoader._fallback_from_env()
 
     @staticmethod
@@ -198,13 +201,19 @@ class ConfigLoader:
         """
         from app.core.config import settings
 
+        aliyun_api_key = settings.ALIYUN_API_KEY or settings.OPENAI_API_KEY
+        aliyun_api_base = settings.ALIYUN_API_BASE or settings.OPENAI_API_BASE
+        aliyun_llm_model = settings.ALIYUN_LLM_MODEL or settings.LLM_MODEL_NAME
+        aliyun_embedding_model = settings.ALIYUN_EMBEDDING_MODEL or settings.EMBEDDING_MODEL_NAME
+        deepseek_enabled = settings.DEEPSEEK_LLM_ENABLED or settings.LLM_FALLBACK_ENABLED
+
         llm_providers = [
             ProviderEndpointConfig(
                 name="primary",
                 type="openai",
-                model=settings.LLM_MODEL_NAME,
-                api_key=settings.OPENAI_API_KEY,
-                api_base=settings.OPENAI_API_BASE,
+                model=aliyun_llm_model,
+                api_key=aliyun_api_key,
+                api_base=aliyun_api_base,
                 temperature=0.1,
                 timeout=settings.LLM_TIMEOUT,
                 max_retries=settings.LLM_MAX_RETRIES,
@@ -215,13 +224,13 @@ class ConfigLoader:
             ProviderEndpointConfig(
                 name="fallback",
                 type="openai",
-                model=settings.LLM_FALLBACK_MODEL_NAME,
-                api_key=settings.OPENAI_API_KEY,
-                api_base=settings.OPENAI_API_BASE,
+                model=settings.DEEPSEEK_LLM_MODEL or settings.LLM_FALLBACK_MODEL_NAME,
+                api_key=settings.DEEPSEEK_API_KEY or settings.LLM_FALLBACK_API_KEY or settings.OPENAI_API_KEY,
+                api_base=settings.DEEPSEEK_API_BASE or settings.LLM_FALLBACK_API_BASE or settings.OPENAI_API_BASE,
                 temperature=0.1,
                 timeout=settings.LLM_TIMEOUT,
                 max_retries=1,
-                enabled=True,
+                enabled=deepseek_enabled,
             ),
         ]
 
@@ -229,9 +238,9 @@ class ConfigLoader:
             ProviderEndpointConfig(
                 name="primary",
                 type="openai",
-                model=settings.EMBEDDING_MODEL_NAME,
-                api_key=settings.OPENAI_API_KEY,
-                api_base=settings.OPENAI_API_BASE,
+                model=aliyun_embedding_model,
+                api_key=aliyun_api_key,
+                api_base=aliyun_api_base,
                 dimension=settings.EMBEDDING_DIMENSION,
                 timeout=settings.EMBEDDING_TIMEOUT,
                 max_retries=2,
@@ -244,7 +253,7 @@ class ConfigLoader:
                 dimension=512,
                 timeout=30,
                 max_retries=1,
-                enabled=True,
+                enabled=False,
                 health_check=HealthCheckConfig(enabled=False),
             ),
         ]
@@ -254,8 +263,8 @@ class ConfigLoader:
                 name="primary",
                 type="openai",
                 model=settings.VISION_MODEL_NAME,
-                api_key=settings.OPENAI_API_KEY,
-                api_base=settings.OPENAI_API_BASE,
+                api_key=aliyun_api_key,
+                api_base=aliyun_api_base,
                 timeout=30,
                 max_retries=2,
                 max_tokens=500,

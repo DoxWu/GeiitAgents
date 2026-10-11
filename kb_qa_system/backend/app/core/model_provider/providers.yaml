@@ -9,14 +9,14 @@
 #   ${VAR:${OTHER}}   - 嵌套引用：VAR 不存在时取 OTHER 的值
 #
 # 优先级（从高到低）：
-#   1. 系统环境变量（Railway 注入）
+#   1. 系统环境变量（部署平台注入）
 #   2. .env 文件
 #   3. YAML 中的 ${VAR:default} 默认值
 #   4. YAML 字面值
 #
 # 兼容性说明：
-#   默认值完全兼容现有 .env 配置，现有环境变量无需任何改动即可工作。
-#   新增的可选变量（如 LLM_FALLBACK_API_KEY）不设置时与现状一致。
+#   ALIYUN_* 配置主 LLM 与 Embedding；DEEPSEEK_* 仅配置文本 LLM 备用。
+#   未设置新变量时仍兼容旧的 OPENAI_* / LLM_FALLBACK_* 配置。
 
 # ============================================
 # 全局默认参数（可被各 provider 覆盖）
@@ -43,9 +43,9 @@ providers:
     # 主模型
     - name: "primary"
       type: openai
-      model: "${LLM_MODEL_NAME:gpt-3.5-turbo}"
-      api_key: "${OPENAI_API_KEY}"
-      api_base: "${OPENAI_API_BASE:https://api.openai.com/v1}"
+      model: "${ALIYUN_LLM_MODEL:${LLM_MODEL_NAME:gpt-3.5-turbo}}"
+      api_key: "${ALIYUN_API_KEY:${OPENAI_API_KEY}}"
+      api_base: "${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}"
       temperature: 0.1
       timeout: "${LLM_TIMEOUT:30}"
       max_retries: "${LLM_MAX_RETRIES:3}"
@@ -61,15 +61,15 @@ providers:
     # 降级模型（支持独立 API 配置，不设置则复用主 API）
     - name: "fallback"
       type: openai
-      model: "${LLM_FALLBACK_MODEL_NAME:gpt-3.5-turbo}"
-      api_key: "${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}"
-      api_base: "${LLM_FALLBACK_API_BASE:${OPENAI_API_BASE}}"
+      model: "${DEEPSEEK_LLM_MODEL:${LLM_FALLBACK_MODEL_NAME:gpt-3.5-turbo}}"
+      api_key: "${DEEPSEEK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}"
+      api_base: "${DEEPSEEK_API_BASE:${LLM_FALLBACK_API_BASE:${OPENAI_API_BASE}}}"
       temperature: 0.1
       timeout: "${LLM_TIMEOUT:30}"
       max_retries: 1
       retry_base_delay: "${LLM_RETRY_BASE_DELAY:1.0}"
       stream_first_token_timeout: "${LLM_STREAM_FIRST_TOKEN_TIMEOUT:5}"
-      enabled: "${LLM_FALLBACK_ENABLED:true}"
+      enabled: "${DEEPSEEK_LLM_ENABLED:${LLM_FALLBACK_ENABLED:false}}"
       health_check:
         enabled: true
         interval: 60
@@ -97,9 +97,9 @@ providers:
     # changing model/endpoint; equal dimensions do not imply compatible vectors.
     - name: "primary"
       type: openai
-      model: "${EMBEDDING_MODEL_NAME:text-embedding-ada-002}"
-      api_key: "${OPENAI_API_KEY}"
-      api_base: "${OPENAI_API_BASE:https://api.openai.com/v1}"
+      model: "${ALIYUN_EMBEDDING_MODEL:${EMBEDDING_MODEL_NAME:text-embedding-ada-002}}"
+      api_key: "${ALIYUN_API_KEY:${OPENAI_API_KEY}}"
+      api_base: "${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}"
       dimension: "${EMBEDDING_DIMENSION:1536}"
       supports_dimensions: "${EMBEDDING_SUPPORTS_DIMENSIONS:false}"
       timeout: "${EMBEDDING_TIMEOUT:15}"
@@ -111,18 +111,18 @@ providers:
         timeout: 10
       tags: ["primary", "cloud"]
 
-    # 云端降级模型（复用 LLM 降级 API，如阿里云兼容模式）
-    # 作用：主 API 不支持 embedding 时（如 DeepSeek），自动切换到支持 embedding 的云 API
+    # Optional separate embedding fallback. It must use the same model space
+    # and dimension as the primary endpoint; never reuse the DeepSeek LLM endpoint.
     - name: "cloud_fallback"
       type: openai
-      model: "${EMBEDDING_FALLBACK_MODEL_NAME:${EMBEDDING_MODEL_NAME:text-embedding-ada-002}}"
-      api_key: "${EMBEDDING_FALLBACK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}"
-      api_base: "${EMBEDDING_FALLBACK_API_BASE:${LLM_FALLBACK_API_BASE:${OPENAI_API_BASE}}}"
+      model: "${EMBEDDING_FALLBACK_MODEL_NAME:}"
+      api_key: "${EMBEDDING_FALLBACK_API_KEY:}"
+      api_base: "${EMBEDDING_FALLBACK_API_BASE:}"
       dimension: "${EMBEDDING_DIMENSION:1536}"
       supports_dimensions: "${EMBEDDING_FALLBACK_SUPPORTS_DIMENSIONS:false}"
       timeout: "${EMBEDDING_TIMEOUT:15}"
       max_retries: 2
-      enabled: "${LLM_FALLBACK_ENABLED:true}"
+      enabled: "${EMBEDDING_FALLBACK_ENABLED:false}"
       health_check:
         enabled: true
         interval: 60
@@ -147,14 +147,14 @@ providers:
     # 主模型
     - name: "primary"
       type: openai
-      model: "${VISION_MODEL_NAME:gpt-4o-mini}"
-      api_key: "${OPENAI_API_KEY}"
-      api_base: "${OPENAI_API_BASE:https://api.openai.com/v1}"
+      model: "${ALIYUN_VISION_MODEL:}"
+      api_key: "${ALIYUN_API_KEY:${OPENAI_API_KEY}}"
+      api_base: "${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}"
       timeout: 30
       max_retries: 2
       max_tokens: 500
       temperature: 0.3
-      enabled: "${ENABLE_VISION:true}"
+      enabled: "${ALIYUN_VISION_ENABLED:false}"
       health_check:
         enabled: true
         interval: 120

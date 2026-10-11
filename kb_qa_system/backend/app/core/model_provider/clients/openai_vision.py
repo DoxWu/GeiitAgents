@@ -31,6 +31,7 @@ from tenacity import (
 from app.core.circuit_breaker import CircuitBreakerOpenError
 from app.core.model_provider.base import VisionModelClient
 from app.core.model_provider.clients._retry_utils import is_retryable
+from app.core.model_provider.diagnostics import safe_error_label
 from app.core.model_provider.exceptions import ModelInvocationError
 from app.core.model_provider.schemas import ProviderEndpointConfig
 
@@ -102,7 +103,9 @@ class OpenAIVisionClient(VisionModelClient):
             )
             logger.info(f"[{self.model_type}:{self.name}] Vision 客户端已初始化")
         except Exception as e:
-            logger.warning(f"[{self.model_type}:{self.name}] Vision 客户端初始化失败: {e}")
+            logger.warning(
+                f"[{self.model_type}:{self.name}] Vision 客户端初始化失败: {safe_error_label(e)}"
+            )
             self._client = None
 
         return self._client
@@ -146,7 +149,9 @@ class OpenAIVisionClient(VisionModelClient):
             ext = os.path.splitext(image_path)[1].lower().lstrip(".")
             mime_type = _MIME_MAP.get(ext, "image/png")
         except Exception as e:
-            logger.debug(f"[{self.model_type}:{self.name}] 读取图片失败（{image_path}）: {e}")
+            logger.debug(
+                f"[{self.model_type}:{self.name}] 读取图片失败: {safe_error_label(e)}"
+            )
             return ""
 
         vision_prompt = prompt or _DEFAULT_VISION_PROMPT
@@ -189,7 +194,7 @@ class OpenAIVisionClient(VisionModelClient):
                 self.breaker.record_failure()
             logger.debug(
                 f"[{self.model_type}:{self.name}] 多模态描述失败"
-                f"（{image_path}，重试 {retry_counter['count']} 次）: {e}"
+                f"（重试 {retry_counter['count']} 次）: {safe_error_label(e)}"
             )
             return ""
 

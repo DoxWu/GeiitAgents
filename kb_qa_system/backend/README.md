@@ -329,9 +329,12 @@ DATABASE_URL=postgresql+psycopg://...
 REDIS_URL=redis://...
 
 # 服务端模型 provider（具体兼容性、维度及端点行为须逐家验证）
-OPENAI_API_BASE=https://api.openai.com/v1
-LLM_MODEL_NAME=gpt-3.5-turbo
-EMBEDDING_MODEL_NAME=text-embedding-ada-002
+ALIYUN_API_BASE=<按账号地域填写 OpenAI 兼容端点>
+ALIYUN_LLM_MODEL=<部署者选择的主 LLM>
+ALIYUN_EMBEDDING_MODEL=<部署者选择的向量模型>
+DEEPSEEK_API_BASE=https://api.deepseek.com/v1
+DEEPSEEK_LLM_MODEL=<部署者选择的备用 LLM>
+EMBEDDING_DIMENSION=<与模型输出和数据库列一致>
 
 # 可信代理 CIDR（逗号分隔；仅填写实际代理网段）
 TRUSTED_PROXIES=127.0.0.1,::1

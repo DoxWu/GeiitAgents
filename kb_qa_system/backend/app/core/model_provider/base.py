@@ -25,6 +25,7 @@ from typing import AsyncGenerator, List, Optional
 from langchain_core.messages import BaseMessage
 
 from app.core.circuit_breaker import CircuitBreaker, get_circuit_breaker
+from app.core.model_provider.diagnostics import safe_error_label
 from app.core.model_provider.schemas import ProviderEndpointConfig
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,9 @@ class TextModelClient(BaseModelClient):
             self.breaker.record_success()
             return True
         except Exception as e:
-            logger.debug(f"[{self.model_type}:{self.name}] 健康探测失败: {e}")
+            logger.debug(
+                f"[{self.model_type}:{self.name}] 健康探测失败: {safe_error_label(e)}"
+            )
             self.breaker.record_failure()
             return False
 

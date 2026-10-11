@@ -56,8 +56,10 @@ class EmailLog(Base):
 
     # 状态常量
     STATUS_PENDING: str = "pending"
+    STATUS_SENDING: str = "sending"
     STATUS_SENT: str = "sent"
     STATUS_FAILED: str = "failed"
+    STATUS_UNKNOWN: str = "unknown"
 
     # 主键 ID，自增
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

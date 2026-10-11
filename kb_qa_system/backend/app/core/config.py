@@ -202,6 +202,12 @@ class Settings(BaseSettings):
     # 主 LLM API Key（OpenAI / 智谱 / 通义千问）
     OPENAI_API_KEY: str = ""
 
+    # Explicit primary Aliyun-compatible provider configuration.
+    ALIYUN_API_KEY: str = ""
+    ALIYUN_API_BASE: str = ""
+    ALIYUN_LLM_MODEL: str = ""
+    ALIYUN_EMBEDDING_MODEL: str = ""
+
     # API 基础 URL
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
 
@@ -210,6 +216,15 @@ class Settings(BaseSettings):
 
     # 备用模型名称（主模型不可用时降级）
     LLM_FALLBACK_MODEL_NAME: str = "gpt-3.5-turbo"
+
+    # Explicit DeepSeek text-only fallback provider configuration.
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_API_BASE: str = ""
+    DEEPSEEK_LLM_MODEL: str = ""
+    DEEPSEEK_LLM_ENABLED: bool = False
+    LLM_FALLBACK_API_KEY: str = ""
+    LLM_FALLBACK_API_BASE: str = ""
+    LLM_FALLBACK_ENABLED: bool = False
 
     # Embedding 模型名称（主）
     EMBEDDING_MODEL_NAME: str = "text-embedding-ada-002"
@@ -422,7 +437,7 @@ class Settings(BaseSettings):
     ENABLE_OCR: bool = True
 
     # 是否启用多模态图片理解
-    ENABLE_VISION: bool = True
+    ENABLE_VISION: bool = False
 
     # 是否启用表格结构化提取
     ENABLE_TABLE_EXTRACTION: bool = True
@@ -763,7 +778,7 @@ class Settings(BaseSettings):
             作为 model_validator 之后的二次防御，确保万无一失。
 
         实现方式：
-            - 检查 SECRET_KEY、OPENAI_API_KEY、DATABASE_URL、REDIS_URL 等
+            - 检查 SECRET_KEY、主模型供应商、DATABASE_URL、REDIS_URL 等
             - 检查 DEBUG 是否已关闭
             - 检查 CORS_ORIGINS 是否使用了通配符
             - 返回错误列表，由调用方决定是否阻止启动
@@ -779,9 +794,27 @@ class Settings(BaseSettings):
             elif len(self.SECRET_KEY) < 32:
                 errors.append(f"生产环境 SECRET_KEY 长度必须 ≥32 字符（当前 {len(self.SECRET_KEY)}）")
 
-            # LLM API Key
-            if not self.OPENAI_API_KEY:
-                errors.append("生产环境必须设置 OPENAI_API_KEY")
+            if self.ALIYUN_API_KEY:
+                for field, label in (
+                    (self.ALIYUN_API_BASE, "ALIYUN_API_BASE"),
+                    (self.ALIYUN_LLM_MODEL, "ALIYUN_LLM_MODEL"),
+                    (self.ALIYUN_EMBEDDING_MODEL, "ALIYUN_EMBEDDING_MODEL"),
+                ):
+                    if not field:
+                        errors.append(f"生产环境使用阿里云主模型时必须设置 {label}")
+                if self.EMBEDDING_DIMENSION <= 0:
+                    errors.append("EMBEDDING_DIMENSION 必须为正整数")
+            elif not self.OPENAI_API_KEY:
+                errors.append("生产环境必须设置 ALIYUN_API_KEY（旧配置可使用 OPENAI_API_KEY）")
+
+            if self.DEEPSEEK_LLM_ENABLED:
+                for field, label in (
+                    (self.DEEPSEEK_API_KEY, "DEEPSEEK_API_KEY"),
+                    (self.DEEPSEEK_API_BASE, "DEEPSEEK_API_BASE"),
+                    (self.DEEPSEEK_LLM_MODEL, "DEEPSEEK_LLM_MODEL"),
+                ):
+                    if not field:
+                        errors.append(f"DEEPSEEK_LLM_ENABLED 时必须设置 {label}")
 
             # 数据库
             if self.DATABASE_URL.startswith("sqlite"):

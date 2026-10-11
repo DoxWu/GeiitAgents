@@ -40,6 +40,7 @@ from app.core.model_provider.clients._retry_utils import (
     extract_token_usage,
     is_retryable,
 )
+from app.core.model_provider.diagnostics import safe_error_label
 from app.core.model_provider.exceptions import ModelInvocationError
 from app.core.model_provider.schemas import ProviderEndpointConfig
 
@@ -234,21 +235,21 @@ class OpenAITextClient(TextModelClient):
             if not is_retryable(e):
                 # 不可重试错误（如 4xx），不额外记录熔断（_invoke_once 已处理）
                 raise ModelInvocationError(
-                    f"[{self.name}] LLM 调用失败（不可重试）: {type(e).__name__}: {e}",
+                    f"[{self.name}] LLM 调用失败（不可重试）: {safe_error_label(e)}",
                     provider_name=self.name,
                     original_exc=e,
-                ) from e
+                ) from None
             # 可重试错误重试耗尽
             logger.warning(
                 f"[{self.name}] LLM 调用重试 {retry_counter['count']} 次后仍失败: "
-                f"{type(e).__name__}: {e}"
+                f"{safe_error_label(e)}"
             )
             raise ModelInvocationError(
                 f"[{self.name}] LLM 调用失败（重试 {retry_counter['count']} 次后耗尽）: "
-                f"{type(e).__name__}: {e}",
+                f"{safe_error_label(e)}",
                 provider_name=self.name,
                 original_exc=e,
-            ) from e
+            ) from None
         finally:
             # 无论成功失败，都记录本次重试次数
             # 作用：供 LLMResilienceService 适配层读取，更新 last_metrics
@@ -424,7 +425,7 @@ class OpenAITextClient(TextModelClient):
                 delay = min(self.config.retry_base_delay * (2 ** (attempt - 1)), 60)
                 logger.warning(
                     f"[{self.name}] 流式第{attempt}/{max_attempts}次失败: "
-                    f"{type(e).__name__}: {e}，{delay:.1f}s 后重试"
+                    f"{safe_error_label(e)}，{delay:.1f}s 后重试"
                 )
                 await asyncio.sleep(delay)
 
@@ -432,10 +433,10 @@ class OpenAITextClient(TextModelClient):
         self._last_retry_count = retry_count
         raise ModelInvocationError(
             f"[{self.name}] LLM 流式调用失败（重试 {retry_count} 次后耗尽）: "
-            f"{type(last_exc).__name__}: {last_exc}",
+            f"{safe_error_label(last_exc)}",
             provider_name=self.name,
             original_exc=last_exc,
-        ) from last_exc
+        ) from None
 
 
 async def _empty_async_gen() -> AsyncGenerator[str, None]:

@@ -25,6 +25,20 @@ spec:
               value: "80"
             - name: BACKEND_URL
               value: http://geiit-api:8000
+            - name: PUBLIC_CONTACT_EMAIL
+              value: ""
+            - name: PUBLIC_OPERATOR_NAME
+              value: ""
+            - name: PUBLIC_OPERATOR_LOCATION
+              value: ""
+            - name: PUBLIC_DATA_PROCESSING_REGION
+              value: ""
+            - name: PUBLIC_DATA_RETENTION_NOTICE
+              value: ""
+            - name: PUBLIC_CROSS_BORDER_NOTICE
+              value: ""
+            - name: PUBLIC_THIRD_PARTY_PROCESSING_NOTICE
+              value: ""
           ports:
             - name: http
               containerPort: 80

@@ -11,6 +11,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, BookOpen, HelpCircle, Keyboard, Mail } from "lucide-react";
+import { getPublicContactEmail } from "@/config/publicConfig";
 
 /** 帮助章节 */
 interface HelpSection {
@@ -65,7 +66,7 @@ const SECTIONS: HelpSection[] = [
     title: "联系方式与技术支持",
     items: [
       "如遇到问题或有功能建议，请联系提供当前部署的组织管理员。",
-      "此构建没有配置经核实的公开反馈邮箱或系统内反馈表单；数据权利与隐私事项请先查阅「隐私政策」并向部署运营方确认受理渠道。",
+      "数据权利与隐私事项请先查阅「隐私政策」，并向部署运营方确认受理渠道。",
     ],
   },
 ];
@@ -73,6 +74,7 @@ const SECTIONS: HelpSection[] = [
 /** HelpPage 组件 */
 export default function HelpPage() {
   const navigate = useNavigate();
+  const contactEmail = getPublicContactEmail();
 
   /** 返回上一页 */
   const handleBack = () => {
@@ -139,6 +141,14 @@ export default function HelpPage() {
                     {item}
                   </p>
                 ))}
+                {section.title === "联系方式与技术支持" && contactEmail && (
+                  <p className="text-sm leading-relaxed text-ink-secondary">
+                    管理员邮箱：{" "}
+                    <a className="text-brand underline" href={`mailto:${contactEmail}`}>
+                      {contactEmail}
+                    </a>
+                  </p>
+                )}
               </div>
             </section>
           ))}

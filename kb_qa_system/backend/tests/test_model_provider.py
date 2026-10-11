@@ -628,11 +628,54 @@ class TestProvidersYamlIntegrity:
         assert 'VISION_FALLBACK_ENABLED:false' in source, \
             "Vision 降级应默认关闭"
 
+    def test_safe_provider_error_label_hides_response_body(self):
+        from app.core.model_provider.diagnostics import safe_error_label
+
+        class ProviderError(Exception):
+            status_code = 429
+
+        assert safe_error_label(ProviderError("private response body")) == "http_429"
+        assert safe_error_label(TimeoutError("private response body")) == "timeout"
+
     def test_llm_fallback_uses_independent_api_key(self):
-        """验证 LLM 降级模型支持独立 API Key（嵌套引用）"""
+        """Aliyun is the primary provider and DeepSeek is isolated to LLM fallback."""
         source = read_source("app/core/model_provider/providers.yaml")
-        assert "${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}" in source, \
-            "LLM 降级应支持独立 API Key，不设置时复用主 API"
+        assert '"${ALIYUN_API_KEY:${OPENAI_API_KEY}}"' in source
+        assert '"${DEEPSEEK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}"' in source
+        embedding = source.split("  embedding:", 1)[1].split("  vision:", 1)[0]
+        assert '"${ALIYUN_API_KEY:${OPENAI_API_KEY}}"' in embedding
+        assert "DEEPSEEK_API_KEY" not in embedding
+        assert 'EMBEDDING_FALLBACK_ENABLED:false' in embedding
+
+    def test_provider_environment_mapping(self, monkeypatch):
+        from app.core.model_provider.config_loader import ConfigLoader
+
+        values = {
+            "ALIYUN_API_KEY": "aliyun-test-key",
+            "ALIYUN_API_BASE": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "ALIYUN_LLM_MODEL": "aliyun-chat-test",
+            "ALIYUN_EMBEDDING_MODEL": "aliyun-embedding-test",
+            "DEEPSEEK_API_KEY": "deepseek-test-key",
+            "DEEPSEEK_API_BASE": "https://api.deepseek.com/v1",
+            "DEEPSEEK_LLM_MODEL": "deepseek-chat-test",
+            "DEEPSEEK_LLM_ENABLED": "true",
+            "EMBEDDING_DIMENSION": "1536",
+        }
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        config = ConfigLoader.load()
+        llm = config.providers["llm"]
+        embedding = config.providers["embedding"]
+        assert (llm[0].api_base, llm[0].model, llm[0].api_key) == (
+            values["ALIYUN_API_BASE"], values["ALIYUN_LLM_MODEL"], values["ALIYUN_API_KEY"]
+        )
+        assert (llm[1].api_base, llm[1].model, llm[1].api_key, llm[1].enabled) == (
+            values["DEEPSEEK_API_BASE"], values["DEEPSEEK_LLM_MODEL"], values["DEEPSEEK_API_KEY"], True
+        )
+        assert (embedding[0].api_base, embedding[0].model, embedding[0].api_key) == (
+            values["ALIYUN_API_BASE"], values["ALIYUN_EMBEDDING_MODEL"], values["ALIYUN_API_KEY"]
+        )
+        assert not embedding[1].enabled
 
     def test_health_check_config_present(self):
         """验证端点配置包含健康检查参数"""

@@ -17,7 +17,8 @@ cd kb_qa_system/backend
 cp .env.example .env
 # 编辑 .env，至少修改：
 #   SECRET_KEY     → 随机长字符串
-#   OPENAI_API_KEY → 你的 LLM API Key
+#   ALIYUN_API_KEY / ALIYUN_API_BASE / ALIYUN_LLM_MODEL / ALIYUN_EMBEDDING_MODEL
+#   DEEPSEEK_API_KEY / DEEPSEEK_API_BASE / DEEPSEEK_LLM_MODEL
 ```
 
 ### 2. 启动全部服务
@@ -112,10 +113,14 @@ Railway 部署后端 API、Celery Worker 两个服务，外加 Railway 提供的
 | `REDIS_URL` | Redis 连接串 | `${{Redis.REDIS_URL}}` |
 | `CELERY_BROKER_URL` | Celery broker | `${{Redis.REDIS_URL}}` |
 | `CELERY_RESULT_BACKEND` | Celery 结果后端 | `${{Redis.REDIS_URL}}` |
-| `OPENAI_API_KEY` | LLM API Key | `sk-...` |
-| `OPENAI_API_BASE` | API 基址 | `https://api.openai.com/v1` |
-| `LLM_MODEL_NAME` | 主模型 | `gpt-3.5-turbo` |
-| `EMBEDDING_MODEL_NAME` | Embedding 模型 | `text-embedding-ada-002` |
+| `ALIYUN_API_KEY` | 阿里云主 LLM/Embedding Key | 由部署密钥管理器注入 |
+| `ALIYUN_API_BASE` | 阿里云兼容 API 基址 | 按账号地域填写 |
+| `ALIYUN_LLM_MODEL` | 阿里云主 LLM 模型名 | 由部署者选择 |
+| `ALIYUN_EMBEDDING_MODEL` | 阿里云向量模型名 | 由部署者选择 |
+| `DEEPSEEK_API_KEY` | DeepSeek 备用文本模型 Key | 由部署密钥管理器注入 |
+| `DEEPSEEK_API_BASE` | DeepSeek 兼容 API 基址 | `https://api.deepseek.com/v1` |
+| `DEEPSEEK_LLM_MODEL` | DeepSeek 备用文本模型名 | 由部署者选择 |
+| `EMBEDDING_DIMENSION` | 向量输出维度 | 必须匹配所选模型与数据库列 |
 | `CORS_ORIGINS` | 允许的前端域名 | `["https://你的前端域名.vercel.app"]` |
 
 > `CORS_ORIGINS` 需配置为 Vercel 前端域名，否则前端无法调用 API。
@@ -139,6 +144,8 @@ Railway 部署后端 API、Celery Worker 两个服务，外加 Railway 提供的
 1. 在 Vercel 导入 GitHub 仓库，Root Directory 设为前端目录。
 2. 配置环境变量 `VITE_API_BASE_URL`（或 `NEXT_PUBLIC_API_BASE_URL`）为 Railway 后端域名。
 3. 部署后将 Vercel 域名加入后端 `CORS_ORIGINS`。
+
+本地开发可使用 `frontend/.env.example` 中的非敏感 Vite 配置。若部署 Nginx 容器，请在前端容器环境配置 `PUBLIC_CONTACT_EMAIL` 和经运营方核实的 `PUBLIC_*` 隐私说明；这些值会公开给访问者，邮箱留空时帮助页和隐私页不显示 mailto 链接。真实 provider/邮件验收步骤见 [A28 验收说明](../docs/A28_PROVIDER_ACCEPTANCE.md)。
 
 ---
 
