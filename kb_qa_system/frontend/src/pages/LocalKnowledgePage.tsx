@@ -34,11 +34,16 @@ export default function LocalKnowledgePage() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searched, setSearched] = useState(false);
   const [searchedQuestion, setSearchedQuestion] = useState('');
+  const [documentScope, setDocumentScope] = useState<string[] | null>(null);
   const client = useRef<LocalEmbeddingClient | null>(null);
   const activeProfile = useRef<EmbeddingProfile>(DEFAULT_PROFILE);
   const release = useRef<(() => void) | null>(null);
   const generation = useRef(0);
   const input = useRef<HTMLInputElement>(null);
+  const selectedDocuments = new Set(documentScope ?? index?.documents.map(document => document.id) ?? []);
+  function changeScope(value: string[] | null) {
+    setDocumentScope(value); setHits([]); setSearched(false); setStatus('检索范围已变更，请重新检索');
+  }
   useEffect(() => {
     let mounted = true;
     const lifecycle = generation;
@@ -54,7 +59,10 @@ export default function LocalKnowledgePage() {
   }
   async function save(value: LocalIndex | null, expected: string | null) {
     setCommitting(true);
-    try { await commitIndex(value, expected); setIndex(value); setHits([]); setSearched(false); }
+    try {
+      await commitIndex(value, expected); setIndex(value); setHits([]); setSearched(false);
+      setDocumentScope(current => current === null || !value ? null : current.filter(id => value.documents.some(document => document.id === id)));
+    }
     finally { setCommitting(false); }
   }
   async function enable() {
@@ -118,7 +126,8 @@ export default function LocalKnowledgePage() {
     try {
       const vector = await client.current.query(query);
       if (run !== generation.current) return;
-      setHits(rank(index, activeProfile.current, vector)); setSearchedQuestion(query); setSearched(true); setStatus('检索完成，片段未发送给聊天模型');
+      setHits(rank(index, activeProfile.current, vector, documentScope === null ? undefined : selectedDocuments));
+      setSearchedQuestion(query); setSearched(true); setStatus('检索完成，片段未发送给聊天模型');
     } catch (e) { if (run === generation.current) setError(e instanceof Error ? e.message : '本地查询失败'); }
     finally { if (run === generation.current) setBusy(false); }
   }
@@ -177,16 +186,24 @@ export default function LocalKnowledgePage() {
         <button disabled={busy} onClick={() => void remove()}>删除全部本地文档</button></div>}
     </section></div>
     <section className="lk-card lk-search"><h2>3. 查找相关内容</h2>
+      {!!index?.documents.length && <details className="lk-search-scope"><summary>检索文件范围 · {documentScope === null ? '全部文件' : `已选 ${selectedDocuments.size} / ${index.documents.length} 个文件`}</summary>
+        <fieldset disabled={busy || committing}><legend>选择要检索的文件</legend>
+          <div className="lk-actions"><button type="button" onClick={() => changeScope(null)}>搜索全部文件</button><button type="button" onClick={() => changeScope([])}>清空选择</button></div>
+          <div className="lk-scope-files">{index.documents.map(document => <label key={document.id}><input type="checkbox" checked={selectedDocuments.has(document.id)}
+            onChange={event => changeScope(event.target.checked ? [...selectedDocuments, document.id] : [...selectedDocuments].filter(id => id !== document.id))} />{document.name}</label>)}</div>
+        </fieldset>
+      </details>}
       <form onSubmit={e => { e.preventDefault(); void search(); }}><input aria-label="本地检索问题" placeholder="例如：报销需要准备哪些材料？" value={query} maxLength={4096} onChange={e => setQuery(e.target.value)} />
-        <button className="lk-primary" disabled={!ready || busy || !index?.chunks.length || !query.trim()}><Search size={17} />本地检索</button></form>
-      <p className="lk-muted">结果按向量相似度排序，相似度不是答案正确率。片段仅在本页显示。</p>
+        <button className="lk-primary" disabled={!ready || busy || !index?.chunks.length || !query.trim() || !selectedDocuments.size}><Search size={17} />本地检索</button></form>
+      <p className="lk-muted">结果按向量相似度排序，相似度不是答案正确率。请核对原文是否足以回答问题；相关但缺少所问事实的片段仍可能获得高分。片段仅在本页显示。</p>
+      {!!index?.documents.length && !selectedDocuments.size && <p className="lk-muted">请至少选择一个检索文件。</p>}
       {!hits.length && <p className="lk-empty">{searched ? '没有可检索的片段' : '启用模型并添加文档后，试着提出一个问题。'}</p>}
       {hits.map((hit, n) => <article className="lk-hit" key={`${hit.documentId}-${hit.start}`}><div><strong>{n + 1}. {hit.name}</strong><span>相似度 {hit.score.toFixed(3)}</span></div>
         <small>字符 {hit.start + 1}–{hit.end} · 入库文本（UTF-16 位置）</small><pre>{hit.text}</pre></article>)}
       {searched && hits.length > 0 && <LocalKnowledgeAnswer key={`${index?.revision}:${searchedQuestion}`} question={searchedQuestion} sources={hits} />}
     </section>
     <LocalKnowledgeBackup disabled={!loaded || ready || busy} onRestore={value => {
-      setIndex(value); setDraft(JSON.stringify(value.profile, null, 2)); setHits([]); setSearched(false);
+      setIndex(value); setDraft(JSON.stringify(value.profile, null, 2)); setHits([]); setSearched(false); setDocumentScope(null);
       setError(''); setStatus('本地库已恢复，模型尚未启用');
     }} />
   </main>;

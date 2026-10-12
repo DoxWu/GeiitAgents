@@ -42,6 +42,16 @@ describe('local embedding contract', () => {
     expect(() => rank(index, { ...profile, passagePrefix: '' }, [1, 0])).toThrow('不匹配');
     expect(() => rank({ ...index, fingerprint: index.fingerprint.replace('transformers-4.3.1-wasm', 'transformers-3.8.1-wasm') }, profile, [1, 0])).toThrow('不匹配');
   });
+  it('restricts retrieval to the selected document IDs without changing the default ranking', () => {
+    const profile = { ...DEFAULT_PROFILE, dimensions: 2 };
+    const index: LocalIndex = { version: 1, revision: 'test', updatedAt: '', profile, fingerprint: fingerprint(profile),
+      documents: [{ id: 'a', name: 'a.txt', text: '', bytes: 0 }, { id: 'b', name: 'b.txt', text: '', bytes: 0 }],
+      chunks: [{ documentId: 'a', start: 0, end: 1, text: 'a', vector: [1, 0] },
+        { documentId: 'b', start: 0, end: 1, text: 'b', vector: [0, 1] }] };
+    expect(rank(index, profile, [1, 0]).map(hit => hit.name)).toEqual(['a.txt', 'b.txt']);
+    expect(rank(index, profile, [1, 0], new Set(['b'])).map(hit => hit.name)).toEqual(['b.txt']);
+    expect(rank(index, profile, [1, 0], new Set())).toEqual([]);
+  });
   it('matches full cosine sorting for non-unit vectors and preserves ties without mutating the index', () => {
     const profile = { ...DEFAULT_PROFILE, dimensions: 2 };
     const index: LocalIndex = { version: 1, revision: 'test', updatedAt: '', profile, fingerprint: fingerprint(profile),

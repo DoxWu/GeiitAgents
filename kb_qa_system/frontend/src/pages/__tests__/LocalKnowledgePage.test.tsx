@@ -28,6 +28,25 @@ describe('local knowledge opt-in UI', () => {
     await enable(); await waitFor(() => expect(mock.init).toHaveBeenCalledWith(DEFAULT_PROFILE));
     expect(await screen.findByText('本地 CPU 模型已就绪')).toBeInTheDocument();
   });
+  it('limits local retrieval to checked files and clears stale results when scope changes', async () => {
+    const profile = DEFAULT_PROFILE;
+    const first = Array(profile.dimensions).fill(0); first[0] = 1;
+    const second = Array(profile.dimensions).fill(0); second[1] = 1;
+    const scoped: LocalIndex = { ...original, profile, fingerprint: fingerprint(profile),
+      documents: [{ id: 'a', name: 'a.txt', text: 'first', bytes: 5 }, { id: 'b', name: 'b.txt', text: 'second', bytes: 6 }],
+      chunks: [{ documentId: 'a', start: 0, end: 5, text: 'first', vector: first },
+        { documentId: 'b', start: 0, end: 6, text: 'second', vector: second }] };
+    mock.load.mockResolvedValue(scoped); mock.query.mockResolvedValue(first);
+    mount(); await enable(); await screen.findByText('本地 CPU 模型已就绪');
+    fireEvent.click(screen.getByText(/检索文件范围/));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'a.txt' }));
+    fireEvent.change(screen.getByLabelText('本地检索问题'), { target: { value: 'question' } });
+    fireEvent.click(screen.getByRole('button', { name: '本地检索' }));
+    await screen.findByText('检索完成，片段未发送给聊天模型');
+    expect([...document.querySelectorAll('.lk-search > article.lk-hit strong')].map(element => element.textContent)).toEqual(['1. b.txt']);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'a.txt' }));
+    expect(document.querySelectorAll('.lk-search > article.lk-hit')).toHaveLength(0);
+  });
   it('ignores a late initialization completion after cancellation', async () => {
     let finish!: () => void;
     mock.init.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
@@ -40,16 +59,16 @@ describe('local knowledge opt-in UI', () => {
   });
   it('preserves old index when a model rebuild fails', async () => {
     mock.load.mockResolvedValue(original); mock.build.mockRejectedValue(new Error('模型不兼容'));
-    mount(); await waitFor(() => expect(screen.getByText('private.txt')).toBeInTheDocument());
+    mount(); await waitFor(() => expect(screen.getByTitle('private.txt')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '自定义兼容 ONNX 模型' }));
     fireEvent.change(screen.getByLabelText('本地向量模型配置（JSON）'), { target: { value: JSON.stringify({ ...DEFAULT_PROFILE, pooling: 'cls' }) } });
     await enable();
     expect(await screen.findByRole('alert')).toHaveTextContent('模型不兼容');
-    expect(mock.commit).not.toHaveBeenCalled(); expect(screen.getByText('private.txt')).toBeInTheDocument();
+    expect(mock.commit).not.toHaveBeenCalled(); expect(screen.getByTitle('private.txt')).toBeInTheDocument();
   });
   it('atomically switches only after successful rebuild', async () => {
     const updated = { ...original, revision: 'new' }; mock.load.mockResolvedValue(original); mock.build.mockResolvedValue(updated);
-    mount(); await waitFor(() => expect(screen.getByText('private.txt')).toBeInTheDocument());
+    mount(); await waitFor(() => expect(screen.getByTitle('private.txt')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '自定义兼容 ONNX 模型' }));
     fireEvent.change(screen.getByLabelText('本地向量模型配置（JSON）'), { target: { value: JSON.stringify({ ...DEFAULT_PROFILE, queryPrefix: '' }) } });
     await enable(); await waitFor(() => expect(mock.commit).toHaveBeenCalledWith(updated, 'old'));
@@ -72,7 +91,7 @@ describe('local knowledge opt-in UI', () => {
     fireEvent.change(screen.getByLabelText('选择本地文档'), { target: { files: [new File(['x'], 'ok.txt'), new File(['x'], 'locked.pdf')] } });
     expect(await screen.findByRole('alert')).toHaveTextContent('密码保护');
     expect(mock.build).not.toHaveBeenCalled(); expect(mock.commit).not.toHaveBeenCalled();
-    expect(screen.getByText('private.txt')).toBeInTheDocument();
+    expect(screen.getByTitle('private.txt')).toBeInTheDocument();
   });
   it('stops a cancelled batch before the next file and ignores late parser completion', async () => {
     mock.load.mockResolvedValue(original); mount(); await enable(); await screen.findByText('本地 CPU 模型已就绪');

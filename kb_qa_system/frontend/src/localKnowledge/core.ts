@@ -61,12 +61,13 @@ export function splitText(text: string, profile: EmbeddingProfile, count: (text:
   }
   return result;
 }
-export function rank(index: LocalIndex, profile: EmbeddingProfile, vector: number[]): SearchHit[] {
+export function rank(index: LocalIndex, profile: EmbeddingProfile, vector: number[], documentIds?: ReadonlySet<string>): SearchHit[] {
   if (index.fingerprint !== fingerprint(profile)) throw new Error('模型与索引不匹配，请重建本地索引。');
   const query = validateVector(vector, profile.dimensions);
   const names = new Map(index.documents.map(document => [document.id, document.name]));
   const best: { chunk: Chunk; score: number }[] = [];
   for (const chunk of index.chunks) {
+    if (documentIds && !documentIds.has(chunk.documentId)) continue;
     if (chunk.vector.length !== profile.dimensions) throw new Error('模型输出维度或数值不兼容。');
     let dot = 0, squaredNorm = 0;
     for (let i = 0; i < chunk.vector.length; i++) {
