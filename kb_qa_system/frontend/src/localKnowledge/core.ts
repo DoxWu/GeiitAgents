@@ -34,7 +34,7 @@ export function validateProfile(input: EmbeddingProfile): EmbeddingProfile {
     normalize: true, queryPrefix: input.queryPrefix, passagePrefix: input.passagePrefix };
 }
 export function fingerprint(profile: EmbeddingProfile): string {
-  return JSON.stringify({ runtime: 'transformers-3.8.1-wasm', chunker: 'unicode-contiguous-v1', ...validateProfile(profile) });
+  return JSON.stringify({ runtime: 'transformers-4.3.1-wasm', chunker: 'unicode-contiguous-v1', ...validateProfile(profile) });
 }
 export function validateVector(vector: number[], dimensions: number): number[] {
   if (vector.length !== dimensions || vector.some(v => !Number.isFinite(v))) throw new Error('模型输出维度或数值不兼容。');

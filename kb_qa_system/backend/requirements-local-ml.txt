@@ -17,5 +17,5 @@
 #     不需要这些可选能力的环境不要安装。
 # ============================================
 
-sentence-transformers==3.1.1  # 本地 Embedding + CrossEncoder 重排序
-langchain-community==0.3.3     # HuggingFaceEmbeddings 封装
+sentence-transformers==6.1.0  # 本地 Embedding + CrossEncoder 重排序
+langchain-huggingface==1.2.3  # HuggingFaceEmbeddings 封装

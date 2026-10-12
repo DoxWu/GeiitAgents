@@ -176,6 +176,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       });
     } finally {
       if (generation === getAccountGeneration()) {
+      useDocumentStore.getState().clearSearchHistory();
       clearTokens();
       safeStorage.removeItem(USER_STORAGE_KEY);
       set({
@@ -203,6 +204,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (generation !== getAccountGeneration()) throw new DOMException('账号服务器已切换', 'AbortError');
 
       // 清除本地状态（不调用 logout API，避免重复黑名单请求）
+      useDocumentStore.getState().clearSearchHistory();
       clearTokens();
       safeStorage.removeItem(USER_STORAGE_KEY);
       set({
@@ -241,6 +243,7 @@ export const useAuthStore = create<AuthState>((set) => ({
  * 作用：当 Token 刷新失败时，清除认证状态，触发路由守卫跳转登录页
  */
 registerTokenExpiredCallback(() => {
+  useDocumentStore.getState().clearSearchHistory();
   safeStorage.removeItem(USER_STORAGE_KEY);
   useDocumentStore.getState().reset();
   useAuthStore.setState({

@@ -88,7 +88,13 @@ export interface DocumentQueryParams {
   page_size?: number;
   /** 按状态筛选 */
   status?: DocumentStatus;
-  /** 文件名模糊搜索关键词 */
+  /** 文件扩展名（例如 .pdf） */
+  file_type?: string;
+  /** 创建日期起，含当天，按数据库存储日期解释 */
+  date_from?: string;
+  /** 创建日期止，含当天，按数据库存储日期解释 */
+  date_to?: string;
+  /** 标题或原始文件名搜索关键词；不搜索正文 */
   search?: string;
   /** 排序字段 */
   sort_by?: SortField;

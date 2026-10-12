@@ -89,7 +89,9 @@ describe("documentStore", () => {
       searchKeyword: "",
       sortBy: "created_at",
       sortOrder: "desc",
+      documentFilters: { status: "", file_type: "", date_from: "", date_to: "" },
       searchHistory: [],
+      searchHistoryEnabled: true,
       previewDocument: null,
       previewOpen: false,
     });
@@ -221,6 +223,34 @@ describe("documentStore", () => {
         useDocumentStore.getState().reset();
       }
     });
+
+    it("ignores malformed entries and removes saved history when disabled", async () => {
+      const { safeStorage } = await import("@/utils/safeStorage");
+      const { USER_STORAGE_KEY } = await import("@/utils/constants");
+      const { getAccountServer, setAccountServer } = await import("@/services/accountServer");
+      const originalServer = getAccountServer();
+      try {
+        setAccountServer("https://search-history.example");
+        safeStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ id: 3 }));
+        const key = "geiit-search-history:v2:https%3A%2F%2Fsearch-history.example%2Fapi%2Fv1:3";
+        safeStorage.setItem(key, JSON.stringify(["  valid query  ", 17, null, { query: "bad" }, "x".repeat(201), "valid query"]));
+        useDocumentStore.getState().loadSearchHistoryForCurrentAccount();
+        expect(useDocumentStore.getState().searchHistory).toEqual(["valid query"]);
+
+        useDocumentStore.getState().setSearchHistoryEnabled(false);
+        useDocumentStore.getState().addSearchHistory("private phrase");
+        expect(useDocumentStore.getState().searchHistory).toEqual([]);
+        expect(safeStorage.getItem(key)).toBeNull();
+
+        useDocumentStore.getState().setSearchHistoryEnabled(true);
+        useDocumentStore.getState().addSearchHistory("saved phrase");
+        expect(JSON.parse(safeStorage.getItem(key) || "null")).toEqual(["saved phrase"]);
+      } finally {
+        setAccountServer(originalServer);
+        safeStorage.removeItem(USER_STORAGE_KEY);
+        useDocumentStore.getState().reset();
+      }
+    });
   });
 
   describe("setSort", () => {
@@ -236,6 +266,30 @@ describe("documentStore", () => {
       setSort("created_at", "asc");
       setSort("created_at", "desc");
       expect(useDocumentStore.getState().sortOrder).toBe("desc");
+    });
+  });
+
+  describe("document filters", () => {
+    it("resets pagination and sends all active filters to the API", async () => {
+      useDocumentStore.setState({ page: 4 });
+      mockDocumentApi.getDocuments.mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 });
+
+      useDocumentStore.getState().setDocumentFilters({
+        status: "completed",
+        file_type: ".pdf",
+        date_from: "2026-10-01",
+        date_to: "2026-10-10",
+      });
+      await vi.waitFor(() => expect(mockDocumentApi.getDocuments).toHaveBeenCalledOnce());
+
+      expect(useDocumentStore.getState().page).toBe(1);
+      expect(mockDocumentApi.getDocuments).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        status: "completed",
+        file_type: ".pdf",
+        date_from: "2026-10-01",
+        date_to: "2026-10-10",
+      }));
     });
   });
 

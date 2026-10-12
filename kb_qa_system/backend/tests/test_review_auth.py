@@ -76,6 +76,23 @@ def test_same_second_tokens_are_unique():
         assert len(set(tokens)) == 100
 
 
+def test_jwt_roles_expiry_and_algorithm_are_enforced():
+    access = security.create_access_token({'sub': '1'})
+    refresh = security.create_refresh_token({'sub': '1'})
+    foreign_algorithm = security.jwt.encode(
+        {'sub': '1', 'type': 'access'}, security.settings.SECRET_KEY, algorithm='HS384'
+    )
+    expired = security.create_access_token({'sub': '1'}, timedelta(seconds=-1))
+
+    assert security.decode_access_token(access)['type'] == 'access'
+    assert security.decode_refresh_token(refresh)['type'] == 'refresh'
+    assert security.decode_access_token(refresh) is None
+    assert security.decode_refresh_token(access) is None
+    assert security.decode_access_token(foreign_algorithm) is None
+    assert security.decode_access_token(expired) is None
+    assert security.decode_access_token('malformed') is None
+
+
 def test_immediate_refresh_replay_and_session_logout(auth_fixture):
     f = auth_fixture
     access, refresh, _ = security.create_token_pair(1, 'fixture')

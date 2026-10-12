@@ -4,24 +4,34 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import { pdfFixture } from './pdf-fixture.mjs';
-const output = path.resolve('../../.tools/local-knowledge-qa');
+const output = path.resolve(process.env.LOCAL_KB_QA_OUTPUT ?? '../../.tools/local-knowledge-qa');
+const previewOrigin = new URL(process.env.LOCAL_KB_QA_URL ?? 'http://127.0.0.1:1422').origin;
 await mkdir(output, { recursive: true });
 const context = await chromium.launchPersistentContext(path.join(output, 'browser-profile'), { headless: true, viewport: { width: 1200, height: 920 } });
 const page = await context.newPage();
-const requests = [], errors = [];
+const requests = [], errors = [], consoleErrors = [], modelResponses = [], failedRequests = [];
 context.on('request', request => requests.push(request.url()));
+context.on('requestfailed', request => failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
+context.on('response', async response => {
+  if (!response.url().includes('huggingface.co/') && !new URL(response.url()).pathname.startsWith('/models/')) return;
+  const contentType = response.headers()['content-type'] ?? '';
+  const entry = { url: response.url(), status: response.status(), contentType };
+  if (contentType.includes('text/html')) entry.bodyPrefix = (await response.text().catch(() => '')).slice(0, 200);
+  modelResponses.push(entry);
+});
 page.on('pageerror', error => errors.push(error.message));
-page.on('console', message => { if (message.type() === 'error') console.log('browser:', message.text()); });
+page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
 // Apply the actual nginx CSP, since vite preview does not serve security headers.
-const nginx = await readFile('nginx.conf', 'utf8');
-const csp = nginx.match(/Content-Security-Policy "([^"]+)"/)[1];
-await context.route('http://127.0.0.1:1422/**', async route => {
+const securityHeaders = await readFile('security-headers.conf', 'utf8');
+const csp = securityHeaders.match(/add_header Content-Security-Policy "([^"]+)"/)?.[1];
+if (!csp) throw new Error('The Nginx Content-Security-Policy header is missing.');
+await context.route(`${previewOrigin}/**`, async route => {
   const response = await route.fetch();
   await route.fulfill({ response, headers: { ...response.headers(), 'content-security-policy': csp } });
 });
 const metrics = {};
 try {
-  await page.goto('http://127.0.0.1:1422/local-knowledge');
+  await page.goto(`${previewOrigin}/local-knowledge`);
   // This is a dedicated QA profile, never the user's browser profile.
   await page.evaluate(async cold => {
     if (cold) await caches.delete('geiit-local-models-v1');
@@ -108,7 +118,7 @@ try {
   await expect(page.locator('.lk-hit').first()).toContainText('quarterly access recertification');
   expect(requests.filter(url => url.startsWith('https:')).length).toBe(externalBefore);
   const second = await context.newPage();
-  await second.goto('http://127.0.0.1:1422/local-knowledge');
+  await second.goto(`${previewOrigin}/local-knowledge`);
   await second.getByRole('button', { name: '启用模型 / 按配置重建' }).click();
   await expect(second.getByRole('alert')).toContainText('另一个窗口');
   await second.close();
@@ -150,6 +160,11 @@ try {
 } catch (error) {
   console.log('Current status:', await page.getByRole('status').allTextContents());
   console.log('Current errors:', await page.getByRole('alert').allTextContents());
+  console.log('Model responses:', JSON.stringify(modelResponses));
+  console.log('Model requests:', JSON.stringify(requests.filter(url => /huggingface\.co|\.wasm|\.mjs/.test(url))));
+  console.log('Failed requests:', JSON.stringify(failedRequests));
+  console.log('Browser errors:', JSON.stringify(errors));
+  console.log('Browser console:', JSON.stringify(consoleErrors));
   await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true });
   throw error;
 } finally { await context.close(); }

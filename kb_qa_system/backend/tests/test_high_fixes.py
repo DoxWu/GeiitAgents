@@ -24,7 +24,7 @@ High 级别问题修复验证测试
     H-11 限流标识符 X-Forwarded-For → rate_limit.py + config.py
     H-12 refresh 接口限流           → auth.py
     H-13 DEBUG 模式异常泄露         → main.py
-    H-14 python-jose 升级           → requirements.txt
+    H-14 签名 JWT 库使用 PyJWT       → requirements.txt
     H-15 流式 db session 持有       → 保守处理（已知限制，验证 P0-4 已缓解）
 
 运行方式：
@@ -539,23 +539,17 @@ class TestDebugExceptionNoLeak:
 
 
 # ============================================
-# H-14: python-jose 升级（CVE 修复）
+# H-14: 签名 JWT 库使用 PyJWT
 # ============================================
 
-class TestPythonJoseUpgrade:
-    """H-14: python-jose 升级到 3.4.0 测试（CVE-2024-33664 / CVE-2024-33663）"""
+class TestJwtLibrary:
+    """The application uses signed JWTs and does not require python-jose/JWE."""
 
-    def test_jose_version_3_4_0(self):
-        """验证 requirements.txt 中 python-jose 版本为 3.4.0"""
+    def test_pyjwt_is_pinned_and_python_jose_is_removed(self):
         source = read_source("requirements.txt")
-        assert "python-jose" in source, "应有 python-jose 依赖"
-        assert "3.4.0" in source, "H-14: python-jose 应升级到 3.4.0"
-
-    def test_h14_fix_annotation(self):
-        """验证 H-14 修复注释存在（CVE 说明）"""
-        source = read_source("requirements.txt")
-        assert "CVE-2024-33664" in source, "应注明 CVE-2024-33664（JWE 压缩 DoS）"
-        assert "CVE-2024-33663" in source, "应注明 CVE-2024-33663（公钥签名 JWT）"
+        requirements = [line.split("#", 1)[0].strip().lower() for line in source.splitlines()]
+        assert "pyjwt==2.15.1" in requirements
+        assert not any(line.startswith("python-jose") for line in requirements)
 
     def test_security_uses_explicit_algorithm(self):
         """验证 security.py 显式指定 algorithms（缓解算法混淆）"""
@@ -563,13 +557,6 @@ class TestPythonJoseUpgrade:
         assert "algorithms=" in source or "algorithms =" in source, \
             "应显式指定 algorithms 参数"
         assert settings_algorithm_check(source)
-
-    def test_cryptography_extra_installed(self):
-        """验证安装了 cryptography 扩展"""
-        source = read_source("requirements.txt")
-        assert "python-jose[cryptography]" in source, \
-            "应安装 cryptography 扩展"
-
 
 def settings_algorithm_check(source: str) -> bool:
     """检查 security.py 中 algorithms 引用了 settings.ALGORITHM"""

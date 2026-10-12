@@ -20,6 +20,7 @@ import * as documentApi from "@/api/document";
 import type {
   DocumentResponse,
   DocumentFolder,
+  DocumentStatus,
   DocumentQueryParams,
   DocumentScope,
   SortField,
@@ -67,10 +68,19 @@ interface DocumentState {
   searchKeyword: string;
   /** 搜索历史（D2-03，最近 10 条，去重，持久化到 localStorage） */
   searchHistory: string[];
+  /** 当前账号是否保存搜索历史 */
+  searchHistoryEnabled: boolean;
   /** 排序字段 */
   sortBy: SortField;
   /** 排序方向 */
   sortOrder: SortOrder;
+  /** 文档列表筛选条件 */
+  documentFilters: {
+    status: DocumentStatus | "";
+    file_type: string;
+    date_from: string;
+    date_to: string;
+  };
 
   // ===== 预览状态 =====
   /** 当前预览的文档 */
@@ -125,8 +135,12 @@ interface DocumentState {
   addSearchHistory: (keyword: string) => void;
   /** 清空搜索历史（D2-03） */
   clearSearchHistory: () => void;
+  /** 开启或关闭搜索历史保存 */
+  setSearchHistoryEnabled: (enabled: boolean) => void;
   /** 设置排序 */
   setSort: (field: SortField, order: SortOrder) => void;
+  /** 更新筛选条件并回到第一页 */
+  setDocumentFilters: (filters: Partial<DocumentState["documentFilters"]>) => void;
   /** 设置当前页码并加载文档 */
   setPage: (page: number) => void;
 
@@ -261,6 +275,7 @@ const DEFAULT_SORT_ORDER: SortOrder = "desc";
 /** D2-03 搜索历史：localStorage 存储键名 */
 const SEARCH_HISTORY_KEY = "geiit-search-history";
 const SEARCH_HISTORY_PREFIX = "geiit-search-history:v2:";
+const SEARCH_HISTORY_ENABLED_PREFIX = "geiit-search-history-enabled:v1:";
 /** D2-03 搜索历史：最大保存条数 */
 const MAX_HISTORY_ITEMS = 10;
 let latestDocumentListRequest = 0;
@@ -274,6 +289,18 @@ function currentSearchHistoryKey(): string {
     // Invalid or unavailable identity uses the isolated anonymous namespace.
   }
   return `${SEARCH_HISTORY_PREFIX}${encodeURIComponent(getAccountServer())}:${encodeURIComponent(userId)}`;
+}
+
+function currentSearchHistoryEnabledKey(): string {
+  return SEARCH_HISTORY_ENABLED_PREFIX + currentSearchHistoryKey().slice(SEARCH_HISTORY_PREFIX.length);
+}
+
+function loadSearchHistoryEnabled(): boolean {
+  try {
+    return safeStorage.getItem(currentSearchHistoryEnabledKey()) !== "false";
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -291,7 +318,12 @@ function loadSearchHistory(): string[] {
     const raw = safeStorage.getItem(currentSearchHistoryKey());
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY_ITEMS) : [];
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0 && item.length <= 200))]
+      .slice(0, MAX_HISTORY_ITEMS);
   } catch {
     return [];
   }
@@ -304,7 +336,9 @@ function loadSearchHistory(): string[] {
  */
 function saveSearchHistory(history: string[]): void {
   try {
-    safeStorage.setItem(currentSearchHistoryKey(), JSON.stringify(history));
+    const key = currentSearchHistoryKey();
+    if (history.length) safeStorage.setItem(key, JSON.stringify(history));
+    else safeStorage.removeItem(key);
   } catch {
     // localStorage 写入失败（如隐私模式），忽略
   }
@@ -327,8 +361,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   searchKeyword: "",
   searchHistory: loadSearchHistory(),
+  searchHistoryEnabled: loadSearchHistoryEnabled(),
   sortBy: DEFAULT_SORT_FIELD,
   sortOrder: DEFAULT_SORT_ORDER,
+  documentFilters: { status: "", file_type: "", date_from: "", date_to: "" },
 
   previewDocument: null,
   previewOpen: false,
@@ -424,6 +460,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         page: state.page,
         page_size: state.pageSize,
         search: state.searchKeyword || undefined,
+        status: state.documentFilters.status || undefined,
+        file_type: state.documentFilters.file_type || undefined,
+        date_from: state.documentFilters.date_from || undefined,
+        date_to: state.documentFilters.date_to || undefined,
         sort_by: state.sortBy,
         sort_order: state.sortOrder,
         folder_id: state.currentFolderId ?? undefined,
@@ -513,7 +553,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addSearchHistory: (keyword: string) => {
     const trimmed = keyword.trim();
-    if (!trimmed) return;
+    if (!get().searchHistoryEnabled || !trimmed || trimmed.length > 200) return;
     // 去重后放到最前，保留最多 MAX_HISTORY_ITEMS 条
     const current = get().searchHistory;
     const filtered = current.filter((item) => item !== trimmed);
@@ -527,9 +567,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ searchHistory: [] });
   },
 
+  setSearchHistoryEnabled: (enabled) => {
+    try {
+      safeStorage.setItem(currentSearchHistoryEnabledKey(), String(enabled));
+    } catch {
+      // Continue with the in-memory preference if browser storage is unavailable.
+    }
+    if (!enabled) saveSearchHistory([]);
+    set({ searchHistoryEnabled: enabled, searchHistory: enabled ? get().searchHistory : [] });
+  },
+
   setSort: (field: SortField, order: SortOrder) => {
     latestDocumentListRequest += 1;
     set({ sortBy: field, sortOrder: order, page: 1 });
+    get().loadDocuments();
+  },
+
+  setDocumentFilters: (filters) => {
+    latestDocumentListRequest += 1;
+    set((state) => ({
+      documentFilters: { ...state.documentFilters, ...filters },
+      page: 1,
+    }));
     get().loadDocuments();
   },
 
@@ -676,7 +735,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  loadSearchHistoryForCurrentAccount: () => set({ searchHistory: loadSearchHistory() }),
+  loadSearchHistoryForCurrentAccount: () => {
+    const searchHistoryEnabled = loadSearchHistoryEnabled();
+    set({ searchHistoryEnabled, searchHistory: searchHistoryEnabled ? loadSearchHistory() : [] });
+  },
 
   reset: () => {
     latestDocumentListRequest += 1;
@@ -697,8 +759,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // 搜索与排序
       searchKeyword: "",
       searchHistory: [],
+      searchHistoryEnabled: true,
       sortBy: DEFAULT_SORT_FIELD,
       sortOrder: DEFAULT_SORT_ORDER,
+      documentFilters: { status: "", file_type: "", date_from: "", date_to: "" },
       // 预览
       previewDocument: null,
       previewOpen: false,

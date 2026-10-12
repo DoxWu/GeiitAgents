@@ -22,6 +22,7 @@ const { mockDocStore } = vi.hoisted(() => ({
     loading: false,
     error: null,
     searchKeyword: "",
+    documentFilters: { status: "", file_type: "", date_from: "", date_to: "" },
     loadDocuments: vi.fn(),
     clearError: vi.fn(),
     selectionMode: false,
@@ -77,6 +78,7 @@ describe("DocumentList 组件", () => {
     mockDocStore.loading = false;
     mockDocStore.error = null;
     mockDocStore.searchKeyword = "";
+    mockDocStore.documentFilters = { status: "", file_type: "", date_from: "", date_to: "" };
   });
 
   it("loading 状态显示骨架屏", () => {
@@ -114,7 +116,14 @@ describe("DocumentList 组件", () => {
     mockDocStore.searchKeyword = "报告";
     render(<DocumentList />);
     expect(screen.getByText("未找到匹配的文档")).toBeInTheDocument();
-    expect(screen.getByText(/没有找到包含"报告"的文档/)).toBeInTheDocument();
+    expect(screen.getByText(/没有找到标题或文件名包含"报告"的文档/)).toBeInTheDocument();
+  });
+
+  it("筛选无结果时显示筛选空状态，不提示知识库为空", () => {
+    mockDocStore.documentFilters = { status: "failed", file_type: "", date_from: "", date_to: "" };
+    render(<DocumentList />);
+    expect(screen.getByText("没有符合条件的文档")).toBeInTheDocument();
+    expect(screen.getByText("请调整当前筛选条件。")).toBeInTheDocument();
   });
 
   it("有数据时渲染文档列表", () => {

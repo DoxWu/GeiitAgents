@@ -64,7 +64,7 @@ class LocalHuggingFaceEmbeddingClient(EmbeddingModelClient):
         """
         if self._embeddings is None:
             try:
-                from langchain_community.embeddings import HuggingFaceEmbeddings
+                from langchain_huggingface import HuggingFaceEmbeddings
                 self._embeddings = HuggingFaceEmbeddings(
                     model_name=self.config.model,
                 )

@@ -8,14 +8,14 @@
 
 实现方式：
     1. 使用 passlib 进行密码加密（bcrypt 算法）
-    2. 使用 python-jose 生成和验证 JWT Token
+    2. 使用 PyJWT 生成和验证签名 JWT Token
     3. Access Token 短期有效（15分钟），Refresh Token 长期有效（7天）
     4. Token 黑名单存储在 Redis，登出时主动失效
 """
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Tuple
-from jose import jwt, JWTError
+import jwt
 from passlib.context import CryptContext
 from uuid import uuid4
 import math
@@ -155,7 +155,7 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         if payload.get("type") != "access":
             return None
         return payload
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
 
 
@@ -233,7 +233,7 @@ def decode_refresh_token(token: str) -> Optional[Dict[str, Any]]:
         if payload.get("type") != "refresh":
             return None
         return payload
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
 
 

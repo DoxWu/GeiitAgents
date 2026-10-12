@@ -90,6 +90,15 @@ describe("getDocuments", () => {
     expect(endpoint).toContain("status=completed");
   });
 
+  it("文件类型和含边界日期参数正确传递", async () => {
+    mockApiClient.get.mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 });
+    await getDocuments({ file_type: ".pdf", date_from: "2026-10-01", date_to: "2026-10-12" });
+    const endpoint = mockApiClient.get.mock.calls[0][0];
+    expect(endpoint).toContain("file_type=.pdf");
+    expect(endpoint).toContain("date_from=2026-10-01");
+    expect(endpoint).toContain("date_to=2026-10-12");
+  });
+
   it("所有参数组合时全部传递", async () => {
     mockApiClient.get.mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 });
     await getDocuments({

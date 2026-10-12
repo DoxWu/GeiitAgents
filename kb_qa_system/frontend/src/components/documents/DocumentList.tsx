@@ -28,6 +28,7 @@ export function DocumentList() {
     loading,
     error,
     searchKeyword,
+    documentFilters,
     loadDocuments,
     clearError,
   } = useDocumentStore();
@@ -52,14 +53,17 @@ export function DocumentList() {
 
   // 空状态
   if (documents.length === 0) {
+    const hasActiveFilters = Boolean(searchKeyword.trim()) || Object.values(documentFilters).some(Boolean);
     return (
       <EmptyState
         icon={<FileText className="h-8 w-8" />}
-        title={searchKeyword ? "未找到匹配的文档" : "暂无文档"}
+        title={searchKeyword ? "未找到匹配的文档" : hasActiveFilters ? "没有符合条件的文档" : "暂无文档"}
         description={
           searchKeyword
-            ? `没有找到包含"${searchKeyword}"的文档，试试其他关键词`
-            : "点击上方上传按钮或拖拽文件到上传区添加文档"
+            ? `没有找到标题或文件名包含"${searchKeyword}"的文档。`
+            : hasActiveFilters
+              ? "请调整当前筛选条件。"
+              : "点击上方上传按钮或拖拽文件到上传区添加文档"
         }
       />
     );

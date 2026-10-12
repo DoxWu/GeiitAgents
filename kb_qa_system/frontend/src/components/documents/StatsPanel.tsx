@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { getDocumentStats } from "@/api/document";
 import type { DocumentStats } from "@/types/document";
+import type { DocumentScope } from "@/types/document";
 import { cn } from "@/lib/utils";
 
 /** 统计项配置 */
@@ -57,28 +58,27 @@ function StatItem({ icon, label, value, color }: StatItemProps) {
 }
 
 /** StatsPanel 组件 */
-export function StatsPanel() {
+export function StatsPanel({ scope }: { scope: DocumentScope }) {
   const [stats, setStats] = useState<DocumentStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  /** 加载统计数据 */
-  async function loadStats() {
-    setLoading(true);
-    setError(false);
-    try {
-      const data = await getDocumentStats();
-      setStats(data);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    loadStats();
-  }, []);
+    let active = true;
+    setLoading(true);
+    setError(false);
+    getDocumentStats(scope)
+      .then((data) => { if (active) setStats(data); })
+      .catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [scope, refreshKey]);
+
+  function loadStats() {
+    setRefreshKey((current) => current + 1);
+  }
 
   // 加载中状态
   if (loading) {

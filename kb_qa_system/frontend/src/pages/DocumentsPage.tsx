@@ -18,6 +18,7 @@ import { Sidebar } from "@/components/documents/Sidebar";
 import { DocumentList } from "@/components/documents/DocumentList";
 import { DocumentPreview } from "@/components/documents/DocumentPreview";
 import { SearchBar } from "@/components/documents/SearchBar";
+import { DocumentFilters } from "@/components/documents/DocumentFilters";
 import { SortDropdown } from "@/components/documents/SortDropdown";
 import { UploadZone } from "@/components/documents/UploadZone";
 import { Pagination } from "@/components/documents/Pagination";
@@ -35,6 +36,8 @@ export default function DocumentsPage() {
     folders,
     currentFolderId,
     currentScope,
+    searchKeyword,
+    documentFilters,
     documents,
     total,
     page,
@@ -119,7 +122,8 @@ export default function DocumentsPage() {
       : scopeLabels[currentScope] || "全部文档";
 
   /** 是否为空列表（显示完整上传区） */
-  const showFullUploadZone = documents.length === 0 && total === 0;
+  const hasActiveFilters = Boolean(searchKeyword.trim()) || Object.values(documentFilters).some(Boolean);
+  const showFullUploadZone = documents.length === 0 && total === 0 && !hasActiveFilters;
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
@@ -228,6 +232,10 @@ export default function DocumentsPage() {
           <div className="mt-2 sm:hidden">
             <SearchBar />
           </div>
+          <div className="mt-3">
+            <DocumentFilters />
+            <p className="mt-2 text-xs text-ink-tertiary">搜索匹配标题或原始文件名，不搜索正文；创建日期含起止当天，按服务端存储日期筛选。</p>
+          </div>
         </header>
 
         {/* 文档列表区 */}
@@ -263,7 +271,7 @@ export default function DocumentsPage() {
               {/* 多选模式下的批量操作工具栏 */}
               {selectionMode && <BatchActionBar />}
               {/* 文档统计面板 */}
-              <StatsPanel />
+              <StatsPanel scope={currentScope} />
               <DocumentList />
               {/* 分页控件：文档总数超过每页数量时显示 */}
               {total > pageSize && (

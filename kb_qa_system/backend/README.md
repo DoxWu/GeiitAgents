@@ -232,7 +232,7 @@ celery -A app.tasks.celery_app worker --loglevel=info
 | RAG 框架 | LangChain | 检索增强生成编排 |
 | LLM | OpenAI 兼容接口 | 支持 OpenAI / 智谱 / Ollama |
 | 文档解析 | PyMuPDF / pdfplumber / python-docx / pypdf / pytesseract | 多格式；图片 OCR 依赖系统 Tesseract 和语言包 |
-| 认证 | python-jose 3.4.0 + passlib | JWT 双 Token + bcrypt |
+| 认证 | PyJWT 2.15.1 + passlib | 固定配置算法的 JWT 双 Token + bcrypt |
 | 监控 | prometheus-client + structlog + Sentry | 指标 + 日志 + 错误追踪 |
 | 部署 | Docker Compose + Sealos templates | 模板不是部署验收证明 |
 

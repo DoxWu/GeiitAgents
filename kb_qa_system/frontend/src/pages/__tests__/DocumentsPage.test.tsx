@@ -22,6 +22,9 @@ const { mockDocStore } = vi.hoisted(() => ({
   mockDocStore: {
     folders: [] as Array<{ id: number; name: string }>,
     currentFolderId: null as number | null,
+    currentScope: "accessible" as const,
+    searchKeyword: "",
+    documentFilters: { status: "", file_type: "", date_from: "", date_to: "" },
     documents: [] as Array<{ id: number; file_name: string }>,
     total: 0,
     page: 1,
@@ -107,6 +110,9 @@ describe("DocumentsPage", () => {
     auth.user = { id: 1, user_type: 'registered' };
     mockDocStore.folders = [];
     mockDocStore.currentFolderId = null;
+    mockDocStore.currentScope = "accessible";
+    mockDocStore.searchKeyword = "";
+    mockDocStore.documentFilters = { status: "", file_type: "", date_from: "", date_to: "" };
     mockDocStore.documents = [];
     mockDocStore.total = 0;
     mockDocStore.page = 1;

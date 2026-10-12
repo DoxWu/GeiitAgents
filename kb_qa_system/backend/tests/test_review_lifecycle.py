@@ -255,3 +255,81 @@ def test_account_export_includes_personal_and_archived_modules(fixture):
     assert 'other-private' not in response.text
     assert 'client_local_knowledge' in payload['coverage']['excluded']
     assert response.headers['cache-control'] == 'no-store'
+
+
+def test_document_filters_use_literal_name_search_and_inclusive_dates(fixture):
+    f = fixture
+    records = [
+        dict(user_id=1, title="May summary", file_name="summary.pdf", file_type=".pdf",
+             status="completed", created_at=datetime(2026, 5, 1, 23, 59), content="private body marker"),
+        dict(user_id=1, title="Budget 100%", file_name="budget_100%.pdf", file_type=".pdf",
+             status="failed", created_at=datetime(2026, 5, 2, 0, 0), content="other text"),
+        dict(user_id=1, title="Later summary", file_name="summary.txt", file_type=".txt",
+             status="completed", created_at=datetime(2026, 5, 2, 23, 59, 59), content="other text"),
+        dict(user_id=2, title="Private report", file_name="private.pdf", file_type=".pdf",
+             status="completed", created_at=datetime(2026, 5, 2, 12, 0), content="other text"),
+    ]
+    with f.factory() as db:
+        db.add_all([
+            Document(file_path=f"/synthetic/{i}.txt", file_size=1, visibility="private", **record)
+            for i, record in enumerate(records)
+        ])
+        db.commit()
+
+    response = f.client.get("/documents", params={
+        "date_from": "2026-05-02", "date_to": "2026-05-02", "file_type": ".PDF", "status": "failed",
+    })
+    assert response.status_code == 200, response.text
+    assert [item["title"] for item in response.json()["items"]] == ["Budget 100%"]
+
+    literal_percent = f.client.get("/documents", params={"search": "%"})
+    assert literal_percent.status_code == 200
+    assert [item["title"] for item in literal_percent.json()["items"]] == ["Budget 100%"]
+    content_only = f.client.get("/documents", params={"search": "private body marker"})
+    assert content_only.status_code == 200 and content_only.json()["items"] == []
+    reversed_dates = f.client.get("/documents", params={"date_from": "2026-05-03", "date_to": "2026-05-02"})
+    assert reversed_dates.status_code == 422
+
+
+def test_document_cursor_keeps_current_stable_sort_order(fixture):
+    f = fixture
+    with f.factory() as db:
+        db.add_all([
+            Document(user_id=1, title=f"Tie {i}", file_name=f"tie-{i}.pdf", file_type=".pdf",
+                     file_size=1, file_path=f"/synthetic/tie-{i}.pdf", status="completed",
+                     visibility="private", created_at=datetime(2026, 6, 1, 12, 0))
+            for i in range(3)
+        ])
+        db.commit()
+    first = f.client.get("/documents", params={"page_size": 1, "sort_by": "created_at", "sort_order": "asc"})
+    assert first.status_code == 200
+    first_item = first.json()["items"][0]
+    second = f.client.get("/documents", params={"page_size": 1, "sort_by": "created_at", "sort_order": "asc", "cursor": first_item["id"]})
+    assert second.status_code == 200
+    second_item = second.json()["items"][0]
+    third = f.client.get("/documents", params={"page_size": 1, "sort_by": "created_at", "sort_order": "asc", "cursor": second_item["id"]})
+    assert third.status_code == 200
+    ids = [first_item["id"], second_item["id"], third.json()["items"][0]["id"]]
+    assert len(set(ids)) == 3
+
+
+def test_document_stats_accessible_matches_list_privacy_scope(fixture):
+    f = fixture
+    with f.factory() as db:
+        db.add_all([
+            Document(user_id=1, title="Own", file_name="own.pdf", file_type=".pdf", file_size=1,
+                     file_path="/synthetic/own.pdf", status="completed", visibility="private", chunk_count=2),
+            Document(user_id=2, title="Other private", file_name="private.pdf", file_type=".pdf", file_size=1,
+                     file_path="/synthetic/private.pdf", status="completed", visibility="private", chunk_count=100),
+            Document(user_id=2, title="Public", file_name="public.pdf", file_type=".pdf", file_size=1,
+                     file_path="/synthetic/public.pdf", status="completed", visibility="public", chunk_count=3),
+        ])
+        db.commit()
+        user = db.get(User, 1)
+        user.is_superuser = True
+        db.commit()
+
+    response = f.client.get("/documents/stats/overview")
+    assert response.status_code == 200, response.text
+    assert response.json()["total_documents"] == 2
+    assert response.json()["total_chunks"] == 5

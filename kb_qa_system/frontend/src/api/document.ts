@@ -41,6 +41,9 @@ export async function getDocuments(
   if (params.page) query.set("page", String(params.page));
   if (params.page_size) query.set("page_size", String(params.page_size));
   if (params.status) query.set("status", params.status);
+  if (params.file_type) query.set("file_type", params.file_type);
+  if (params.date_from) query.set("date_from", params.date_from);
+  if (params.date_to) query.set("date_to", params.date_to);
   if (params.search) query.set("search", params.search);
   if (params.sort_by) query.set("sort_by", params.sort_by);
   if (params.sort_order) query.set("sort_order", params.sort_order);

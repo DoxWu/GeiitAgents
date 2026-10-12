@@ -6,9 +6,9 @@
 # ============================================
 # Web 框架
 # ============================================
-fastapi==0.115.0
+fastapi==0.143.0
 uvicorn[standard]==0.30.6
-python-multipart==0.0.9
+python-multipart==0.0.32
 sse-starlette==2.1.3
 
 # ============================================
@@ -35,13 +35,13 @@ flower==2.0.1
 # 数据验证和配置
 # ============================================
 pydantic==2.9.2
-pydantic-settings==2.5.2
+pydantic-settings==2.10.1
 email-validator==2.2.0
 
 # ============================================
 # 认证授权
 # ============================================
-python-jose[cryptography]==3.4.0  # H-14: 3.4.0 修复 CVE-2024-33664（JWE 压缩 DoS）和 CVE-2024-33663（公钥签名 JWT）
+PyJWT==2.15.1               # H-14: 仅使用固定 HMAC 算法的签名 JWT，无需 JWE
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1  # E4-02: 固定 bcrypt 4.0.1，避免 4.1+ 与 passlib 1.7.4 的 __about__ 兼容性问题
 
@@ -50,15 +50,15 @@ bcrypt==4.0.1  # E4-02: 固定 bcrypt 4.0.1，避免 4.1+ 与 passlib 1.7.4 的 
 # ============================================
 python-docx==1.1.2
 beautifulsoup4==4.12.3
-requests==2.32.3
-markdown==3.7
+requests==2.34.2
+markdown==3.8.1
 
 # ============================================
 # 文档处理 - 版面分析与表格
 # ============================================
 PyMuPDF==1.24.10          # PDF 版面分析、图片提取
-pdfplumber==0.11.4        # 表格结构化提取
-Pillow==10.4.0            # 图像处理
+pdfplumber==0.11.10       # 表格结构化提取
+Pillow==12.3.0            # 图像处理
 
 # ============================================
 # OCR（扫描件支持）
@@ -69,10 +69,10 @@ pytesseract==0.3.13       # Tesseract OCR 封装
 # ============================================
 # LLM 和 RAG 框架
 # ============================================
-langchain==0.3.4
-langchain-openai==0.2.3
-langchain-text-splitters==0.3.0
-openai==1.52.0
+langchain-core==1.6.9
+langchain-openai==1.1.14
+langchain-text-splitters==1.1.2
+openai==2.54.0
 # 注：sentence-transformers 和 langchain-community 已移至 requirements-local-ml.txt
 # 本地 Embedding 兜底和 CrossEncoder 重排序为可选功能，未安装时自动降级
 # 安装方法：pip install -r requirements-local-ml.txt
@@ -80,7 +80,7 @@ openai==1.52.0
 # ============================================
 # 工具库
 # ============================================
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 loguru==0.7.2
 tenacity==9.0.0           # 重试机制
 httpx==0.27.2             # 异步 HTTP 客户端
@@ -90,7 +90,7 @@ tiktoken==0.7.0           # Token 计数
 # ============================================
 # 邮件发送（Resend HTTP API + SMTP 备用）
 # ============================================
-aiosmtplib==3.0.2          # 异步 SMTP 客户端（备用通道，本地开发可用）
+aiosmtplib==5.1.2          # 异步 SMTP 客户端（备用通道，本地开发可用）
 resend==2.6.0              # Resend 官方 HTTP API SDK（主通道，不受 Railway SMTP 限制）
 
 # ============================================

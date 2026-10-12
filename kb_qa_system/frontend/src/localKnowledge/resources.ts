@@ -13,8 +13,11 @@ export async function prepareResources(profile: EmbeddingProfile, report: (messa
   const cache = await caches.open(MODEL_CACHE);
   const weight = profile.dtype === 'q8' ? 'onnx/model_quantized.onnx' : 'onnx/model.onnx';
   const verified = new Set<string>();
+  const aliases = new Map<string, string>();
   for (const file of ['config.json', 'tokenizer_config.json', 'tokenizer.json', weight]) {
     const url = `https://huggingface.co/${profile.repo}/resolve/${profile.revision}/${file}`;
+    for (const key of [url, `https://huggingface.co/${profile.repo}/resolve/main/${file}`,
+      `/models/${profile.repo}/${file}`, `models/${profile.repo}/${file}`]) aliases.set(key, url);
     const existing = await cache.match(url);
     report(`${existing ? '校验缓存' : '下载'} ${file}`);
     let data: ArrayBuffer;
@@ -45,7 +48,10 @@ export async function prepareResources(profile: EmbeddingProfile, report: (messa
     verified.add(url);
   }
   return {
-    match: async (key: string) => verified.has(key) ? (await cache.match(key)) ?? undefined : undefined,
+    match: async (key: string | Request | URL) => {
+      const source = aliases.get(key instanceof Request ? key.url : String(key));
+      return source && verified.has(source) ? (await cache.match(source)) ?? undefined : undefined;
+    },
     put: async () => { throw new Error('不允许写入未校验的模型资源。'); },
   };
 }

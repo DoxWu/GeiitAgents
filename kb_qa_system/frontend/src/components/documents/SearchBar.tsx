@@ -2,7 +2,7 @@
  * 搜索框组件
  *
  * 作用：
- *   提供文件名实时搜索功能，支持模糊匹配。
+ *   提供标题或原始文件名实时搜索；不搜索文档正文。
  *   输入时防抖触发搜索（300ms），避免频繁请求。
  *
  * 增强（D5-01 / D2-02 / D2-03）：
@@ -29,8 +29,10 @@ export function SearchBar() {
     setSearchKeyword,
     loadDocuments,
     searchHistory,
+    searchHistoryEnabled,
     addSearchHistory,
     clearSearchHistory,
+    setSearchHistoryEnabled,
   } = useDocumentStore();
   const [value, setValue] = useState(searchKeyword);
   const [isComposing, setIsComposing] = useState(false); // D5-01 IME 组合状态
@@ -127,8 +129,7 @@ export function SearchBar() {
   }
 
   // 是否展示历史下拉：聚焦且输入框为空且有历史记录
-  const shouldShowHistory =
-    showHistory && !value && searchHistory.length > 0;
+  const shouldShowHistory = showHistory && !value;
 
   return (
     <div ref={containerRef} className="relative flex-1 max-w-md">
@@ -167,17 +168,29 @@ export function SearchBar() {
               <Clock className="h-3 w-3" />
               搜索历史
             </span>
-            <button
-              onClick={handleClearHistory}
-              className="flex items-center gap-1 text-xs text-ink-tertiary transition-colors hover:text-danger"
-              aria-label="清空搜索历史"
-            >
-              <Trash2 className="h-3 w-3" />
-              清空
-            </button>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-ink-secondary">
+                <input
+                  aria-label="保存搜索历史"
+                  type="checkbox"
+                  checked={searchHistoryEnabled}
+                  onChange={(event) => setSearchHistoryEnabled(event.target.checked)}
+                />
+                保存
+              </label>
+              <button
+                onClick={handleClearHistory}
+                disabled={!searchHistory.length}
+                className="flex items-center gap-1 text-xs text-ink-tertiary transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="清空搜索历史"
+              >
+                <Trash2 className="h-3 w-3" />
+                清空
+              </button>
+            </div>
           </div>
           <div className="max-h-60 overflow-y-auto">
-            {searchHistory.map((keyword, index) => (
+            {searchHistory.length ? searchHistory.map((keyword, index) => (
               <button
                 key={`${keyword}-${index}`}
                 onClick={() => handleHistoryClick(keyword)}
@@ -187,7 +200,7 @@ export function SearchBar() {
                 {/* D2-02 搜索高亮（历史项中高亮关键词本身无意义，直接显示文本） */}
                 <span className="truncate">{keyword}</span>
               </button>
-            ))}
+            )) : <p className="px-3 py-3 text-xs text-ink-tertiary">{searchHistoryEnabled ? "暂无搜索历史" : "已关闭搜索历史保存"}</p>}
           </div>
         </div>
       )}

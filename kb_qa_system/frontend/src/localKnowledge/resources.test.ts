@@ -31,6 +31,8 @@ describe('explicit model resource preparation', () => {
     const cache = await prepareResources(profile, vi.fn());
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(fetcher.mock.calls.every(args => String(args[0]).includes(`/resolve/${profile.revision}/`))).toBe(true);
+    await expect(cache.match(`/models/${profile.repo}/config.json`)).resolves.toBeInstanceOf(Response);
+    await expect(cache.match(`https://huggingface.co/${profile.repo}/resolve/main/config.json`)).resolves.toBeInstanceOf(Response);
     expect(await cache.match('https://untrusted.test/model.onnx')).toBeUndefined();
     await expect(cache.put()).rejects.toThrow('未校验');
     fetcher.mockRejectedValue(new Error('offline'));

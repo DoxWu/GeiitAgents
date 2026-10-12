@@ -23,6 +23,7 @@ describe('local embedding contract', () => {
   it('fingerprints preprocessing, version and runtime, independent of JSON key order', () => {
     expect(fingerprint({ ...DEFAULT_PROFILE, queryPrefix: '' })).not.toBe(fingerprint(DEFAULT_PROFILE));
     expect(fingerprint({ ...DEFAULT_PROFILE, pooling: 'cls' })).not.toBe(fingerprint(DEFAULT_PROFILE));
+    expect(JSON.parse(fingerprint(DEFAULT_PROFILE)).runtime).toBe('transformers-4.3.1-wasm');
     expect(fingerprint(Object.fromEntries(Object.entries(DEFAULT_PROFILE).reverse()) as typeof DEFAULT_PROFILE)).toBe(fingerprint(DEFAULT_PROFILE));
   });
   it('rejects dimension mismatch, non-finite values and zero output', () => {
@@ -39,6 +40,7 @@ describe('local embedding contract', () => {
       chunks: [{ documentId: 'd1', start: 0, end: 1, text: 'a', vector: [1, 0] }, { documentId: 'd1', start: 1, end: 3, text: 'bc', vector: [0, 1] }] };
     expect(rank(index, profile, [1, 0])[0]).toMatchObject({ name: 'policy.md', text: 'a', score: 1 });
     expect(() => rank(index, { ...profile, passagePrefix: '' }, [1, 0])).toThrow('不匹配');
+    expect(() => rank({ ...index, fingerprint: index.fingerprint.replace('transformers-4.3.1-wasm', 'transformers-3.8.1-wasm') }, profile, [1, 0])).toThrow('不匹配');
   });
   it('matches full cosine sorting for non-unit vectors and preserves ties without mutating the index', () => {
     const profile = { ...DEFAULT_PROFILE, dimensions: 2 };

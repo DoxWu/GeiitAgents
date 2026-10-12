@@ -22,12 +22,12 @@
 import os
 import uuid
 import logging
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, Path, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import Any, Optional
 
 from app.core.database import get_db
@@ -557,10 +557,9 @@ def list_documents(
     cursor: Optional[int] = Query(
         None, ge=1, description="游标（上一页最后一条文档ID，传入时使用游标分页）"
     ),
-    # D2-01 全文检索：替代 LIKE，使用 PostgreSQL to_tsvector + @@ 操作符
-    # 作用：利用 GIN 索引加速搜索，同时保留 ilike 作为短词降级兼容
+    # 仅搜索可见的标题和原始文件名，不搜索正文内容。
     search: Optional[str] = Query(
-        None, max_length=200, description="搜索关键词（标题全文检索）"
+        None, max_length=200, description="搜索标题或原始文件名（不搜索正文）"
     ),
     # M-6 修复：status 参数枚举校验，防止无效状态值导致空查询
     status: Optional[str] = Query(
@@ -568,8 +567,18 @@ def list_documents(
         pattern=r"^(pending|processing|completed|failed|low_quality)$",
         description="状态筛选：pending/processing/completed/failed/low_quality"
     ),
+    file_type: Optional[str] = Query(
+        None,
+        min_length=2,
+        max_length=20,
+        pattern=r"^\.[A-Za-z0-9][A-Za-z0-9._+-]*$",
+        description="文件扩展名，例如 .pdf",
+    ),
+    date_from: Optional[date] = Query(None, description="创建日期起，含当天，按数据库存储日期"),
+    date_to: Optional[date] = Query(None, description="创建日期止，含当天，按数据库存储日期"),
     scope: str = Query(
         default="accessible",
+        pattern=r"^(accessible|mine|public)$",
         description="范围：accessible 我可访问的（自己的+公共库，默认）/ mine 我上传的 / public 公共文档库"
     ),
     # 修复 Issue 7：添加 folder_id 查询参数，实现分支文档隔离显示
@@ -600,7 +609,7 @@ def list_documents(
     获取文档列表（分页 + 权限隔离 + 全文检索）
 
     作用：
-        返回当前用户有权查看的文档，支持分页、状态筛选、全文检索和范围选择。
+        返回当前用户有权查看的文档，支持分页、类型/状态/日期筛选、标题和文件名搜索。
         自动过滤已软删除的文档。
 
         【权限隔离】通过 scope 控制可见范围：
@@ -608,11 +617,10 @@ def list_documents(
         - mine：仅自己上传的文档
         - public：仅公共文档库（visibility=public）
 
-        【D4-02 游标分页】传入 cursor 参数时使用游标分页（WHERE id < cursor），
-        未传入时保持 offset/limit 分页（向后兼容）。响应含 next_cursor 字段。
+        cursor 为上一页最后一项 ID，按当前排序字段和 ID 并列键继续。
+        未传入时使用 offset/limit 分页，next_cursor 可用于续页；续页应保留相同筛选/排序。
 
-        【D2-01 全文检索】search 参数使用 to_tsvector + @@ 全文检索，
-        同时保留 ilike 作为短词降级兼容。
+        search 仅匹配标题或原始文件名，不搜索文档正文。
 
         【Issue 7 分支隔离】folder_id 传入时仅返回该分支下的文档，
         未传入时不按分支过滤（保持向后兼容）。
@@ -620,9 +628,11 @@ def list_documents(
     查询参数：
         - page: 页码，默认 1（cursor 模式下忽略）
         - page_size: 每页数量，默认 10
-        - cursor: 游标（可选，传入时使用游标分页；sort_by 传入时忽略 cursor）
-        - search: 搜索关键词（标题全文检索）
+        - cursor: 游标（可选，上页最后一项 ID；续页应保留相同筛选/排序）
+        - search: 搜索标题或原始文件名（不搜索正文）
         - status: 状态筛选（pending/processing/completed/failed/low_quality）
+        - file_type: 文件扩展名筛选（例如 .pdf）
+        - date_from/date_to: 含当天的创建日期范围，按数据库存储日期解释
         - scope: 范围（accessible/mine/public）
         - folder_id: 文档库分支ID（≥1 指定分支；0 表示未分类；不传则不过滤）
         - sort_by: 排序字段（created_at/updated_at/file_name/file_type）
@@ -641,6 +651,12 @@ def list_documents(
     # 查询仅访问 Document 表字段，无 relationship 懒加载，不存在 N+1 问题。
     # 若未来 DocumentResponse 新增 user 关联字段，需改用 joinedload(User) 预加载。
     query = db.query(Document).filter(Document.is_deleted == False)
+
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(
+            status_code=422,
+            detail="date_from 不能晚于 date_to",
+        )
 
     # 按范围过滤（权限隔离核心）
     # 作用：根据 scope 限定可见文档范围
@@ -663,6 +679,18 @@ def list_documents(
     if status:
         query = query.filter(Document.status == status)
 
+    if file_type:
+        extension = file_type.lower()
+        bare_extension = extension.lstrip(".")
+        query = query.filter(func.lower(Document.file_type).in_({extension, bare_extension}))
+
+    if date_from:
+        query = query.filter(Document.created_at >= datetime.combine(date_from, time.min))
+    if date_to and date_to != date.max:
+        query = query.filter(
+            Document.created_at < datetime.combine(date_to + timedelta(days=1), time.min)
+        )
+
     # 修复 Issue 7：分支文档隔离过滤
     # 作用：folder_id 传入时仅返回该分支下的文档，实现分支隔离显示
     # 注意：folder_id 来自前端当前选中的分支，未选中分支时为 None（显示全部）
@@ -674,16 +702,20 @@ def list_documents(
         else:
             query = query.filter(Document.folder_id == folder_id)
 
-    # D2-01 全文检索：search 参数使用 to_tsvector + @@ 操作符
-    # 作用：利用 PostgreSQL GIN 索引加速搜索，ilike 作为短词降级兼容
+    # Search terms are literal; wildcard characters must not turn into broad queries.
     if search:
         search_term = search.strip()
         if search_term:
-            query = query.filter(
-                func.to_tsvector("simple", Document.title).match(search_term)
-                | Document.title.ilike(f"%{search_term}%")
-                | Document.file_name.ilike(f"%{search_term}%")
+            escaped_term = search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped_term}%"
+            search_filter = Document.title.ilike(pattern, escape="\\") | Document.file_name.ilike(
+                pattern, escape="\\"
             )
+            if db.get_bind().dialect.name == "postgresql":
+                search_filter = search_filter | func.to_tsvector(
+                    "simple", Document.title
+                ).op("@@")(func.plainto_tsquery("simple", search_term))
+            query = query.filter(search_filter)
 
     # 获取总数
     total = query.count()
@@ -702,22 +734,24 @@ def list_documents(
     sort_column = SORT_FIELD_MAP.get(sort_by, Document.created_at)
     order_col = sort_column.desc() if sort_order != "asc" else sort_column.asc()
 
-    # D4-02 游标分页：传入 cursor 且未指定自定义排序时使用游标分页，否则 offset/limit
-    # 注意：游标分页仅支持 id DESC 排序，自定义排序（sort_by）时必须用 offset/limit
-    next_cursor = None
-    if cursor and not sort_by:
-        # 游标分页：WHERE id < cursor ORDER BY id DESC LIMIT page_size
-        # 作用：避免 offset 深翻页性能退化
-        query = query.filter(Document.id < cursor)
-        documents = query.order_by(Document.id.desc()).limit(page_size).all()
-        # 若返回满页，说明可能还有更多数据，设置 next_cursor
-        if len(documents) == page_size:
-            next_cursor = documents[-1].id
+    if cursor:
+        anchor = query.filter(Document.id == cursor).first()
+        if anchor is None:
+            raise HTTPException(status_code=422, detail="游标不在当前可见筛选范围内，请从第一页重新加载")
+        anchor_value = getattr(anchor, sort_by or "created_at")
+        primary_after = sort_column > anchor_value if sort_order == "asc" else sort_column < anchor_value
+        query = query.filter(or_(
+            primary_after,
+            (sort_column == anchor_value) & (Document.id > cursor),
+        ))
+        documents = query.order_by(order_col, Document.id.asc()).limit(page_size).all()
     else:
         # offset/limit 分页（支持自定义排序）
         # 作用：sort_by 传入时按指定字段排序；未传入时按默认 created_at desc
         offset = (page - 1) * page_size
         documents = query.order_by(order_col, Document.id.asc()).offset(offset).limit(page_size).all()
+
+    next_cursor = documents[-1].id if len(documents) == page_size else None
 
     return {
         "items": documents,
@@ -2011,6 +2045,7 @@ def import_from_url(
 def get_documents_stats(
     scope: str = Query(
         default="accessible",
+        pattern=r"^(accessible|mine|public)$",
         description="范围：accessible（默认）/ mine / public，同文档列表"
     ),
     db: Session = Depends(get_db),
@@ -2047,14 +2082,11 @@ def get_documents_stats(
     elif scope == "public":
         scope_filter = Document.visibility == VISIBILITY_PUBLIC
     else:
-        # accessible：超级管理员看全部，其他人看自己的 + 公共库
-        if current_user.is_superuser:
-            scope_filter = None  # 不限
-        else:
-            scope_filter = or_(
-                Document.user_id == current_user.id,
-                Document.visibility == VISIBILITY_PUBLIC,
-            )
+        # accessible matches list_documents, including for superusers.
+        scope_filter = or_(
+            Document.user_id == current_user.id,
+            Document.visibility == VISIBILITY_PUBLIC,
+        )
 
     # 基础查询构造器（统一附加 scope + 未删除过滤）
     def _scoped_query():

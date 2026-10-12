@@ -21,8 +21,10 @@ const { mockDocStore } = vi.hoisted(() => ({
     loadDocuments: vi.fn(),
     // D2-03 搜索历史（Task #143 新增）
     searchHistory: [] as string[],
+    searchHistoryEnabled: true,
     addSearchHistory: vi.fn(),
     clearSearchHistory: vi.fn(),
+    setSearchHistoryEnabled: vi.fn(),
   },
 }));
 
@@ -37,6 +39,7 @@ describe("SearchBar 组件", () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mockDocStore.searchKeyword = "";
+    mockDocStore.searchHistoryEnabled = true;
   });
 
   afterEach(() => {
@@ -81,5 +84,15 @@ describe("SearchBar 组件", () => {
     expect(screen.getByLabelText("清空搜索")).toBeInTheDocument();
     await user.click(screen.getByLabelText("清空搜索"));
     expect(screen.getByPlaceholderText("搜索标题或文件名...")).toHaveValue("");
+  });
+
+  it("空历史时仍可关闭历史保存", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<SearchBar />);
+    await user.click(screen.getByPlaceholderText("搜索标题或文件名..."));
+    const toggle = screen.getByLabelText("保存搜索历史");
+    expect(toggle).toBeInTheDocument();
+    await user.click(toggle);
+    expect(mockDocStore.setSearchHistoryEnabled).toHaveBeenCalledWith(false);
   });
 });

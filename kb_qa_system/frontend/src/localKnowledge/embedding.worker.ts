@@ -1,11 +1,11 @@
-import { pipeline, env, type FeatureExtractionPipeline } from '@huggingface/transformers';
+import { AutoModel, AutoTokenizer, env, FeatureExtractionPipeline, type FeatureExtractionPipeline as FeatureExtractor } from '@huggingface/transformers';
 import wasmUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm?url';
 import wasmModuleUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs?url';
 import { fingerprint, LIMITS, splitText, validateProfile, validateVector, type EmbeddingProfile, type Chunk } from './core';
 import { prepareResources } from './resources';
 import type { Reply, Request } from './protocol';
 
-let extractor: FeatureExtractionPipeline | null = null;
+let extractor: FeatureExtractor | null = null;
 let profile: EmbeddingProfile;
 let busy = false;
 const reply = (message: Reply) => self.postMessage(message);
@@ -24,20 +24,31 @@ self.onmessage = async (event: MessageEvent<Request>) => {
   try {
     if (request.type === 'init') {
       profile = validateProfile(request.profile);
-      // Transformers.js treats the verified custom cache as a local model source.
       env.allowLocalModels = true;
       env.allowRemoteModels = false;
       env.useBrowserCache = false;
       env.useFSCache = false;
       env.useCustomCache = true;
       env.customCache = await prepareResources(profile, report);
+      const nativeFetch = env.fetch;
+      env.fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), self.location.href);
+        if (url.origin === self.location.origin && url.pathname.startsWith('/models/')) {
+          throw new Error('模型缓存缺少已校验资源，请清除模型缓存后重试。');
+        }
+        return nativeFetch(input, init);
+      };
       env.backends.onnx.wasm.numThreads = 1;
       env.backends.onnx.wasm.proxy = false;
+      env.useWasmCache = false;
       env.backends.onnx.wasm.wasmPaths = { wasm: wasmUrl, mjs: wasmModuleUrl };
       report('正在初始化 CPU 模型并检查兼容性…');
-      extractor = await pipeline<'feature-extraction'>('feature-extraction', profile.repo, {
-        revision: profile.revision, dtype: profile.dtype, device: 'wasm', local_files_only: true,
-      });
+      const options = { revision: profile.revision, dtype: profile.dtype, device: 'wasm' as const, local_files_only: true };
+      const [model, tokenizer] = await Promise.all([
+        AutoModel.from_pretrained(profile.repo, options),
+        AutoTokenizer.from_pretrained(profile.repo, options),
+      ]);
+      extractor = new FeatureExtractionPipeline({ task: 'feature-extraction', model, tokenizer });
       const tokenizerLimit = Number(extractor.tokenizer.model_max_length);
       if (!Number.isFinite(tokenizerLimit) || profile.maxTokens > tokenizerLimit) {
         throw new Error('配置的 token 上限超过 tokenizer 支持范围，请降低 maxTokens，避免文本被截断。');
