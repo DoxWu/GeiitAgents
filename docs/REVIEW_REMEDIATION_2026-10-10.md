@@ -39,4 +39,4 @@
 - 依赖证据：npm 官方全量审计 0 漏洞；已有 Python OSV 审计覆盖 135 个运行/可选 ML 包，0 已知漏洞；刷新前端生产 CycloneDX 清单 211 个组件且均有许可证；重新生成 Windows x64 Rust CycloneDX 1.5 清单 308 个组件且均有许可证、无 Linux GTK 组件。本机 `cargo-audit` 仍未能运行；Windows 目标审计和 Trivy 镜像扫描须由配置好的远程 CI 执行确认。测试依赖拆分后未在本机重新完成包含新文件的 pip-audit 扫描。
 - 本地知识库实际验收：Chromium 使用真实 CPU/WASM E5、真实 MD/TXT/PDF/DOCX/PPTX 解析，6 个文件索引/检索通过；启用约 35.4 秒、索引约 0.82 秒、检索约 71 ms、模型缓存重启约 3 秒。检查移动 390px 无横向溢出、无云端业务 API；屏蔽外网后缓存推理通过；合成 IndexedDB 内容加密导出、清空并恢复成功。此样本不代表低配/大容量基准，也不含 OCR。
 - 本次验证：前端 TypeScript check、lint、全量 **132 文件 / 1270 项**、生产构建通过；后端全量 **680 通过 / 16 环境相关跳过**（隔离干净依赖）。CI YAML 解析、`git diff --check` 通过。构建保留两条 workflow 动态/静态导入提示。未构建容器/桌面安装包、未运行远程 CI、未访问线上服务或真实供应商/邮件。
-- 后续未完成：Python 新拆分测试依赖的 OSV 复扫；Rust Windows 目标 cargo-audit 与镜像 Trivy 的 CI 结果；业务检索 A12 基准；多服务压力/浏览器兼容/完整备份恢复与升级回滚；A28 真实供应商、Resend 邮件及部署者隐私信息核实。工作区已有大量未提交改动和 `output/`、`tmp/` 未跟踪内容，本次未清理、提交或推送。
+- 后续未完成：Python 新拆分测试依赖的 OSV 复扫；Rust Windows 目标 cargo-audit 与镜像 Trivy 的 CI 结果；业务检索 A12 基准；多服务压力/浏览器兼容/完整备份恢复与升级回滚；A28 真实供应商、Resend 邮件及部署者隐私信息核实。实现已提交为 `22d76fc`（前序 A28 准备为 `0b16fd4`）；fetch/祖先与 SHA 检查确认远程无独有提交，但 push dry-run 遭 GitHub 443 连接失败，待网络恢复后普通推送。没有强推或修改 `main`。未跟踪 `output/`、`tmp/` 保留在工作区且未提交。
