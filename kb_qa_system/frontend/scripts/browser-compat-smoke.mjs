@@ -26,24 +26,38 @@ async function probeBrowserApis(page) {
         const transaction = db.transaction('probe', 'readwrite');
         transaction.objectStore('probe').put('ok', 'key');
         transaction.oncomplete = () => {
-          db.close();
-          const deleting = indexedDB.deleteDatabase(idbName);
-          deleting.onsuccess = () => resolve(true);
-          deleting.onerror = () => resolve(false);
+          const reading = db.transaction('probe', 'readonly').objectStore('probe').get('key');
+          reading.onsuccess = () => {
+            const valueMatches = reading.result === 'ok';
+            db.close();
+            const deleting = indexedDB.deleteDatabase(idbName);
+            deleting.onsuccess = () => resolve(valueMatches);
+            deleting.onerror = () => resolve(false);
+          };
+          reading.onerror = () => { db.close(); resolve(false); };
         };
         transaction.onerror = () => { db.close(); resolve(false); };
       };
     });
-    const workerRoundTrip = await new Promise(resolve => {
-      const blob = new Blob(['onmessage=()=>postMessage("ok")'], { type: 'text/javascript' });
-      const url = URL.createObjectURL(blob);
-      const worker = new Worker(url);
-      const timeout = setTimeout(() => finish(false), 3000);
-      const finish = value => { clearTimeout(timeout); worker.terminate(); URL.revokeObjectURL(url); resolve(value); };
-      worker.onmessage = event => finish(event.data === 'ok');
-      worker.onerror = () => finish(false);
-      worker.postMessage('probe');
-    });
+    const pageModuleUrl = performance.getEntriesByType('resource').map(entry => entry.name)
+      .find(url => /\/assets\/LocalKnowledgePage-[^/]+\.js$/.test(new URL(url).pathname));
+    let workerRoundTrip = false;
+    if (pageModuleUrl) {
+      const source = await fetch(pageModuleUrl).then(response => response.text());
+      const workerPath = source.match(/new Worker\(new URL\("([^"]*embedding\.worker-[^"]+\.js)"/)?.[1];
+      if (workerPath) workerRoundTrip = await new Promise(resolve => {
+        let worker;
+        let timeout;
+        const finish = value => { clearTimeout(timeout); worker?.terminate(); resolve(value); };
+        try {
+          worker = new Worker(new URL(workerPath, location.origin), { type: 'module' });
+          timeout = setTimeout(() => finish(false), 10000);
+          worker.onmessage = event => finish(event.data?.type === 'error' && /先启用本地模型/.test(event.data.message));
+          worker.onerror = () => finish(false);
+          worker.postMessage({ id: 9810, type: 'query', text: '' });
+        } catch { finish(false); }
+      });
+    }
     let cacheStorage = false;
     if ('caches' in globalThis) {
       const cacheName = `geiit-browser-smoke-${crypto.randomUUID()}`;
