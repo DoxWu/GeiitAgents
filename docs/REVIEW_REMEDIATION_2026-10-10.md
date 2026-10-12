@@ -71,4 +71,4 @@
 - 第二轮 GitHub Actions `38250130095`：secret scan、npm/Python OSV、Windows `cargo-audit`、三份 SBOM 生成、PostgreSQL/pgvector 后端测试、独立 LangChain 合约、Node 20 前端全量 **132 文件 / 1272 项**及前端生产构建均通过。整体 run 失败仅发生在容器 job 初始化：工作流引用 `aquasecurity/trivy-action@0.28.0`，该 tag 不存在（项目 tag 带 `v` 前缀），因此容器镜像未构建，Trivy 未运行。
 - 修正 `.github/workflows/ci.yml` 两处 Trivy action 引用为 `aquasecurity/trivy-action@v0.36.0`；GitHub tag 查询确认存在。本机 Python YAML 解析及 `git diff --check` 通过。本次代码测试未重跑。
 - 当前修复需推送后重新运行 CI，方可确认镜像构建和 HIGH/CRITICAL 扫描结果。没有读取 `.env`、访问生产环境或调用真实供应商/邮件。
-- 同步状态：修复提交 `6b35ad3` 已本地创建；普通 `git push agents develop/geiit-agents` 因 GitHub 443 连接超时失败。推送前 GitHub API 核对远程开发分支为 `c653b655`、`main` 为 `ea4917e`；未发生远程更新，新 CI 尚未触发。`output/` 和 `tmp/` 继续未跟踪且未提交。
+- 同步状态：修复提交 `6b35ad3` 已本地创建；普通 `git push agents develop/geiit-agents` 因 GitHub 443 连接超时失败。SSH 443 主机密钥通过 GitHub 官方 API 返回值严格校验，但远程认证因没有可用公钥身份而拒绝；未关闭校验或改用非 Git 写入方式。GitHub API 核对远程开发分支为 `c653b655`、`main` 为 `ea4917e`；未发生远程更新，新 CI 尚未触发。`output/` 和 `tmp/` 继续未跟踪且未提交。
