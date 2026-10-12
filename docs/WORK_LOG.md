@@ -803,3 +803,10 @@
 - 用户在 `unanswerable-template.csv` 填入 12 个候选问题：电商 5 条、视频 2 条、医疗 5 条；视频域按用户说明保留两条。保留原 CSV 不变，并生成 `unanswerable-examples.jsonl`，加入稳定评测 ID、`answerable=false`、空证据、领域和 `selected-30` 范围。
 - 评测理由统一标为“这 30 条所选样本没有足够证据”，不声称现实中不存在相关信息。原 CSV 中冷空气过敏、听力损伤、网瘾和梅毒的理由涉及医学事实，本次不将这些说法作为经核实事实写入评测标签；医学内容未作临床审核。
 - 该 12 条仍是 Multi-CPR 派生语料上的候选负例，不等同企业业务负例；未运行召回评估或应用测试，数据许可仍待核实。无代码、线上服务或部署变更。
+
+### 2026-10-12：补齐恢复与 LangChain CI 覆盖
+
+- 改动 `.github/workflows/ci.yml`：PostgreSQL/pgvector CI 服务使用 runner 内专用 `ops_test` 用户；为 `test_ops.py` / `test_maintenance.py` 设置受 fixture 限制的管理员 URL，并安装 PostgreSQL 16 客户端供 `pg_dump` / `pg_restore` 调用。新增独立 LangChain 工具消息合约 job，避免全量测试的 mock 模块污染真实依赖测试。
+- 独立合约测试发现账号工具层仅读 LangChain `AIMessage.additional_kwargs`，与固定版 `langchain-openai` 将已解析调用放在 `AIMessage.tool_calls` 的实际结构不兼容。修复为优先序列化规范化工具调用，并保留旧原始形状兼容。
+- 本次验证：`test_office_tools.py`、`test_private_model.py`、`test_office_tools_langchain.py` 共 **51 项通过**；合约使用已安装的真实 LangChain 1.1.14 与 HTTP MockTransport，没有真实模型请求。修改文件 Ruff 通过；CI YAML 解析和 job 检查、`git diff --check` 通过。此前 A21 隔离 PG 测试 28/28 是历史验证，本次未重跑；当前 Docker daemon 不可用，因此未在本机模拟 workflow service。远程 CI 尚未触发。
+- 未完成/风险：A21 的远程 live PG job 和 A08 的 OSV、Windows Rust audit、Trivy 仍待 Actions 运行结果；完整部署恢复/回滚、跨服务压力、浏览器真实运行时、A12 业务金标及 A28 真实供应商/邮件/隐私验收仍开放。未读取 `.env`、未访问线上服务、未推送；`output/` 与 `tmp/` 原有未跟踪内容继续保留。

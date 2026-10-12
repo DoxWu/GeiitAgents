@@ -124,13 +124,13 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: test
+          POSTGRES_USER: ops_test
           POSTGRES_PASSWORD: test
           POSTGRES_DB: test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U test -d test"
+          --health-cmd "pg_isready -U ops_test -d test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -162,16 +162,55 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-test.txt
 
+      - name: Install PostgreSQL 16 client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-client-16
+          pg_dump --version
+          pg_restore --version
+
       - name: Run tests
         env:
           # CI 使用 development 环境（config.py 仅允许 development/staging/production）
           # development 下 SECRET_KEY 校验宽松，适合 CI 场景
           ENVIRONMENT: development
           SECRET_KEY: ci-test-secret-key-not-for-production
-          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
+          DATABASE_URL: postgresql+psycopg://ops_test:test@localhost:5432/test
+          GEIIT_OPS_TEST_ADMIN_URL: postgresql+psycopg://ops_test:test@localhost:5432/postgres
           REDIS_URL: redis://localhost:6379/0
         run: |
           python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+
+  langchain-contract-test:
+    name: LangChain tool transcript contract
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kb_qa_system/backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            kb_qa_system/backend/requirements.txt
+            kb_qa_system/backend/requirements-test.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run contract test with real LangChain packages
+        env:
+          ENVIRONMENT: development
+          SECRET_KEY: ci-test-secret-key-not-for-production
+        run: python -m pytest tests/test_office_tools_langchain.py -v --tb=short
 
   # --------------------------------------------
   # 前端测试

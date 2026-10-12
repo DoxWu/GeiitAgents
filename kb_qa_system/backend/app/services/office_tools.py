@@ -102,7 +102,18 @@ async def complete_account_tools(request: AccountToolCompletion) -> dict:
             result = await client.acomplete_tools(messages, office_tools(request.allow_web_search))
             if getattr(result, "invalid_tool_calls", None):
                 raise ValueError
-            raw = {"content": result.content, "tool_calls": result.additional_kwargs.get("tool_calls", [])}
+            normalized_calls = getattr(result, "tool_calls", None)
+            if normalized_calls is None:
+                tool_calls = result.additional_kwargs.get("tool_calls", [])
+            else:
+                tool_calls = [
+                    {"id": call["id"], "type": "function", "function": {
+                        "name": call["name"],
+                        "arguments": json.dumps(call["args"], separators=(",", ":"), ensure_ascii=False),
+                    }}
+                    for call in normalized_calls
+                ]
+            raw = {"content": result.content, "tool_calls": tool_calls}
             if len(json.dumps(raw)) > 2 * 1024 * 1024:
                 raise ValueError
             return {**normalize_reply(raw), "model": client.config.model}

@@ -13,7 +13,7 @@
 | A09/A10/A11/A24 | 已实现/部分开放 | 搜索竞态与历史账号/服务器隔离、可选搜索历史保存、标题/文件名搜索、状态/类型/日期筛选和隐私页说明均已实现；列表不搜索正文，相关性阈值仍待业务基准校准 |
 | A12 | 已完成公开样本补充评估和本地筛选浏览器验收；业务校准仍开放 | Multi-CPR 30 条正例是 passage 相关性标签，不等同问答可回答标签；用户提供的 12 条无答案候选只表示 selected-30 中证据不足。真实 E5 检索 Recall@1/5 为 96.67%/100%，MRR 0.983、nDCG@5 0.988；无答案候选相似度 0.841–0.906。仅描述两类分数分布，不混算最佳分类阈值，也不调整产品拒答阈值。文件筛选实测通过：空范围禁用搜索、限定单文件、范围变更清旧结果和 390px 无横向溢出。仍需脱敏业务问答/证据标注来校准拒答与引用质量；Multi-CPR 归档无数据许可 |
 | A08 | 本地测试依赖审计完成；CI/镜像审计仍开放 | 测试依赖审计发现 `pytest==8.3.3` 的 CVE-2025-71176，已升至修复版 `9.0.3`，`pytest-asyncio` 升至 `1.4.0` 并固定函数级 fixture loop；隔离后端全量 680 通过/16 跳过，PyPI 漏洞服务审计 8 个测试依赖（含解析出的传递依赖）为 0 漏洞。npm 官方全量审计 0 漏洞；此前 Python OSV 135 个运行及可选 ML 包未报漏洞。前端 CycloneDX 211 组件、Windows x64 Rust SBOM 308 crate 均有许可证。OSV API 本地请求超时；本机无 cargo/cargo-audit 且 Docker daemon 未运行，CI OSV、Rust Windows 目标 cargo-audit 和镜像 Trivy 仍待远程 CI 结果 |
-| A14/A15/A16/A21 | 部分完成 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。新增 Playwright 本地生产 UI 冒烟脚本，Chromium、Edge、Firefox、WebKit 4 个运行时均通过页面加载、应用同源模块 Worker 消息、IndexedDB 写入/读回、Crypto/WASM/CacheStorage/Web Locks、1280px/390px 布局与出站隔离检查；报告/截图在 `.tools/`。A21 运维/恢复隔离 PG 集成共 28/28 通过。浏览器冒烟不覆盖实际文件导入/E5 推理、Safari、WebView2、移动真机或无障碍全流程。真实多服务压力和远程 CI 尚未完成 |
+| A14/A15/A16/A21 | 部分完成 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。新增 Playwright 本地生产 UI 冒烟脚本，Chromium、Edge、Firefox、WebKit 4 个运行时均通过页面加载、应用同源模块 Worker 消息、IndexedDB 写入/读回、Crypto/WASM/CacheStorage/Web Locks、1280px/390px 布局与出站隔离检查；报告/截图在 `.tools/`。A21 运维/恢复隔离 PG 集成本机 28/28 通过，并已接入 CI 专用 `ops_test` PostgreSQL 服务账号、随机数据库 fixture 与 PG16 客户端；增加独立真实 LangChain 包的 HTTP fixture 合约 job，51 项相关本机回归通过。远程 CI 尚未运行，结果仍待确认。浏览器冒烟不覆盖实际文件导入/E5 推理、Safari、WebView2、移动真机或无障碍全流程。真实多服务压力仍未完成 |
 | A13/A18/A19/A20/A22/A27 | 部分完成；部署环境验收未完成 | 隔离 PostgreSQL 18.4 + pgvector 的 `test_ops.py` 与 `test_maintenance.py` 共 28/28 通过，含真实加密备份、临时目标恢复、向量/序列、损坏检测、失败快照保留、任务幂等/互斥/取消/中断和目标变化拒绝；随机测试库清理后停止集群。此结果不覆盖上传文件/PVC/运行配置与完整业务联合恢复。仍待目标环境迁移、部署回滚、dev.68 安装升级、8 GB/大容量/断电/跨卷测试或正式新安装包 |
 | A23 | 本轮保持现有功能范围 | 用户确认可选扩展另行安排，不添加 OCR/循环等新产品模块 |
 | A28 | 代码、验收脚本和隔离测试完成；真实联调待部署运行时配置 | 用户已确认阿里云 OpenAI 兼容主 LLM/Embedding、DeepSeek OpenAI 兼容 LLM 备用、Resend HTTP API，以及按实例配置管理员邮箱、未配置时隐藏。真实验收还需部署者提供模型 ID/地域端点/向量维度、运行环境凭据、已验证发件人和明确测试收件箱；运营主体、所在地、数据区域/保留/跨境/第三方处理须部署者核实。不得把代码准备描述为供应商或隐私合规验收 |
@@ -51,3 +51,10 @@
 - 本地知识库实际验收：Chromium 使用真实 CPU/WASM E5、真实 MD/TXT/PDF/DOCX/PPTX 解析，6 个文件索引/检索通过；启用约 35.4 秒、索引约 0.82 秒、检索约 71 ms、模型缓存重启约 3 秒。检查移动 390px 无横向溢出、无云端业务 API；屏蔽外网后缓存推理通过；合成 IndexedDB 内容加密导出、清空并恢复成功。此样本不代表低配/大容量基准，也不含 OCR。
 - 本次验证：前端 TypeScript check、lint、全量 **132 文件 / 1270 项**、生产构建通过；后端全量 **680 通过 / 16 环境相关跳过**（隔离干净依赖）。CI YAML 解析、`git diff --check` 通过。构建保留两条 workflow 动态/静态导入提示。未构建容器/桌面安装包、未运行远程 CI、未访问线上服务或真实供应商/邮件。
 - 后续未完成：Python 新拆分测试依赖的 OSV 复扫；Rust Windows 目标 cargo-audit 与镜像 Trivy 的 CI 结果；业务检索 A12 基准；多服务压力/浏览器兼容/完整备份恢复与升级回滚；A28 真实供应商、Resend 邮件及部署者隐私信息核实。实现已提交为 `22d76fc`（前序 A28 准备为 `0b16fd4`）；fetch/祖先与 SHA 检查确认远程无独有提交，但 push dry-run 遭 GitHub 443 连接失败，待网络恢复后普通推送。没有强推或修改 `main`。未跟踪 `output/`、`tmp/` 保留在工作区且未提交。
+
+### 2026-10-12：补齐恢复与 LangChain CI 覆盖
+
+- 实际改动：CI 的 PostgreSQL/pgvector 服务改用仅限 runner 的 `ops_test` 超级用户，health check、应用 URL 和 `GEIIT_OPS_TEST_ADMIN_URL` 保持一致；安装 PostgreSQL 16 客户端，使 live 备份/恢复用例可调用 `pg_dump`/`pg_restore`。增加单独 Python 3.11 LangChain 合约 job，避免全量测试注入的模块 mock 影响真实依赖测试。
+- 联调测试发现账号工具调用适配只读 `AIMessage.additional_kwargs`，与固定版 `langchain-openai` 将解析调用放入 `AIMessage.tool_calls` 的实际形状不兼容。现优先把规范化工具参数序列化成 API 消息格式，同时兼容旧原始响应形状。
+- 本机验证：真实安装的 LangChain 1.1.14 + HTTP MockTransport 合约、`test_office_tools.py`、`test_private_model.py` 共 **51 项通过**；未调用真实模型或供应商。修改 Python 文件 Ruff 检查通过；workflow YAML 解析、所需 job 存在性断言和 `git diff --check` 通过。工作流 PostgreSQL 服务无法在当前 Docker daemon 不可用的机器模拟；GitHub Actions 远程运行未发生。
+- 状态边界：A21 的 live PG 测试已有此前隔离 PostgreSQL 28/28 本机结果，现在 CI 已配置实际运行入口，仍待远程 Actions 结果。A08 的 OSV/Rust/Trivy 结果也仍待 CI。未访问 `.env`、生产数据库或线上服务，未推送。
