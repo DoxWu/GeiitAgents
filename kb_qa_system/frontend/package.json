@@ -12,6 +12,7 @@
     "test": "vitest run --configLoader runner",
     "test:watch": "vitest --configLoader runner",
     "test:coverage": "vitest run --coverage --configLoader runner",
+    "test:browser-smoke": "node scripts/browser-compat-smoke.mjs",
     "benchmark:local-knowledge": "node scripts/benchmark-local-knowledge.mjs",
     "desktop:dev": "node scripts/dev-desktop.mjs",
     "desktop:build": "node scripts/build-desktop.mjs dev",

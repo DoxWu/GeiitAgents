@@ -13,7 +13,7 @@
 | A09/A10/A11/A24 | 已实现/部分开放 | 搜索竞态与历史账号/服务器隔离、可选搜索历史保存、标题/文件名搜索、状态/类型/日期筛选和隐私页说明均已实现；列表不搜索正文，相关性阈值仍待业务基准校准 |
 | A12 | 已完成公开样本补充评估和本地筛选浏览器验收；业务校准仍开放 | Multi-CPR 30 条正例是 passage 相关性标签，不等同问答可回答标签；用户提供的 12 条无答案候选只表示 selected-30 中证据不足。真实 E5 检索 Recall@1/5 为 96.67%/100%，MRR 0.983、nDCG@5 0.988；无答案候选相似度 0.841–0.906。仅描述两类分数分布，不混算最佳分类阈值，也不调整产品拒答阈值。文件筛选实测通过：空范围禁用搜索、限定单文件、范围变更清旧结果和 390px 无横向溢出。仍需脱敏业务问答/证据标注来校准拒答与引用质量；Multi-CPR 归档无数据许可 |
 | A08 | 本地测试依赖审计完成；CI/镜像审计仍开放 | 测试依赖审计发现 `pytest==8.3.3` 的 CVE-2025-71176，已升至修复版 `9.0.3`，`pytest-asyncio` 升至 `1.4.0` 并固定函数级 fixture loop；隔离后端全量 680 通过/16 跳过，PyPI 漏洞服务审计 8 个测试依赖（含解析出的传递依赖）为 0 漏洞。npm 官方全量审计 0 漏洞；此前 Python OSV 135 个运行及可选 ML 包未报漏洞。前端 CycloneDX 211 组件、Windows x64 Rust SBOM 308 crate 均有许可证。OSV API 本地请求超时；本机无 cargo/cargo-audit 且 Docker daemon 未运行，CI OSV、Rust Windows 目标 cargo-audit 和镜像 Trivy 仍待远程 CI 结果 |
-| A14/A15/A16/A21 | 部分完成 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。真实多服务压力、Firefox/WebKit/WebView2/真机矩阵及远程 CI 尚未完成 |
+| A14/A15/A16/A21 | 部分完成 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。新增 Playwright 本地生产 UI 冒烟脚本，Chromium、Edge、Firefox、WebKit 4 个运行时均通过页面加载、IndexedDB/Worker/Crypto/WASM/CacheStorage/Web Locks、1280px/390px 布局与出站隔离检查；报告/截图在 `.tools/`。该冒烟不覆盖实际文件导入/E5 推理、Safari、WebView2、移动真机或无障碍全流程。真实多服务压力和远程 CI 尚未完成 |
 | A13/A18/A19/A20/A22/A27 | 文档/代码准备完成，环境验收未完成 | 新增恢复与 schema 安全说明、功能/隐私/帮助文档更新；本地 E5/WASM 知识库真实推理、六类文件、移动窄屏、缓存离线重启及加密备份恢复已验收；尚无完整服务端业务联合恢复、回滚演练、dev.68 安装升级、8 GB/大容量/断电/跨卷测试或正式新安装包 |
 | A23 | 本轮保持现有功能范围 | 用户确认可选扩展另行安排，不添加 OCR/循环等新产品模块 |
 | A28 | 代码、验收脚本和隔离测试完成；真实联调待部署运行时配置 | 用户已确认阿里云 OpenAI 兼容主 LLM/Embedding、DeepSeek OpenAI 兼容 LLM 备用、Resend HTTP API，以及按实例配置管理员邮箱、未配置时隐藏。真实验收还需部署者提供模型 ID/地域端点/向量维度、运行环境凭据、已验证发件人和明确测试收件箱；运营主体、所在地、数据区域/保留/跨境/第三方处理须部署者核实。不得把代码准备描述为供应商或隐私合规验收 |
@@ -40,7 +40,8 @@
 - selected-30 重跑：30 文档/30 片段，索引 1,371 ms；84 次查询 P50/P95/最大 77/91/96 ms；正例 Recall@1/5 96.67%/100%、MRR 0.983、nDCG@5 0.988；无答案候选分数范围 0.841–0.906。指标语义和限制见本地知识库基准文档。
 - 默认合成 `standard` 重跑：100 文档/334 片段，96 次查询 P50/P95/最大 91/109/124 ms，Recall@1/5 91.67%/95.83%；48 条 gold evidence 对应文本全部匹配。峰值浏览器进程工作集样本约 1.21 GB；当前设备为高内存开发机，不替代 8 GB 验收。定向 28 项、前端全量 132 文件/1272 项、TypeScript、lint 和生产构建通过。构建保留两条既有 workflow 动态/静态导入提示。
 - A08 状态：CI YAML 已配置 OSV、Windows cargo-audit、SBOM、Docker 构建及 Trivy 扫描；本机 Docker CLI 无法连接 daemon，未安装 cargo/cargo-audit，因此没有本机构建/扫描镜像，也没有新 Rust 审计结果。Python 测试依赖 PyPI 审计上轮为 0 已知漏洞；远程 CI 结果仍待确认。
-- 未完成：远程 CI/OSV/Rust/Trivy；真实 Redis/WebSocket、provider/邮件及部署隐私核实；备份/迁移/恢复与回滚演练、Windows 安装升级、跨浏览器和 8 GB/大容量/断电测试；A12 业务拒答和引用评估仍需脱敏业务金标。Multi-CPR 样本及逐题结果仅存 Git 忽略目录。无线上部署变更。
+- A15 浏览器冒烟（同日）：新增 `npm run test:browser-smoke`，在 Chromium 153、Edge 155、Firefox 155、Playwright WebKit 26.6 生产预览逐一加载本地知识库，检查 IndexedDB 写读/删除、Worker 消息、Web Crypto、WASM、CacheStorage、Web Locks、文件输入，以及 1280px/390px 布局。4 个浏览器均 HTTP 200，页面错误/API 请求/外部请求均为 0；报告与截图在 Git 忽略目录 `.tools/`。这不是完整业务交互验收，特别不代表真实 Safari 或 Windows WebView2。
+- 未完成：远程 CI/OSV/Rust/Trivy；真实 Redis/WebSocket、provider/邮件及部署隐私核实；备份/迁移/恢复与回滚演练、Windows 安装升级、真实 Safari/WebView2/移动真机、跨浏览器业务工作流，以及 8 GB/大容量/断电测试；A12 业务拒答和引用评估仍需脱敏业务金标。Multi-CPR 样本及逐题结果仅存 Git 忽略目录。无线上部署变更。
 
 ## 2026-10-12：安全审计收尾与本地知识库验收
 
