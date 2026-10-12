@@ -818,3 +818,9 @@
 - 修正 coverage 门槛至当前真实 CI 基线 **44.3%**，仍保留 fail-under，并要求后续按覆盖补测进展提升。文件整理 mock 改用 Node 原生 `File`，资源校验测试使用 Node `TextEncoder`/`Uint8Array`；密文断言改成唯一长明文标记。
 - 验证：Node **20.20.2** 前端全量 **132 文件 / 1272 项通过**；相关定向回归 **119 项通过**；`npm run lint`、`npx tsc --noEmit`、Ruff 和 `git diff --check` 通过。第二轮 Actions 尚未启动。首轮远程结果继续作为首轮证据记录，不替代新代码的远程结果。
 - 未完成：第二轮 Actions 全量结果、容器镜像 Trivy；44.3% coverage 基线需在新增覆盖后继续调高。没有读取 `.env`、调用真实供应商/邮件或访问生产服务。
+
+### 2026-10-12：修正镜像扫描 action 引用
+
+- 第二轮 GitHub Actions `38250130095`：secret scan、npm/Python OSV、Windows `cargo-audit`、三份 SBOM 生成、PostgreSQL/pgvector 后端测试、独立 LangChain 合约、Node 20 前端全量 **132 文件 / 1272 项**及前端生产构建均通过。整体 run 失败仅发生在容器 job 初始化：工作流引用 `aquasecurity/trivy-action@0.28.0`，该 tag 不存在（项目 tag 带 `v` 前缀），因此容器镜像未构建，Trivy 未运行。
+- 修正 `.github/workflows/ci.yml` 两处 Trivy action 引用为 `aquasecurity/trivy-action@v0.36.0`；GitHub tag 查询确认存在。本机 Python YAML 解析及 `git diff --check` 通过。
+- 本次代码测试未重跑；第二轮远程测试作为 `c653b65` 的证据。本次修复需要推送并重新运行 CI，才可确认容器构建与 HIGH/CRITICAL 扫描。未读取 `.env`、未访问生产环境、未调用真实供应商/邮件；`output/`、`tmp/` 原有未跟踪内容继续保留。

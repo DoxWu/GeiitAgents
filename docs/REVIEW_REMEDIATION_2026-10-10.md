@@ -12,8 +12,8 @@
 | A05/A06/A07/A17/A25/A26 | 代码、模板与本地配置检查完成 | CSP/Nginx 安全头和 WebSocket 反代、Celery beat 与进程监管、Git/Docker 忽略及 CI secret scan、监控/SMTP 模板、关闭公网 sourcemap；Compose 配置通过，未构建/启动生产容器或投递真实通知 |
 | A09/A10/A11/A24 | 已实现/部分开放 | 搜索竞态与历史账号/服务器隔离、可选搜索历史保存、标题/文件名搜索、状态/类型/日期筛选和隐私页说明均已实现；列表不搜索正文，相关性阈值仍待业务基准校准 |
 | A12 | 已完成公开样本补充评估和本地筛选浏览器验收；业务校准仍开放 | Multi-CPR 30 条正例是 passage 相关性标签，不等同问答可回答标签；用户提供的 12 条无答案候选只表示 selected-30 中证据不足。真实 E5 检索 Recall@1/5 为 96.67%/100%，MRR 0.983、nDCG@5 0.988；无答案候选相似度 0.841–0.906。仅描述两类分数分布，不混算最佳分类阈值，也不调整产品拒答阈值。文件筛选实测通过：空范围禁用搜索、限定单文件、范围变更清旧结果和 390px 无横向溢出。仍需脱敏业务问答/证据标注来校准拒答与引用质量；Multi-CPR 归档无数据许可 |
-| A08 | 本机审计完成；远程部分通过 | 测试依赖审计发现 `pytest==8.3.3` 的 CVE-2025-71176，已升至修复版 `9.0.3`，`pytest-asyncio` 升至 `1.4.0` 并固定函数级 fixture loop；隔离后端全量 680 通过/16 跳过，PyPI 漏洞服务审计 8 个测试依赖（含解析出的传递依赖）为 0 漏洞。首轮远程 CI 的 npm/Python OSV、Windows cargo-audit、SBOM 与 secret scan 通过；镜像 Trivy 因后端 job 门禁失败而跳过，待重跑。前端 CycloneDX 211 组件、Windows x64 Rust SBOM 308 crate 均有许可证 |
-| A14/A15/A16/A21 | 部分完成 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。新增 Playwright 本地生产 UI 冒烟脚本，Chromium、Edge、Firefox、WebKit 4 个运行时均通过页面加载、应用同源模块 Worker 消息、IndexedDB 写入/读回、Crypto/WASM/CacheStorage/Web Locks、1280px/390px 布局与出站隔离检查；报告/截图在 `.tools/`。A21 隔离 PG 集成本机 28/28 通过；首轮远程全量后端 695 通过/1 跳过，真实 PG live 用例均运行通过，但 job 被 60% 覆盖率门槛拦下（实测 44.34%），已将门槛调整为可验证的 44% 基线并记录逐步提升任务。真实 LangChain 独立 job 通过；Node 20 全量前端失败已由 Node 原生 File/TypedArray 测试夹具修正，本机 Node 20.20.2 全量 132 文件/1272 项通过。第二轮远程 CI 待确认。浏览器冒烟不覆盖实际文件导入/E5 推理、Safari、WebView2、移动真机或无障碍全流程；真实多服务压力仍未完成 |
+| A08 | 本机审计完成；远程依赖审计和 SBOM 通过，镜像扫描待复跑 | 测试依赖审计发现 `pytest==8.3.3` 的 CVE-2025-71176，已升至修复版 `9.0.3`，`pytest-asyncio` 升至 `1.4.0` 并固定函数级 fixture loop；隔离后端全量 680 通过/16 跳过，PyPI 漏洞服务审计 8 个测试依赖（含解析出的传递依赖）为 0 漏洞。第二轮 CI `38250130095` 的 npm/Python OSV、Windows cargo-audit、三份 SBOM 与 secret scan 均通过；容器 job 因 Trivy action 引用缺少 `v` 前缀而在启动时失败，尚未构建镜像或完成 Trivy 扫描。前端 CycloneDX 211 组件、Rust Windows SBOM 已上传 |
+| A14/A15/A16/A21 | 部分完成 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。新增 Playwright 本地生产 UI 冒烟脚本，Chromium、Edge、Firefox、WebKit 4 个运行时均通过页面加载、应用同源模块 Worker 消息、IndexedDB 写入/读回、Crypto/WASM/CacheStorage/Web Locks、1280px/390px 布局与出站隔离检查；报告/截图在 `.tools/`。A21 隔离 PG 集成本机 28/28 通过；第二轮远程后端全量、PostgreSQL live 用例、独立 LangChain 合约和前端全量 132 文件/1272 项均通过，覆盖率 44.3% 门禁通过。容器 job 仅因 Trivy action 引用错误失败，已修正为存在的 `v0.36.0`，待新一轮验证。浏览器冒烟不覆盖实际文件导入/E5 推理、Safari、WebView2、移动真机或无障碍全流程；真实多服务压力仍未完成 |
 | A13/A18/A19/A20/A22/A27 | 部分完成；部署环境验收未完成 | 隔离 PostgreSQL 18.4 + pgvector 的 `test_ops.py` 与 `test_maintenance.py` 共 28/28 通过，含真实加密备份、临时目标恢复、向量/序列、损坏检测、失败快照保留、任务幂等/互斥/取消/中断和目标变化拒绝；随机测试库清理后停止集群。此结果不覆盖上传文件/PVC/运行配置与完整业务联合恢复。仍待目标环境迁移、部署回滚、dev.68 安装升级、8 GB/大容量/断电/跨卷测试或正式新安装包 |
 | A23 | 本轮保持现有功能范围 | 用户确认可选扩展另行安排，不添加 OCR/循环等新产品模块 |
 | A28 | 代码、验收脚本和隔离测试完成；真实联调待部署运行时配置 | 用户已确认阿里云 OpenAI 兼容主 LLM/Embedding、DeepSeek OpenAI 兼容 LLM 备用、Resend HTTP API，以及按实例配置管理员邮箱、未配置时隐藏。真实验收还需部署者提供模型 ID/地域端点/向量维度、运行环境凭据、已验证发件人和明确测试收件箱；运营主体、所在地、数据区域/保留/跨境/第三方处理须部署者核实。不得把代码准备描述为供应商或隐私合规验收 |
@@ -65,3 +65,9 @@
 - 修正：coverage gate 调整到当前远程全量基线 **44.3%**，继续保留门禁并注明随补测逐步提高；File System Access mock 改用 Node 原生 `File`，模型资源测试显式使用 Node `TextEncoder`/`Uint8Array`；加密草稿断言使用唯一长标记，避免随机密文子串碰撞。
 - 本机重验：Node **20.20.2** 全量前端 **132 文件 / 1272 项通过**；定向受影响回归 **119 项通过**；`npm run lint`、`npx tsc --noEmit`、Ruff、`git diff --check` 通过。首轮远程结果不是最终状态，修正已准备进入第二轮 Actions。
 - 仍待：第二轮远程全量 CI、镜像 Trivy；新 coverage baseline 44% 应在补足未覆盖模块测试后逐步提高。未访问 `.env`、真实模型、邮件或线上服务。
+
+### 2026-10-12：修正镜像扫描 action 引用
+
+- 第二轮 GitHub Actions `38250130095`：secret scan、npm/Python OSV、Windows `cargo-audit`、三份 SBOM 生成、PostgreSQL/pgvector 后端测试、独立 LangChain 合约、Node 20 前端全量 **132 文件 / 1272 项**及前端生产构建均通过。整体 run 失败仅发生在容器 job 初始化：工作流引用 `aquasecurity/trivy-action@0.28.0`，该 tag 不存在（项目 tag 带 `v` 前缀），因此容器镜像未构建，Trivy 未运行。
+- 修正 `.github/workflows/ci.yml` 两处 Trivy action 引用为 `aquasecurity/trivy-action@v0.36.0`；GitHub tag 查询确认存在。本机 Python YAML 解析及 `git diff --check` 通过。本次代码测试未重跑。
+- 当前修复需推送后重新运行 CI，方可确认镜像构建和 HIGH/CRITICAL 扫描结果。没有读取 `.env`、访问生产环境或调用真实供应商/邮件。

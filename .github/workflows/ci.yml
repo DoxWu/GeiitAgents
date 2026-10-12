@@ -299,7 +299,7 @@ jobs:
             INSTALL_LOCAL_ML=false
 
       - name: Scan backend image for high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: geiit/backend:${{ github.sha }}
@@ -319,7 +319,7 @@ jobs:
             VITE_API_BASE_URL=/api/v1
 
       - name: Scan frontend image for high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: geiit/frontend:${{ github.sha }}
