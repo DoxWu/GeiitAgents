@@ -1,6 +1,15 @@
 // File System Access test double: creation leaves an empty entry, writes commit
 // on close, and old File snapshots become unreadable when the source changes.
+import { File as NodeFile } from 'node:buffer';
 import type { OrganizerDirectoryEntry, OrganizerDirectoryHandle, OrganizerFileHandle } from './apply';
+
+function makeFile(parts: unknown[], name: string, options?: { lastModified?: number; type?: string }): File {
+  return new NodeFile(
+    parts as ConstructorParameters<typeof NodeFile>[0],
+    name,
+    options as ConstructorParameters<typeof NodeFile>[2],
+  ) as unknown as File;
+}
 
 export class MemoryDirectory implements OrganizerDirectoryHandle {
   async isSameEntry(other: OrganizerDirectoryHandle) { return other === this; }
@@ -17,7 +26,7 @@ export class MemoryDirectory implements OrganizerDirectoryHandle {
   constructor(values: Record<string, string>) { for (const [name, text] of Object.entries(values)) this.put(name, text); }
   put(name: string, value: string) {
     if (!this.identities.has(name)) this.identities.set(name, {});
-    this.files.set(name, new File([value], name, { lastModified: 1_000, type: 'text/plain' }));
+    this.files.set(name, makeFile([value], name, { lastModified: 1_000, type: 'text/plain' }));
   }
   async *values(): AsyncIterable<OrganizerDirectoryEntry> {
     for (const name of this.files.keys()) yield { kind: 'file', name, getFile: async () => (await this.getFileHandle(name)).getFile() };
@@ -34,7 +43,7 @@ export class MemoryDirectory implements OrganizerDirectoryHandle {
       isSameEntry: async other => identity === (other as typeof handle).identity,
       getFile: async () => {
         assertExists(); const source = this.files.get(name)!;
-        const file = new File([source], name, { lastModified: source.lastModified, type: source.type });
+        const file = makeFile([source], name, { lastModified: source.lastModified, type: source.type });
         Object.defineProperty(file, 'arrayBuffer', { value: async () => {
           if (this.files.get(name) !== source) throw new DOMException('Stale file snapshot', 'NotReadableError');
           return source.arrayBuffer();
@@ -45,7 +54,7 @@ export class MemoryDirectory implements OrganizerDirectoryHandle {
         assertExists(); this.onCreateWritable?.(name);
         let pending: File | undefined;
         return {
-          write: async data => { assertExists(); this.onWrite?.(name); pending = new File([await data.arrayBuffer()], name, { type: data.type }); },
+          write: async data => { assertExists(); this.onWrite?.(name); pending = makeFile([await data.arrayBuffer()], name, { type: data.type }); },
           close: async () => { assertExists(); this.closes++; this.onClose?.(name); if (pending) this.files.set(name, pending); },
           abort: async () => { this.aborts++; pending = undefined; },
         };

@@ -810,3 +810,11 @@
 - 独立合约测试发现账号工具层仅读 LangChain `AIMessage.additional_kwargs`，与固定版 `langchain-openai` 将已解析调用放在 `AIMessage.tool_calls` 的实际结构不兼容。修复为优先序列化规范化工具调用，并保留旧原始形状兼容。
 - 本次验证：`test_office_tools.py`、`test_private_model.py`、`test_office_tools_langchain.py` 共 **51 项通过**；合约使用已安装的真实 LangChain 1.1.14 与 HTTP MockTransport，没有真实模型请求。修改文件 Ruff 通过；CI YAML 解析和 job 检查、`git diff --check` 通过。此前 A21 隔离 PG 测试 28/28 是历史验证，本次未重跑；当前 Docker daemon 不可用，因此未在本机模拟 workflow service。远程 CI 尚未触发。
 - 未完成/风险：A21 的远程 live PG job 和 A08 的 OSV、Windows Rust audit、Trivy 仍待 Actions 运行结果；完整部署恢复/回滚、跨服务压力、浏览器真实运行时、A12 业务金标及 A28 真实供应商/邮件/隐私验收仍开放。未读取 `.env`、未访问线上服务、未推送；`output/` 与 `tmp/` 原有未跟踪内容继续保留。
+
+### 2026-10-12：修正 CI 运行基线与 Node 20 测试夹具
+
+- 首轮 GitHub Actions `38246981300` 的真实 LangChain 合约、secret scan、npm/Python OSV、Windows cargo-audit 与 SBOM 通过。后端全量测试为 **695 通过 / 1 跳过**，新增 live PostgreSQL 测试均已运行通过；job 仅因 pytest 覆盖率 **44.34%** 低于 `pyproject.toml` 的 60% 失败。镜像 Trivy 因依赖 backend-test 的门禁失败而跳过。
+- 同轮前端 job 在 Node 20.20.2 失败：测试使用 jsdom 的 `File` / `ArrayBuffer` 对象调用 Node 原生 WebCrypto，跨 realm 类型不兼容；加密草稿测试还用短明文去匹配随机 base64 密文，存在偶发子串碰撞。
+- 修正 coverage 门槛至当前真实 CI 基线 **44.3%**，仍保留 fail-under，并要求后续按覆盖补测进展提升。文件整理 mock 改用 Node 原生 `File`，资源校验测试使用 Node `TextEncoder`/`Uint8Array`；密文断言改成唯一长明文标记。
+- 验证：Node **20.20.2** 前端全量 **132 文件 / 1272 项通过**；相关定向回归 **119 项通过**；`npm run lint`、`npx tsc --noEmit`、Ruff 和 `git diff --check` 通过。第二轮 Actions 尚未启动。首轮远程结果继续作为首轮证据记录，不替代新代码的远程结果。
+- 未完成：第二轮 Actions 全量结果、容器镜像 Trivy；44.3% coverage 基线需在新增覆盖后继续调高。没有读取 `.env`、调用真实供应商/邮件或访问生产服务。

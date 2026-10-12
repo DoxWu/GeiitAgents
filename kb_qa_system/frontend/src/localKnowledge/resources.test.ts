@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto';
+import { TextEncoder } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PROFILE } from './core';
 import { checkHash, prepareResources } from './resources';
@@ -8,6 +9,7 @@ let put: ReturnType<typeof vi.fn>;
 let fetcher: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('Uint8Array', Object.getPrototypeOf(bytes).constructor);
   saved = new Map();
   put = vi.fn(async (key: string, response: Response) => { saved.set(key, response.clone()); });
   vi.stubGlobal('caches', { open: vi.fn(async () => ({
