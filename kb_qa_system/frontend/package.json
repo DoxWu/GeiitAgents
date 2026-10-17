@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage --configLoader runner",
     "test:browser-smoke": "node scripts/browser-compat-smoke.mjs",
     "verify:ai-workbench": "node scripts/verify-document-task.mjs",
+    "verify:vault-capacity": "node scripts/verify-vault-capacity.mjs",
     "benchmark:local-knowledge": "node scripts/benchmark-local-knowledge.mjs",
     "desktop:dev": "node scripts/dev-desktop.mjs",
     "desktop:build": "node scripts/build-desktop.mjs dev",

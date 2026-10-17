@@ -908,4 +908,5 @@
 - 实际改动：扩展 `kb_qa_system/frontend/scripts/verify-vault-capacity.mjs`，新增 `VAULT_CAPACITY_CONVERSATION_BYTES` 参数，默认加入 5 条 900,000 字符合成会话消息；保留 500 条记录、100 条草稿、每条 20,000 字符，以及旧密文迁移、强杀未提交事务和重启恢复检查。
 - 本地验证：明文工作台快照 **16,639,010 bytes（约 15.87 MiB）**，加密备份 **22,158,910 bytes（约 21.13 MiB）**；解锁 1,408 ms、保存 1,837 ms、备份 720 ms、强杀后重启解锁 1,337 ms，Chromium JS heap 采样约 241 MB。旧密文迁移、保存后独立解密、实际备份下载/解密、未提交 IndexedDB 写入在进程强杀后丢弃、已提交数据恢复全部通过。结果在 `.tools/vault-capacity-qa-20261017-near-limit/`，为忽略目录。
 - 过程说明：脚本没有 npm 包装命令，直接运行 `node scripts/verify-vault-capacity.mjs`；误试的 `npm run verify:vault-capacity` 仅返回 Missing script，没有执行测试。代码 `node --check` 和 `git diff --check` 通过。
+- 可复现性修正：补充前端 `verify:vault-capacity` npm 脚本入口；上述容量结果由直接 Node 入口完成，新增入口与脚本保持同一执行路径。
 - 边界：使用约 29 GiB 开发机和隔离 Chromium 合成数据，不代表 8 GB、WebView2、物理断电、网络盘、生产部署或内存/时延 SLA；未读取 `.env`、未调用真实模型/邮件、未访问线上服务。
