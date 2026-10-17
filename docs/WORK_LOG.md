@@ -938,3 +938,10 @@
 - A33 测试补充：`read_limited` 新增无 `Content-Length` 的分块响应超限提前中止，以及无效 `Content-Length` 在读取前拒绝两项回归；`tests/test_review_downloads.py` 隔离运行 **13/13 通过**。
 - 其他验证：构建上下文脚本 **2/2 通过**，脚本编译和 `git diff --check` 通过。首次直接运行资源测试受终端遗留 `DEBUG=release` 和系统临时目录权限影响失败，随后使用 `DEBUG=false` 与仓库内隔离 `--basetemp` 重跑通过；该环境修正不改变业务代码。
 - 边界与未完成：未构建生产镜像，Docker daemon 仍未启动；A08 的 OSV/Rust/Trivy 仍待新 CI，A12 真实业务金标/模型拒答、A13/A18/A21 目标环境迁移恢复、A14/A16 多服务压力、A15 原生/真机、A28 真实供应商/Resend/部署隐私仍未验收。未读取 `.env`、未访问线上服务或发送邮件。本轮提交 `4e66ba0` 已通过普通 push 同步到 `agents/develop/geiit-agents`，未强推或修改旧 `main`。
+
+### 2026-10-17：继续 A08 镜像门禁修复
+
+- 远程证据：CI `39041395118`（提交 `b9d3a44`）的依赖审计、后端/前端测试与构建、Rust 审计/SBOM、secret scan、LangChain 合约均通过；前端 Trivy 没有可修复 HIGH/CRITICAL。后端 Trivy 仍报告基础 Python 层全局 setuptools 内嵌的 `jaraco.context 5.3.0` 和 `wheel 0.45.1` 两项可修复 finding，因此镜像门禁失败；同一报告另有 81 项 Debian HIGH/CRITICAL，均没有修复版本，按策略保留追踪但不作为门禁阻断原因。
+- 实际修复：提交 `612a523` 从后端运行镜像移除基础 Python 全局 `setuptools` 与 `wheel` 及其 dist-info；同步扩展构建边界静态回归，确保镜像清理命令覆盖这两个目录。既有 `/opt/venv` 应用依赖保持不变。
+- 本地状态：GitHub 连接已恢复；普通 `git fetch agents --prune` 成功，确认远端开发分支为 `b9d3a44`，本地 `612a523` 是唯一后继，旧 `main` 仍为 `ea4917e`。Docker daemon 当前不可用，无法本机构建镜像。既有本地验证为构建上下文脚本 4/4、Trivy 策略单测 8/8、`git diff --check` 通过；这些测试不是远程镜像验收。
+- 后续：本条工作记录与 A08 跟踪更新后，普通推送 `612a523` 并检查新 CI 的 Trivy JSON；若仍有可修复 finding，再按包文件路径追因。当前未部署、未读取 `.env`、未调用供应商/邮件或访问生产服务；`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 原有未跟踪内容继续保留。
