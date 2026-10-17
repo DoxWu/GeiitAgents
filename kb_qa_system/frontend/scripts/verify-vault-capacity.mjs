@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { readVaultCiphertext, writeVaultCiphertext, removeVaultCiphertext } from './vault-qa.mjs';
 
-const output = path.resolve('../../.tools/vault-capacity-qa');
+const output = path.resolve(process.env.VAULT_CAPACITY_QA_OUTPUT_DIR || '../../.tools/vault-capacity-qa');
 await mkdir(output, { recursive: true });
 const profile = await mkdtemp(path.join(output, 'chromium-'));
 const password = 'synthetic-capacity-1234', key = 'geiit.workbench.encrypted.v1';

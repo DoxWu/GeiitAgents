@@ -9,17 +9,26 @@ import { fixtureVersion, makeCorpus, questions as fixtureQuestions } from './fix
 
 const run = promisify(execFile);
 const baseUrl = process.env.LOCAL_KB_BENCH_URL || 'http://127.0.0.1:1423';
-const scale = process.env.LOCAL_KB_BENCH_SCALE === 'small' ? 'small' : 'standard';
+const scale = process.env.LOCAL_KB_BENCH_SCALE || 'standard';
+if (!['small', 'standard', 'stress'].includes(scale)) throw new Error('LOCAL_KB_BENCH_SCALE must be small, standard, or stress.');
+const stressParagraphs = Number(process.env.LOCAL_KB_BENCH_PARAGRAPHS || 120);
+if (scale === 'stress' && (!Number.isInteger(stressParagraphs) || stressParagraphs < 25 || stressParagraphs > 180)) {
+  throw new Error('LOCAL_KB_BENCH_PARAGRAPHS must be an integer between 25 and 180 for stress runs.');
+}
 const rounds = Math.max(1, Math.min(5, Number(process.env.LOCAL_KB_BENCH_ROUNDS) || 2));
 const datasetMode = process.env.LOCAL_KB_BENCH_DATASET === 'multi-cpr-sample';
 const datasetDir = path.resolve(process.env.LOCAL_KB_BENCH_DATASET_DIR || '../../.tools/multi-cpr-review-sample');
-const root = path.resolve('../../.tools/local-knowledge-benchmark', datasetMode ? 'multi-cpr-sample' : '');
+const runKey = new Date().toISOString().replace(/[:.]/g, '-');
+const defaultOutput = datasetMode ? path.resolve('../../.tools/local-knowledge-benchmark/multi-cpr-sample')
+  : scale === 'stress' ? path.resolve('../../.tools/local-knowledge-benchmark', `stress-${runKey}`)
+    : path.resolve('../../.tools/local-knowledge-benchmark');
+const root = path.resolve(process.env.LOCAL_KB_BENCH_OUTPUT_DIR || defaultOutput);
 const profile = path.resolve(process.env.LOCAL_KB_BENCH_PROFILE
   || (datasetMode ? '../../.tools/local-knowledge-benchmark/multi-cpr-browser-profile' : '../../.tools/local-knowledge-qa/browser-profile'));
 await mkdir(root, { recursive: true });
 const launchedAfter = new Date(Date.now() - 2000).toISOString();
 const startedAt = new Date().toISOString();
-const documents = datasetMode ? await loadMultiCprDocuments(datasetDir) : makeCorpus(scale);
+const documents = datasetMode ? await loadMultiCprDocuments(datasetDir) : makeCorpus(scale, scale === 'stress' ? stressParagraphs : 24);
 const documentByName = new Map(documents.map(document => [document.name, document.text]));
 const evaluationCases = datasetMode ? await loadMultiCprQuestions(datasetDir, documents) : fixtureQuestions.map(question => ({
   id: question.id, group: question.language, question: question.question, label: 'retrieval-positive',
@@ -35,6 +44,7 @@ if (!datasetMode && fixtureQuestions.some(question => question.relevant.some(sou
 }
 const benchmarkVersion = datasetMode ? 'multi-cpr-selected-30-v1' : fixtureVersion;
 const results = { schemaVersion: 1, fixtureVersion: benchmarkVersion, startedAt, scale, rounds,
+  syntheticParagraphsPerDocument: !datasetMode && scale === 'stress' ? stressParagraphs : null,
   dataset: datasetMode ? { name: 'Multi-CPR selected sample', directory: datasetDir,
     documents: documents.length, retrievalPositiveQueries: evaluationCases.filter(item => item.label === 'retrieval-positive').length,
     unanswerableCandidates: evaluationCases.filter(item => item.label === 'unanswerable-selected-30').length,
@@ -332,7 +342,7 @@ results.limitations = datasetMode ? [
   'Synthetic deterministic relevance set; Recall@5 is not a production corpus quality claim.',
   'Current machine is not the planned 8 GB low-end acceptance device.',
   'Memory is process-level sampled working set, not an exact allocation trace.',
-  'Index build is sequential to cap memory; the benchmark does not test interruption/resume or 2,000 chunks exactly.',
+  'Index build is sequential; this benchmark does not test interruption/resume, cross-volume storage, or physical power loss.',
 ];
 const file = path.join(root, `result-${startedAt.replace(/[:.]/g, '-')}.json`);
 await writeFile(file, JSON.stringify(results, null, 2));

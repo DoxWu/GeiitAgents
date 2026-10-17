@@ -30,14 +30,25 @@ export const questions = policies.flatMap(([topic, evidence, zh, en], i) => [
   { id: `q${i}-zh`, language: 'zh', question: zh, relevant: [{ name: `${topic}.md`, evidence }] },
   { id: `q${i}-en`, language: 'en-to-zh', question: en, relevant: [{ name: `${topic}.md`, evidence }] },
 ]);
-export function makeCorpus(scale) {
+export function makeCorpus(scale, paragraphsPerDocument = 24) {
   const documents = policies.map(([topic, evidence]) => ({ name: `${topic}.md`, text: `# ${topic}\n\n${evidence}\n\n此制度仅为软件性能测试的虚构内容，不代表任何真实公司政策。` }));
   if (scale === 'small') return documents;
   const subjects = ['园艺种植', '摄影构图', '烘焙课程', '社区跑步', '天文观测', '书法练习', '音乐欣赏', '自行车保养', '棋类活动', '陶艺制作', '电影讨论', '宠物护理'];
+  if (!Number.isInteger(paragraphsPerDocument) || paragraphsPerDocument < 1 || paragraphsPerDocument > 180) {
+    throw new Error('Synthetic corpus paragraphsPerDocument must be between 1 and 180.');
+  }
+  const appendJournal = (document, index) => {
+    const subject = subjects[index % subjects.length];
+    const paragraphs = Array.from({ length: paragraphsPerDocument }, (_, n) => `第 ${n + 1} 节：${subject}兴趣活动记录。小组 ${index} 讨论课程安排、参与感受和下一次活动的准备清单。大家可以自由交流经验，记录不同方法的实际效果，活动结束后整理材料。This fictional hobby journal describes community activities and personal learning notes.\n`).join('\n');
+    document.text += document.text ? `\n\n${paragraphs}` : `# ${subject}\n${paragraphs}`;
+  };
+  if (paragraphsPerDocument > 24) {
+    for (let i = 0; i < documents.length; i++) appendJournal(documents[i], i);
+  }
   for (let i = documents.length; i < 100; i++) {
-    const subject = subjects[i % subjects.length];
-    const paragraphs = Array.from({ length: 24 }, (_, n) => `第 ${n + 1} 节：${subject}兴趣活动记录。小组 ${i} 讨论课程安排、参与感受和下一次活动的准备清单。大家可以自由交流经验，记录不同方法的实际效果，活动结束后整理材料。This fictional hobby journal describes community activities and personal learning notes.\n`).join('\n');
-    documents.push({ name: `兴趣记录-${i}.txt`, text: `# ${subject}\n${paragraphs}` });
+    const document = { name: `兴趣记录-${i}.txt`, text: '' };
+    appendJournal(document, i);
+    documents.push(document);
   }
   return documents;
 }
