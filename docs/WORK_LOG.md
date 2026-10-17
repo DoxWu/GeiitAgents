@@ -910,3 +910,9 @@
 - 过程说明：脚本没有 npm 包装命令，直接运行 `node scripts/verify-vault-capacity.mjs`；误试的 `npm run verify:vault-capacity` 仅返回 Missing script，没有执行测试。代码 `node --check` 和 `git diff --check` 通过。
 - 可复现性修正：补充前端 `verify:vault-capacity` npm 脚本入口；上述容量结果由直接 Node 入口完成，新增入口与脚本保持同一执行路径。
 - 边界：使用约 29 GiB 开发机和隔离 Chromium 合成数据，不代表 8 GB、WebView2、物理断电、网络盘、生产部署或内存/时延 SLA；未读取 `.env`、未调用真实模型/邮件、未访问线上服务。
+
+### 2026-10-17：重跑文档参考资料复用持久化回归
+
+- 现状核对：`LocalMarkdown` 已提供本机加密资料库选择/载回入口；载回的是已保存的解析文本，不需要再次选择原文件。`workbenchStore` 在锁库/解锁后恢复 `referenceDocuments`，资料库删除与任务历史保持独立。
+- 本轮验证：定向 Vitest `src/components/workbench/__tests__/LocalMarkdown.test.tsx` 与 `src/store/__tests__/workbenchStore.test.ts` 共 **2 个文件 / 77 项通过**。覆盖不重新打开源文件载回、锁库/解锁后资料保留、密文不含原文、备份结构校验、任务引用复用及图片密文隔离。
+- 边界：本轮未改业务实现；该回归使用合成内容和本地测试环境，不代表真实供应商、生产部署或原生 WebView2。未读取 `.env`、未调用真实模型/邮件、未访问线上服务。
