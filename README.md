@@ -117,7 +117,8 @@ npm run dev
 | [事故响应手册](docs/RUNBOOK.md) | 故障处理流程 |
 | [Sealos 备份恢复](kb_qa_system/docs/SEALOS_RECOVERY_AND_BACKUP.md) | 服务端备份和恢复边界 |
 | [本地知识库规格](docs/LOCAL_KNOWLEDGE_BASE_SPEC.md) | 客户端本地模型、索引隔离与验收要求 |
-| [项目功能清单](kb_qa_system/docs/知识库项目功能清单.md) | 功能范围及未接入能力说明 |
+| [当前功能矩阵](docs/CURRENT_FEATURE_MATRIX.md) | 代码入口、验证证据、功能边界及未验收项 |
+| [历史详细功能清单](kb_qa_system/docs/知识库项目功能清单.md) | 历史整理稿，不作为当前实现状态依据 |
 
 ## 开发规范
 

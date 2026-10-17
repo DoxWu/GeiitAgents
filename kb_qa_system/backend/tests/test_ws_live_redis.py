@@ -28,6 +28,10 @@ def load_route(filename):
     return module
 
 
+def test_notification_route_module_is_loadable():
+    assert hasattr(load_route("ws_notifications.py"), "router")
+
+
 @pytest.mark.skipif(
     os.getenv("GEIIT_WS_INTEGRATION") != "1",
     reason="requires the disposable Redis service enabled by CI",
@@ -38,7 +42,7 @@ def test_live_redis_notification_revocation_and_ticket_replay(monkeypatch):
     except Exception as exc:
         pytest.fail(f"GEIIT_WS_INTEGRATION requires reachable Redis: {exc}")
 
-    ws = load_route("routes/ws_notifications.py")
+    ws = load_route("ws_notifications.py")
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
