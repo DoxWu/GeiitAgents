@@ -916,3 +916,9 @@
 - 现状核对：`LocalMarkdown` 已提供本机加密资料库选择/载回入口；载回的是已保存的解析文本，不需要再次选择原文件。`workbenchStore` 在锁库/解锁后恢复 `referenceDocuments`，资料库删除与任务历史保持独立。
 - 本轮验证：定向 Vitest `src/components/workbench/__tests__/LocalMarkdown.test.tsx` 与 `src/store/__tests__/workbenchStore.test.ts` 共 **2 个文件 / 77 项通过**。覆盖不重新打开源文件载回、锁库/解锁后资料保留、密文不含原文、备份结构校验、任务引用复用及图片密文隔离。
 - 边界：本轮未改业务实现；该回归使用合成内容和本地测试环境，不代表真实供应商、生产部署或原生 WebView2。未读取 `.env`、未调用真实模型/邮件、未访问线上服务。
+
+### 2026-10-17：修正 Locust 混合负载测试的资源清理
+
+- 实际改动：`backend/tests/load/locustfile.py` 的 `MixedUser` 现在只删除当前虚拟用户成功上传并记录的文档 ID；删除请求失败时保留 ID，Locust 停止用户时逐个尽力清理剩余 ID。更新 `backend/tests/load/README.md` 的数据影响说明。这样压测不会通过“删除列表首条”触碰既有知识库文档。
+- 本地验证：`python -m py_compile tests/load/locustfile.py` 通过；使用 stub Locust 模块和 fake HTTP client 覆盖删除失败保留、成功移除、停止清理三条路径，输出 `fake Locust cleanup checks passed`；`git diff --check` 通过。没有连接目标服务、数据库、Redis 或模型。
+- 限制：仍需在专用环境中运行真实 PostgreSQL/Redis/Celery/RAG 阶梯压力；脚本默认 `ALLOW_MUTATIONS=false`，启用写入前必须使用隔离账号和环境。

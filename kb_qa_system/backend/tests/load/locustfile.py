@@ -519,16 +519,37 @@ class MixedUser(HttpUser):
 
         作用：
             DELETE /api/v1/documents/{document_id}
-            先获取文档列表，删除第一个文档，测试级联删除性能。
+            只删除本虚拟用户本轮成功上传并记录 ID 的文档，测试级联删除性能。
 
         注意：
-            如果没有文档则跳过。
+            如果没有本轮创建的文档则跳过；删除失败时保留 ID，便于停止时再次清理。
         """
         if not ALLOW_MUTATIONS or not self._created_document_ids:
             return
-        doc_id = self._created_document_ids.pop(0)
-        self.client.delete(
+        doc_id = self._created_document_ids[0]
+        if self._delete_created_document(doc_id):
+            del self._created_document_ids[0]
+
+    def _delete_created_document(self, doc_id: int) -> bool:
+        """Delete one ID owned by this load-test user and report its outcome."""
+        with self.client.delete(
             f"{API_PREFIX}/documents/{doc_id}",
             headers=self.auth_headers,
             name="删除本用户创建的压测文档",
-        )
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 204):
+                response.success()
+                return True
+            response.failure(f"删除压测文档失败: HTTP {response.status_code}")
+            return False
+
+    def on_stop(self) -> None:
+        """Best-effort cleanup of this user's uploads when Locust stops the user."""
+        if not ALLOW_MUTATIONS or not getattr(self, "auth_headers", None):
+            return
+        for doc_id in list(self._created_document_ids):
+            if self._delete_created_document(doc_id):
+                self._created_document_ids.remove(doc_id)
+            else:
+                break

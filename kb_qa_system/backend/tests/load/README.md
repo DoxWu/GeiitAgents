@@ -276,7 +276,7 @@ Locust Web UI 和 headless 模式输出以下关键指标：
 
 ### 8.4 数据影响
 
-- MixedUser 会创建和删除文档，**压测后知识库内容会变化**
+- MixedUser 会创建和删除文档，**压测后知识库内容会变化**；仅删除本轮成功上传并记录 ID 的文档，删除失败的 ID 会保留并在用户停止时尽力清理
 - 建议在专用测试环境运行，不要在生产环境运行 MixedUser
 - MixedUser 写操作默认关闭；只有在专用隔离环境设置 `ALLOW_MUTATIONS=true` 后才会上传，并且只删除本轮成功上传且收到 ID 的文档。
 - `QAUser` 默认停止。只有明确设置 `ENABLE_LLM_TRAFFIC=true` 才发送可能计费的问题。
