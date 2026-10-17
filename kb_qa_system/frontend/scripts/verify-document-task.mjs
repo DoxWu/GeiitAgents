@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
+import * as LegacyXLS from 'styled-exceljs';
 
 const output = path.resolve('../../.tools/document-task-qa');
 const liveProvider = process.env.DOCUMENT_TASK_LIVE === '1';
@@ -154,6 +155,19 @@ try {
   const xlsxZip = await JSZip.loadAsync(await readFile(await xlsxDownload.path()));
   const sheet = await xlsxZip.file('xl/worksheets/sheet1.xml').async('string');
   expect(sheet).toContain('=SUM(1,2)'); expect(sheet).toContain('t="inlineStr"'); expect(sheet).not.toMatch(/<f(?:\s|>)/);
+  const xlsEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出 XLS', exact: true }).click();
+  const xlsDownload = await xlsEvent;
+  expect(xlsDownload.suggestedFilename()).toMatch(/-v2\.xls$/);
+  const xlsBytes = new Uint8Array(await readFile(await xlsDownload.path()));
+  expect(Array.from(xlsBytes.slice(0, 8))).toEqual([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  const legacyWorkbook = LegacyXLS.read(xlsBytes, { type: 'array' });
+  const legacySheet = legacyWorkbook.Sheets[legacyWorkbook.SheetNames[0]];
+  expect(LegacyXLS.utils.sheet_to_json(legacySheet, { header: 1, raw: false })).toEqual([
+    ['事项', '负责人', '状态'], ['登录模块', '项目组', '完成'], ['发布', '=SUM(1,2)', '待确认'],
+  ]);
+  expect(legacySheet.B3).toMatchObject({ t: 's', v: '=SUM(1,2)' });
+  expect(legacySheet.B3.f).toBeUndefined();
   expect(requests.some(url => url.includes('example.test/never-fetch'))).toBe(false);
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
   const newEncrypted = await readVaultCiphertext(page);
@@ -205,15 +219,16 @@ try {
   await expect(page.getByRole('button', { name: '下载 Markdown' })).toBeVisible();
   await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(3);
   await expect(page.getByLabel('成果版本').locator('option:checked')).toHaveText('版本 3 · 恢复自版本 1');
-  await page.getByText('执行记录 · 7', { exact: true }).click();
+  await page.getByText('执行记录 · 8', { exact: true }).click();
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.export-docx · 已完成 · 源版本 2');
+  await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.export-xls · 已完成 · 源版本 2');
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.restore · 已完成 · 源版本 1');
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('基于版本 2 · 生成版本 3');
   await page.getByLabel('成果版本').selectOption({ label: '版本 1 · 模型生成' });
   await expect(page.getByRole('button', { name: '恢复为新版本', exact: true })).toBeDisabled();
   await page.getByLabel('成果版本').selectOption({ label: '版本 2 · 手动编辑' });
   await expect(page.getByRole('article', { name: '文档成果' })).toContainText('安全评审已通过');
-  // XLSX conversion shares CSV utilities with chart.ts; the chart UI stays lazy.
+  // Spreadsheet converters stay lazy; the chart UI stays lazy too.
   expect(requests.some(url => /\/assets\/ChartTasks-/.test(url))).toBe(false);
   await page.getByRole('tab', { name: '图表工具' }).click();
   const beforeCharts = sent.length;
@@ -343,5 +358,5 @@ try {
   expect(sent).toHaveLength(3);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'local image attachment and HTML embedding', 'sandboxed preview CSP and zero external requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
+    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLS/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'local image attachment and HTML embedding', 'sandboxed preview CSP and zero external requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
 } finally { releaseSecond?.(); await context.close(); }

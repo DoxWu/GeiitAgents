@@ -100,7 +100,7 @@ export interface ToolRun {
   finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   taskId: string;
-  tool: 'model.complete' | 'workflow.condition' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'document.export-pptx' | 'document.export-xlsx' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
+  tool: 'model.complete' | 'workflow.condition' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'document.export-pptx' | 'document.export-xlsx' | 'document.export-xls' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
   callId?: string;
   arguments?: string;
   result?: string;

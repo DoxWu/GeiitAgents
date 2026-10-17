@@ -67,13 +67,14 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '导出失败。'); }
     finally { if (mounted.current) setBusy(false); }
   }
-  async function exportOffice(format: 'pptx' | 'xlsx') {
+  async function exportOffice(format: 'pptx' | 'xlsx' | 'xls') {
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await store.exportArtifactOffice(artifact.id, format);
       if (mounted.current && useWorkbenchStore.getState().unlocked) {
         download(new Blob([result.bytes], { type: result.mimeType }), result.name);
-        setNotice([format === 'pptx' ? '已生成 PPTX 演示文稿。' : '已生成 XLSX 工作簿。', ...result.warnings].join(' '));
+        const label = format === 'pptx' ? 'PPTX 演示文稿' : format === 'xls' ? 'XLS 工作簿' : 'XLSX 工作簿';
+        setNotice([`已生成 ${label}。`, ...result.warnings].join(' '));
       }
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '导出失败。'); }
     finally { if (mounted.current) setBusy(false); }
@@ -100,6 +101,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
       <button className="work-command" disabled={busy || editing} onClick={() => void exportWord()}><Download size={16} />{busy && !editing ? '正在导出…' : '导出 DOCX'}</button>
       <button className="work-command" disabled={busy || editing} onClick={() => void exportOffice('pptx')}><Download size={16} />导出 PPTX</button>
       <button className="work-command" disabled={busy || editing} onClick={() => void exportOffice('xlsx')}><Download size={16} />导出 XLSX</button>
+      <button className="work-command" disabled={busy || editing} onClick={() => void exportOffice('xls')}><Download size={16} />导出 XLS</button>
       <button className="work-command" disabled={busy || editing} onClick={() => void exportHtml()}><FileCode2 size={16} />导出 HTML</button>
       {!editing && <button className="work-command" disabled={busy || artifact.id !== ordered[0].id} onClick={() => { setDraft(artifact.content); setEditing(true); setSelected(artifact.id); setNotice(''); setError(''); setRestorePlan(null); setComparing(false); }}><Pencil size={16} />编辑新版本</button>}
       {ordered.length > 1 && <button className="work-command" disabled={busy || editing} aria-expanded={comparing} onClick={() => setComparing(value => !value)}><GitCompareArrows size={16} />{comparing ? '关闭版本对比' : '对比版本'}</button>}
@@ -107,7 +109,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
         setError(''); setNotice(''); setRestorePlan({ sourceId: artifact.id, latestId: ordered[0].id, sourceVersion: artifact.version, nextVersion: ordered[0].version + 1 });
       }}><RotateCcw size={16} />恢复为新版本</button>}
     </div>
-    <p className="mt-3 text-xs leading-5 text-ink-secondary">DOCX、PPTX、XLSX 和 HTML 均在本机转换并记录校验值；XLSX 从成果中的首张 Markdown 表格生成，仅含文本单元格。导出文件为明文，下载后请在目标应用中检查排版。</p>
+    <p className="mt-3 text-xs leading-5 text-ink-secondary">DOCX、PPTX、XLS、XLSX 和 HTML 均在本机转换并记录校验值；表格工作簿从成果中的首张 Markdown 表格生成，仅含文本单元格。导出文件为明文，下载后请在目标应用中检查排版。</p>
     {artifact.finishReason && <p className="mt-3 text-sm text-ink-secondary" aria-label="文档生成状态">{finishLabel(artifact.finishReason)}{artifact.finishReason !== 'stop' ? '。导出会附带此生成状态说明。' : ''}</p>}
     {artifact.id !== ordered[0].id && artifact.content === ordered[0].content && <p className="mt-2 text-xs text-ink-secondary">此版本与最新版本内容相同，无需恢复。</p>}
     {comparing && !editing && <ArtifactComparison key={artifact.id} versions={ordered} target={artifact} />}

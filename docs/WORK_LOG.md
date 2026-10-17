@@ -4,11 +4,11 @@
 
 ## 当前阶段
 
-**2026-10-17 综合审查整改与 AI 办公工作台扩展：本地实现和前端验收完成，外部/部署验收仍开放。** 用户授权依据 [A01–A34 审查清单](COMPREHENSIVE_REVIEW_2026-10-10.md)，确认先修已有功能；OCR、复杂排版、工作流循环等仍暂缓，真实供应商/邮件/公开联系方式验收放在最后。工作台新增可视化 AI 网页设计、本机加密参考资料库和 DOCX/PPTX/XLSX/HTML 导出。逐项整改状态见 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md)。此前接入的 Multi-CPR selected-30 评估、文件范围筛选与检索相似度提示仍属本地公开样本验收，不代表真实业务校准。
+**2026-10-17 综合审查整改与 AI 办公工作台扩展：本地实现和前端验收完成，外部/部署验收仍开放。** 用户授权依据 [A01–A34 审查清单](COMPREHENSIVE_REVIEW_2026-10-10.md)，确认先修已有功能；OCR、复杂排版、工作流循环等仍暂缓，真实供应商/邮件/公开联系方式验收放在最后。工作台新增可视化 AI 网页设计、本机加密参考资料库和 DOCX/PPTX/XLS/XLSX/HTML 导出。逐项整改状态见 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md)。此前接入的 Multi-CPR selected-30 评估、文件范围筛选与检索相似度提示仍属本地公开样本验收，不代表真实业务校准。
 
-**2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1281 项通过**；TypeScript、ESLint、Vite 生产构建通过，构建仍报告两条工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过 DOCX/PPTX/XLSX 导出、公式文本安全、网页布局/颜色/动画、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；桌面/手机截图已目视检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
+**2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1282 项通过**；TypeScript、ESLint、Vite 生产构建通过；官方 npm 全量审计为 **0 漏洞**。构建仍报告两条既有工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过 DOCX/PPTX/XLS/XLSX 导出、公式文本安全、网页布局/颜色/动画、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；桌面/手机截图已目视检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
 
-**仍未验收/风险：** 旧云端来源不明的向量不会参与语义召回，须在目标数据库升级后重处理文档；迁移未应用到目标环境。A08 的 Trivy action 引用已修正，但修正尚未触发新的远程 CI，容器构建/扫描、当前拆分测试依赖的 OSV 复扫仍待远程结果；本机 Docker CLI/daemon 与 cargo-audit 不可用。真实 Redis/WebSocket、上传文件/PVC/运行配置联合恢复、目标环境迁移/回滚、Windows 安装升级、真实 Safari/WebView2/移动真机业务流程、低配及生产容器验收均未做。A12 仍需脱敏业务问答和证据标签校准拒答/引用质量；Multi-CPR 未提供数据许可，样本和逐题结果留在 Git 忽略目录。A28 真实供应商/Resend 邮件与部署隐私核实仍按约定留到最后。未访问线上服务或部署。
+**仍未验收/风险：** 旧云端来源不明的向量不会参与语义召回，须在目标数据库升级后重处理文档；迁移未应用到目标环境。A08 的 Trivy action 引用已修正，但修正尚未触发新的远程 CI，容器构建/扫描、当前拆分测试依赖的 Python OSV 复扫仍待远程结果；本机 Docker CLI/daemon 与 cargo-audit 不可用。真实 Redis/WebSocket、上传文件/PVC/运行配置联合恢复、目标环境迁移/回滚、Windows 安装升级、真实 Safari/WebView2/移动真机业务流程、低配及生产容器验收均未做。A12 仍需脱敏业务问答和证据标签校准拒答/引用质量；Multi-CPR 未提供数据许可，样本和逐题结果留在 Git 忽略目录。A28 真实供应商/Resend 邮件与部署隐私核实仍待运行配置和测试收件地址。未访问线上服务或部署。
 
 **2026-10-12 补充复核：** 修正本地知识库基准脚本的 fixture 版本、合成 gold evidence 检查、稳定完成等待和网络隔离；在 Chromium 实测文件范围筛选与 390px 布局。selected-30 最新 30 文档/30 片段、84 查询结果：索引 1,371 ms、查询 P50/P95/最大 77/91/96 ms，正例 Recall@1/5 为 96.67%/100%；全部 API/外部/模型网络请求和页面错误为 0。默认合成基准 100 文档/334 片段、96 查询，Recall@5 95.83%，两个英文失败仍与历史一致。前端全量测试 132 文件/1272 项，check/lint 通过。CI 配置含 OSV、Rust audit、SBOM 和 Trivy；本机无 Rust audit 工具、Docker daemon 不可连接，未执行相应扫描。代码和基准记录先提交为 `671ca3d`；A15 冒烟与 A13/A21 隔离 PG 验收随后提交为 `e776072`、`c12e799`。最近一次成功 fetch 时远程开发分支为本地祖先；本轮 fetch 因 GitHub 443 不可达失败，当前本地比缓存远程领先 7 个提交，未尝试推送，网络恢复后须重新 fetch/检查再普通同步。原有未跟踪 `output/`、`tmp/` 保留，Multi-CPR 样本和结果仍在 `.tools/` 忽略目录；无线上部署变更。
 
@@ -835,3 +835,12 @@
 - 修正 `.github/workflows/ci.yml` 两处 Trivy action 引用为 `aquasecurity/trivy-action@v0.36.0`；GitHub tag 查询确认存在。本机 Python YAML 解析及 `git diff --check` 通过。
 - 本次代码测试未重跑；第二轮远程测试作为 `c653b65` 的证据。本次修复需要推送并重新运行 CI，才可确认容器构建与 HIGH/CRITICAL 扫描。未读取 `.env`、未访问生产环境、未调用真实供应商/邮件；`output/`、`tmp/` 原有未跟踪内容继续保留。
 - 同步状态：修复提交 `6b35ad3` 已本地创建；普通 `git push agents develop/geiit-agents` 因 GitHub 443 连接超时失败。SSH 443 主机密钥通过 GitHub 官方 API 返回值严格校验，但远程认证因没有可用公钥身份而拒绝；未关闭校验或改用非 Git 写入方式。GitHub API 核对远程开发分支为 `c653b655`、`main` 为 `ea4917e`；未发生远程更新，新 CI 尚未触发。`output/` 和 `tmp/` 继续未跟踪且未提交。
+
+### 2026-10-17：补齐 AI 工作台旧式 XLS 导出并修复前端依赖漏洞
+
+- 实际改动：为成果导出增加独立、按需加载的 BIFF8 `.xls` 格式，沿用受限 Markdown 表格提取、工作表名称清理和文本单元格策略；写入转换器版本、SHA-256 和独立 `document.export-xls` 执行记录。保留 `.xlsx` 现有格式及行为。更新 AI 工作台说明、A23 状态和浏览器验收脚本。
+- 途中修复：官方 npm 全量审计发现 `pptxgenjs@4.0.1` 带入易受影响的 `image-size@1.2.1`（JXL/HEIF 与 ICNS 无限循环 DoS 两项 HIGH）。将 `image-size` override 到 `2.0.4`；使用该组合生成含 PNG 的合成 PPTX 验证兼容。安装固定 `styled-exceljs@0.21.6`（Apache-2.0）作为 BIFF8 写入器，无运行时传递依赖；XLS 转换器在独立约 353 KB 的动态 chunk 中加载。
+- 本地验证：前端全量 **134 个测试文件 / 1282 项通过**，`npm run check`、`npm run lint`、生产构建通过；官方 npm 全量 audit 为 **0 漏洞**。Playwright 工作台验收通过 XLS 下载、OLE/CFB 文件头、中文内容、`=SUM(1,2)` 保持字符串、执行历史和原 XLSX/DOCX/PPTX/网页设计流程；另在仓库外临时目录用独立 `xls-reader@0.7.0` 读取合成 BIFF8 文件成功。`git diff --check` 通过。构建仍有两条既有工作流动态/静态导入提示。
+- A28 无网络预检：使用隔离 Python 和脚本的进程环境模式，没有读取 `.env`。当前环境缺阿里云 LLM/Embedding API Key、DeepSeek API Key/API Base，DeepSeek 仍关闭，且缺与目标 pgvector 列相符的 `EMBEDDING_DIMENSION`；没有执行真实模型、数据库或 Resend 请求，也没有发送邮件。真实联调仍需部署者在隔离测试终端配置运行时参数及密钥，并指定一次性测试收件地址；运营主体和隐私/跨境信息仍需部署者核实。
+- 其他未完成：A08 修正后的远程 OSV/Rust/Trivy CI；A12 脱敏业务问答与证据金标和上游数据许可；目标数据库迁移及旧向量重处理；Redis/WebSocket、上传文件/PVC/运行配置联合备份恢复、部署回滚、Windows 安装升级、Safari/WebView2/移动真机、低配/大容量/生产等价压力与容器验收仍开放。OCR、复杂排版、工作流循环依用户先前决定继续暂缓。本次未访问线上服务、未部署、未构建容器或桌面安装包。
+- Git：本轮前本地 `fa9d30a` 比 `agents/develop/geiit-agents` `c653b655` 领先 5 个提交；2026-10-17 `git fetch agents --prune` 成功，远端开发分支是本地祖先、无远端独有提交，远端旧 `main` 为 `ea4917e`。本轮提交与普通推送结果在提交后补记。`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保持未跟踪，不纳入提交。

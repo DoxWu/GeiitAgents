@@ -1,6 +1,8 @@
 import JSZip from 'jszip';
+import * as LegacyXLS from 'styled-exceljs';
 import { expect, it } from 'vitest';
 import { exportChartXlsx, exportMarkdownTableXlsx, markdownTableRows, parseFirstXlsxSheet } from './xlsx';
+import { exportMarkdownTableXls } from './xls';
 
 const workbook = (sheets: string, sheetXml: string, sharedStrings?: string, relationshipTarget = 'worksheets/sheet1.xml') => {
   const zip = new JSZip();
@@ -79,4 +81,20 @@ it('exports the first Markdown table as literal workbook cells and rejects missi
   expect(sheetXml).not.toMatch(/<f(?:\s|>)/);
   await expect(exportMarkdownTableXlsx('# 没有表格', '空表')).rejects.toThrow('没有可导出的表格');
   expect(() => markdownTableRows(`| A | B |\n| --- | --- |\n${Array.from({ length: 51 }, () => '| x | y |').join('\n')}`)).toThrow('50 行');
+});
+
+it('exports a real BIFF8 XLS workbook with Unicode text cells and no formulas', async () => {
+  const bytes = await exportMarkdownTableXls('# 报告\n\n| 指标 | 数值 |\n| --- | --- |\n| 增长 | =1+1 |', '经营/报告');
+  expect(Array.from(bytes.slice(0, 8))).toEqual([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  const workbook = LegacyXLS.read(bytes, { type: 'array' });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  expect(sheetName).toBe('经营 报告');
+  expect(LegacyXLS.utils.sheet_to_json(sheet, { header: 1, raw: false })).toEqual([
+    ['指标', '数值'],
+    ['增长', '=1+1'],
+  ]);
+  expect(sheet.B2).toMatchObject({ t: 's', v: '=1+1' });
+  expect(sheet.B2.f).toBeUndefined();
+  await expect(exportMarkdownTableXls('# 没有表格', '空表')).rejects.toThrow('没有可导出的表格');
 });

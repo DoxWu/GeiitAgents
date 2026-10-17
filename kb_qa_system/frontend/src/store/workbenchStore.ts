@@ -182,7 +182,7 @@ interface WorkbenchState {
   saveArtifactVersion: (sourceId: string, content: string) => Promise<string>;
   restoreArtifactVersion: (sourceId: string, expectedLatestId: string) => Promise<string>;
   exportArtifactDocx: (sourceId: string, style?: DocxStyle, format?: DocxFormatOptions) => Promise<{ bytes: ArrayBuffer; name: string; warnings: string[] }>;
-  exportArtifactOffice: (sourceId: string, format: 'pptx' | 'xlsx') => Promise<{ bytes: Uint8Array; name: string; mimeType: string; warnings: string[] }>;
+  exportArtifactOffice: (sourceId: string, format: 'pptx' | 'xlsx' | 'xls') => Promise<{ bytes: Uint8Array; name: string; mimeType: string; warnings: string[] }>;
   retryStorage: () => Promise<void>;
   answerKnowledge: (profileId: string, question: string, sources: SearchHit[], allowCloud: boolean, signal: AbortSignal, onPreview?: (value: GenerationPreview | null) => void, history?: KnowledgeTurn[]) => Promise<{ content: string; model: string; finishReason: FinishReason }>;
 }
@@ -1652,7 +1652,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!source || !task || (['office.tools', 'workflow.run'].includes(task.type) ? task.status === 'running' : task.status !== 'succeeded')) throw new Error('源成果不存在或任务尚未完成。');
     if (source.kind !== 'markdown' || !['document.generate-markdown', 'office.tools', 'workflow.run'].includes(task.type)) throw new Error('仅 Markdown 成果支持 Office 导出。');
     if (artifactOperations.has(task.id)) throw new Error('此任务正在保存或导出，请稍后重试。');
-    const toolName = format === 'pptx' ? 'document.export-pptx' as const : 'document.export-xlsx' as const;
+    const toolName = format === 'pptx' ? 'document.export-pptx' as const : format === 'xls' ? 'document.export-xls' as const : 'document.export-xlsx' as const;
     if (get().toolRuns.filter(item => item.taskId === task.id && item.tool === toolName).length >= 100) throw new Error('每个任务最多保留 100 次该格式的导出记录。');
     const controller = new AbortController(), epoch = generation, toolId = crypto.randomUUID(), now = new Date().toISOString();
     artifactOperations.set(task.id, controller);
@@ -1666,10 +1666,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         const { exportMarkdownPptx, PPTX_CONVERTER_VERSION } = await import('@/officeTasks/pptx'); guard();
         const result = await exportMarkdownPptx(documentExportContent(source), task.title); bytes = result.bytes; warnings = result.warnings; converterVersion = PPTX_CONVERTER_VERSION;
         mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-      } else {
+      } else if (format === 'xlsx') {
         const { exportMarkdownTableXlsx, XLSX_DOCUMENT_CONVERTER_VERSION } = await import('@/officeTasks/xlsx'); guard();
         bytes = await exportMarkdownTableXlsx(documentExportContent(source), task.title); warnings = []; converterVersion = XLSX_DOCUMENT_CONVERTER_VERSION;
         mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      } else {
+        const { exportMarkdownTableXls, XLS_DOCUMENT_CONVERTER_VERSION, XLS_MIME } = await import('@/officeTasks/xls'); guard();
+        bytes = await exportMarkdownTableXls(documentExportContent(source), task.title); warnings = []; converterVersion = XLS_DOCUMENT_CONVERTER_VERSION;
+        mimeType = XLS_MIME;
       }
       guard();
       const hash = await crypto.subtle.digest('SHA-256', bytes.slice().buffer), sha256 = Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, '0')).join('');

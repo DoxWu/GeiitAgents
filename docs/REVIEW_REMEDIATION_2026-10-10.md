@@ -12,16 +12,16 @@
 | A05/A06/A07/A17/A25/A26 | 代码、模板与本地配置检查完成 | CSP/Nginx 安全头和 WebSocket 反代、Celery beat 与进程监管、Git/Docker 忽略及 CI secret scan、监控/SMTP 模板、关闭公网 sourcemap；Compose 配置通过，未构建/启动生产容器或投递真实通知 |
 | A09/A10/A11/A24 | 已实现/部分开放 | 搜索竞态与历史账号/服务器隔离、可选搜索历史保存、标题/文件名搜索、状态/类型/日期筛选和隐私页说明均已实现；列表不搜索正文，相关性阈值仍待业务基准校准 |
 | A12 | 已完成公开样本补充评估和本地筛选浏览器验收；业务校准仍开放 | Multi-CPR 30 条正例是 passage 相关性标签，不等同问答可回答标签；用户提供的 12 条无答案候选只表示 selected-30 中证据不足。真实 E5 检索 Recall@1/5 为 96.67%/100%，MRR 0.983、nDCG@5 0.988；无答案候选相似度 0.841–0.906。仅描述两类分数分布，不混算最佳分类阈值，也不调整产品拒答阈值。文件筛选实测通过：空范围禁用搜索、限定单文件、范围变更清旧结果和 390px 无横向溢出。仍需脱敏业务问答/证据标注来校准拒答与引用质量；Multi-CPR 归档无数据许可 |
-| A08 | 本机依赖审计与 SBOM 有历史证据；修正后远程扫描待运行 | 测试依赖审计发现 `pytest==8.3.3` 的 CVE-2025-71176，已升至修复版 `9.0.3`，`pytest-asyncio` 升至 `1.4.0` 并固定函数级 fixture loop；隔离后端历史全量 680 通过/16 跳过，PyPI 漏洞服务审计 8 个测试依赖为 0 漏洞。第二轮 CI `38250130095` 的 npm/Python OSV、Windows cargo-audit、三份 SBOM 与 secret scan 均通过；容器 job 当时因 Trivy action tag 错误未启动。配置现已改为 `aquasecurity/trivy-action@v0.36.0`，但尚未推送触发新 Actions，故不能声称新镜像扫描通过；当前拆分测试依赖也需在远程 OSV 重扫。前端 CycloneDX 211 组件、Rust Windows SBOM 已上传 |
+| A08 | 本机依赖审计与 SBOM 有历史证据；修正后远程扫描待运行 | 测试依赖审计发现 `pytest==8.3.3` 的 CVE-2025-71176，已升至修复版 `9.0.3`，`pytest-asyncio` 升至 `1.4.0` 并固定函数级 fixture loop；隔离后端历史全量 680 通过/16 跳过，PyPI 漏洞服务审计 8 个测试依赖为 0 漏洞。第二轮 CI `38250130095` 的 npm/Python OSV、Windows cargo-audit、三份 SBOM 与 secret scan 均通过；容器 job 当时因 Trivy action tag 错误未启动。2026-10-17 新增 XLS 写入器并将 `pptxgenjs` 的易受影响 `image-size` 固定到 `2.0.4`；官方 npm 全量审计本机重跑为 0 漏洞。配置现已改为 `aquasecurity/trivy-action@v0.36.0`，但尚未推送触发新 Actions，故不能声称新镜像扫描通过；当前拆分测试依赖仍需远程 OSV 重扫。前端 CycloneDX 211 组件、Rust Windows SBOM 已上传 |
 | A14/A15/A16/A21 | 本地浏览器/PG 集成已有证据；部署级压力仍开放 | Locust 隔离/并发/超时脚本和 SSE 生命周期指标已有测试；CI 配置 PostgreSQL/pgvector、Redis、secret scan、依赖审计和镜像扫描。Chromium、Edge、Firefox、WebKit 浏览器 API 冒烟历史通过；2026-10-17 又在生产预览重跑四浏览器 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks、文件输入和 1280/390px 检查。新增完整 AI 工作台 Chromium 流程覆盖 Office 导出、网页设计/素材/授权、沙箱与 HTML 下载；截图在 `.tools/document-task-qa/`。A21 隔离 PG 集成本机历史 28/28 通过；第二轮远程后端、PostgreSQL live 用例、LangChain 合约和前端 132 文件/1272 项均通过。Trivy 修正后的新 CI 未运行。浏览器验收不覆盖真实 E5 文件导入、Safari、WebView2、移动真机或无障碍完整流程；真实多服务压力仍未完成 |
 | A13/A18/A19/A20/A22/A27 | 部分完成；部署环境验收未完成 | 隔离 PostgreSQL 18.4 + pgvector 的 `test_ops.py` 与 `test_maintenance.py` 共 28/28 通过，含真实加密备份、临时目标恢复、向量/序列、损坏检测、失败快照保留、任务幂等/互斥/取消/中断和目标变化拒绝；随机测试库清理后停止集群。此结果不覆盖上传文件/PVC/运行配置与完整业务联合恢复。仍待目标环境迁移、部署回滚、dev.68 安装升级、8 GB/大容量/断电/跨卷测试或正式新安装包 |
-| A23 | 用户本次明确追加的能力已实现；其他扩展仍延期 | 已实现 AI 可视化网页设计（布局、颜色、滚动动画示例、图片/文字素材、模型生成与隔离预览）、加密参考资料复用和 DOCX/PPTX/XLSX/HTML 导出，并完成本地浏览器验收。PDF 输出、`.xls`、OCR、复杂版式、工作流循环及任意插件不在已实现范围 |
+| A23 | 用户本次明确追加的能力已实现；其他扩展仍延期 | 已实现 AI 可视化网页设计（布局、颜色、滚动动画示例、图片/文字素材、模型生成与隔离预览）、加密参考资料复用和 DOCX/PPTX/XLS/XLSX/HTML 导出，并完成本地浏览器验收。PDF 输出、OCR、复杂版式、工作流循环及任意插件不在已实现范围 |
 | A28 | 代码、验收脚本和隔离测试完成；真实联调待部署运行时配置 | 用户已确认阿里云 OpenAI 兼容主 LLM/Embedding、DeepSeek OpenAI 兼容 LLM 备用、Resend HTTP API，以及按实例配置管理员邮箱、未配置时隐藏。真实验收还需部署者提供模型 ID/地域端点/向量维度、运行环境凭据、已验证发件人和明确测试收件箱；运营主体、所在地、数据区域/保留/跨境/第三方处理须部署者核实。不得把代码准备描述为供应商或隐私合规验收 |
 | A32/A33 | 出站校验和基础资源预算已实现；隔离测试通过 | DNS 全集校验后固定 IP、Host/SNI 校验、环境代理禁用、每跳重验证；HTML/图片累计流式读取及总时限、DOCX 解压预算、PDF 页数/文本/时间、图片像素限制。下载行为 11 项通过；未执行真实复杂 PDF/压缩响应集成和硬时限/容器资源测试 |
 
 ## 本轮验证
 
-截至 2026-10-12 的历史结果：后端全量 **658 项通过 / 16 项跳过**；前端 **130 个测试文件 / 1262 项通过**；监控组合及独立 Compose `config --quiet`、Sealos Kustomize 展开和 Alembic 单一 head 检查通过。2026-10-17 本地前端全量 **134 文件 / 1281 项通过**，TypeScript、ESLint、Vite 生产构建、AI 工作台 Playwright 流程和四浏览器 smoke 通过；监控 YAML/渲染模板/JSON 解析通过。新构建仍有两条工作流模块动态/静态导入提示。
+截至 2026-10-12 的历史结果：后端全量 **658 项通过 / 16 项跳过**；前端 **130 个测试文件 / 1262 项通过**；监控组合及独立 Compose `config --quiet`、Sealos Kustomize 展开和 Alembic 单一 head 检查通过。2026-10-17 本地前端全量 **134 文件 / 1282 项通过**，TypeScript、ESLint、Vite 生产构建、AI 工作台 Playwright 流程（含 BIFF8 XLS 下载）和四浏览器 smoke 通过；官方 npm 全量审计 0 漏洞。监控 YAML/渲染模板/JSON 解析通过。新构建仍有两条工作流模块动态/静态导入提示。
 
 本地代码/隔离测试、前端构建与线上部署分别记录。2026-10-17 未构建后端镜像或桌面安装包、未应用迁移、未启动真实容器、未连接真实 Redis/provider/SMTP、未做生产部署或数据恢复演练。
 
