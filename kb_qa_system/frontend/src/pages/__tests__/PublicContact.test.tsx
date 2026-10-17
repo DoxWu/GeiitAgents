@@ -14,6 +14,17 @@ afterEach(() => {
 });
 
 describe("deployment public contact", () => {
+  it("does not promise an unavailable self-service password reset", () => {
+    render(
+      <MemoryRouter>
+        <HelpPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/当前没有自助找回或重置密码流程/)).toBeInTheDocument();
+    expect(screen.queryByText(/管理员会发送密码设置邮件/)).toBeNull();
+  });
+
   it("hides feedback email links when no valid address is configured", () => {
     window.__KB_PUBLIC_CONFIG__ = { contactEmail: "not-an-email" };
     const { container } = render(

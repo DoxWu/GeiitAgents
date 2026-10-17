@@ -950,4 +950,10 @@
 
 - 实际改动：新增 `tests/test_ws_live_redis.py`，仅在 `GEIIT_WS_INTEGRATION=1` 时执行；使用随机 SQLite 测试用户与 CI disposable Redis，验证真实一次性票据、Pub/Sub 通知收发、Redis 吊销后的活动连接关闭、连接租约清理及已消费票据重放拒绝。CI 后端 job 显式开启该用例，缺少 Redis 时会失败而非静默跳过。
 - 本地验证：从 `.tools/test-cwd-20261017` 中性工作目录运行 A01/A29/A30、A31、A32/A33 相关回归 **73/73 通过**；新增 live Redis 测试本机 **1 项按预期跳过**（未安装/运行 Redis）。Ruff lint/format、Python 编译、CI YAML 解析和 `git diff --check` 通过。一次较早的测试尝试从 `backend/` 工作目录启动，而应用设置会自动查找 `.env`；该进程可能加载过配置，但没有打印或查看配置值，结果不作为证据。最终验证从项目外的忽略目录启动，避免发现项目 `.env`。
-- 边界与待办：真实 Redis WebSocket 结果须由新 Actions 运行确认；没有连接系统 PostgreSQL/Redis、调用模型/邮件或访问生产服务。A08 修复提交 `612a523` 及本工作记录提交 `0330eb1` 本地领先远端；普通 push 再次因 GitHub 443 超时失败，未强推或修改旧 `main`。网络恢复后须先 fetch 核对祖先关系，再普通推送并检查镜像报告与 live Redis 测试结果。原有 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 未跟踪内容保留。
+- 边界与待办：真实 Redis WebSocket 结果须由新 Actions 运行确认；没有连接系统 PostgreSQL/Redis、调用模型/邮件或访问生产服务。A08 修复提交 `612a523`、工作记录提交 `0330eb1` 和 live Redis CI 用例提交 `b8deb27` 本地领先远端；普通 push 再次因 GitHub 443 超时失败，未强推或修改旧 `main`。网络恢复后须先 fetch 核对祖先关系，再普通推送并检查镜像报告与 live Redis 测试结果。原有 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 未跟踪内容保留。
+
+### 2026-10-17：校正 A20 帮助内容并补充功能清单索引
+
+- 实际改动：帮助 FAQ 不再承诺管理员能为现有账号发送密码重置邮件，明确当前无自助找回/重置接口，并区分注册审批后的首次密码设置链接。详细功能清单顶部日期更新为本轮核对日期，修正领域总数 7/8 不一致，并链接到 AI 办公与网页设计的当前限制说明；未将整份历史功能清单声称为全面复审。
+- 本地验证：`PublicContact.test.tsx` 定向 **3/3 通过**；该次通过 Vitest API 使用正确的 `vitest.config.ts` 与 `envDir: false`，没有加载项目 dotenv；ESLint、`npm run check`、`git diff --check` 通过。此前一次误指定 `vite.config.ts` 的测试由于未启用 JSDOM、在 `window` 处失败，已用正确配置重跑并不作为代码缺陷。
+- 未完成与边界：完整 A22 功能矩阵逐项复核仍开放；管理员邮箱和运营主体/处理区域/保留/跨境信息仍须部署者核实。此前从 backend 工作目录启动的一次 pytest 可能自动加载过 `.env` 配置，但没有打印或查看配置值，该结果已废弃；本次前端测试明确关闭 env 文件加载。A08/A01 代码仍在本地等待普通推送和 CI，未部署、未访问线上服务或触发真实邮件/模型。
