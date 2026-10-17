@@ -92,7 +92,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   - tzdata: 时区数据（任务6），使 TZ 环境变量生效
 # 轻量化优化：移除了 libmagic1（python-magic 已从依赖中删除）、
 #             libsm6/libxrender1/libxext6/libgl1（opencv 已从依赖中删除）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
     libpq5 \
     postgresql-client \
     tesseract-ocr \
@@ -104,6 +104,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \
+    && python -m pip install --no-cache-dir --upgrade setuptools==78.1.1 urllib3==2.8.0 wheel==0.46.2 \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建非 root 用户（在 COPY 之前，以便使用 --chown 直接设置属主）
