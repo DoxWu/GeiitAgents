@@ -23,7 +23,7 @@
 
 - CI `39036887321`（提交 `1c29e90`）的依赖审计、后端/前端测试、前端构建、secret scan、Rust audit/SBOM、镜像构建与扫描步骤成功；最终镜像门禁失败。下载并检查 Trivy 报告后确认后端有 4 条 HIGH Python 告警：`pip 26.2.1` 将存在漏洞的 `msgpack 1.1.2`、`urllib3 2.7.0`、`setuptools 70.3.0` vendored 到镜像的全局 pip 与 venv pip；前端旧 Alpine 3.19.1 有 20 条可修复 HIGH/CRITICAL 系统包告警。
 - 已修改后端 Dockerfile：依赖仍安装在 `/opt/venv`，复制到运行镜像前删除 venv pip；运行镜像删除基础 Python 的全局 pip、入口脚本与 ensurepip 捆绑 wheels。应用启动脚本无 pip 调用，运行时仍使用 `/opt/venv` 中的应用依赖。前端切换到已发布的 `nginx:1.30-alpine3.24`，并在安装运行包前执行 `apk upgrade`。
-- 新增静态回归断言，防止生产后端镜像重新包含两处 pip/ensurepip。当前本地验证：构建上下文脚本 **4/4**、Trivy 门禁策略 **8/8**、`git diff --check` 通过；容器 Dockerfile 尚未由新 CI 构建或扫描。本机 Docker daemon 不可用；修改仍在工作区，待提交并普通推送后核验 CI。旧镜像中的无修复版本告警保留在报告中，不通过放宽门禁忽略。
+- 新增静态回归断言，防止生产后端镜像重新包含 pip/ensurepip 或全局 setuptools/wheel。提交 `b9d3a44` 的新 CI 已验证前端可修复告警清零，后端仅剩基础镜像全局 setuptools 内嵌的 `jaraco.context 5.3.0` 与 wheel 0.45.1；当前已追加删除全局 setuptools/wheel 的修复，待下一次 CI 构建扫描。当前本地验证：构建上下文脚本 **4/4**、Trivy 门禁策略 **8/8**、`git diff --check` 通过；本机 Docker daemon 不可用，未部署。旧镜像中的 81 条无修复版本告警保留在报告中，不通过放宽门禁忽略。
 
 ## 本轮验证
 

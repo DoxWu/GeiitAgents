@@ -111,6 +111,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-ins
     && rm -rf /usr/local/lib/python3.11/site-packages/pip \
         /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
         /usr/local/lib/python3.11/site-packages/pip-*.data \
+        /usr/local/lib/python3.11/site-packages/setuptools \
+        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info \
+        /usr/local/lib/python3.11/site-packages/wheel \
+        /usr/local/lib/python3.11/site-packages/wheel-*.dist-info \
         /usr/local/lib/python3.11/ensurepip \
         /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
     && rm -rf /var/lib/apt/lists/*

@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-17 容器 CI 复核补充：** CI `39036887321`（提交 `1c29e90`）的构建与 Trivy 扫描步骤成功，但可修复漏洞门禁失败：后端有 4 条 pip vendored 依赖告警，来自最终镜像保留的全局/venv pip；前端 Alpine 3.19.1 有 20 条可修复 HIGH/CRITICAL 告警。当前工作区已修正：构建阶段从 venv 安装完成后移除 pip，运行镜像移除全局 pip/ensurepip；前端换为 `nginx:1.30-alpine3.24` 并升级 Alpine 补丁包。构建上下文检查 4/4、Trivy 门禁策略测试 8/8、`git diff --check` 通过。本机 Docker daemon 不可用，新镜像扫描尚待 CI；改动尚未提交/推送，也未部署。
+**2026-10-17 容器 CI 复核补充：** CI `39036887321`（提交 `1c29e90`）的构建与 Trivy 扫描步骤成功，但可修复漏洞门禁失败：后端有 4 条 pip vendored 依赖告警，来自最终镜像保留的全局/venv pip；前端 Alpine 3.19.1 有 20 条可修复 HIGH/CRITICAL 告警。提交 `b9d3a44` 已移除 pip/ensurepip 并升级前端镜像；CI `39041395118` 验证前端告警已清零，后端只剩基础镜像全局 setuptools 内嵌的 `jaraco.context 5.3.0` 与 wheel 0.45.1 两条可修复告警。当前继续移除运行层全局 setuptools/wheel；构建上下文检查 4/4、Trivy 门禁策略测试 8/8、`git diff --check` 通过。本机 Docker daemon 不可用；后续提交需再次由 CI 扫描，未部署。
 
 **2026-10-17 综合审查整改与 AI 办公工作台扩展：本地实现和前端验收完成，外部/部署验收仍开放。** 用户授权依据 [A01–A34 审查清单](COMPREHENSIVE_REVIEW_2026-10-10.md)，确认先修已有功能；OCR、复杂排版、工作流循环等仍暂缓，真实供应商/邮件/公开联系方式验收放在最后。工作台新增可视化 AI 网页设计、本机加密参考资料库和 DOCX/PPTX/XLS/XLSX/HTML 导出。逐项整改状态见 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md)。此前接入的 Multi-CPR selected-30 评估、文件范围筛选与检索相似度提示仍属本地公开样本验收，不代表真实业务校准。
 

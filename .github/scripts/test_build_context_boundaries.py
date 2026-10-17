@@ -96,6 +96,8 @@ def test_production_backend_image_does_not_ship_pip_vendored_packages():
     )
     assert "/opt/venv/lib/python3.11/site-packages/pip" in dockerfile
     assert "/usr/local/lib/python3.11/site-packages/pip" in dockerfile
+    assert "/usr/local/lib/python3.11/site-packages/setuptools" in dockerfile
+    assert "/usr/local/lib/python3.11/site-packages/wheel" in dockerfile
     assert "/usr/local/lib/python3.11/ensurepip" in dockerfile
 
 
