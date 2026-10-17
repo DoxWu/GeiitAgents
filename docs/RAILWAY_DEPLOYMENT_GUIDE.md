@@ -210,7 +210,8 @@ Redis 用于：缓存、限流、Token 黑名单、Celery 任务队列。
 | `CELERY_BROKER_URL` | `${{Redis.REDIS_URL}}` | Celery 消息队列（复用 Redis） |
 | `CELERY_RESULT_BACKEND` | `${{Redis.REDIS_URL}}` | Celery 结果存储（复用 Redis） |
 | `CORS_ORIGINS` | `["https://你的前端域名.up.railway.app"]` | 允许的前端域名（**先填占位，第 6 步获取前端域名后更新**） |
-| `MIGRATE_ON_STARTUP` | `false` | **必须设为 `false`**：`railway.json` 已通过 `releaseCommand` 执行迁移，设为 `false` 避免启动时重复迁移（见 4.3 节） |
+| `MIGRATE_ON_STARTUP` | `false` | Railway 由 `releaseCommand` 执行迁移；API 启动阶段只校验 schema，不重复执行迁移 |
+| `DB_RECOVERY_ENABLED` | `false` | Railway 使用 release phase 完成迁移；关闭常驻运行时恢复循环，避免多个服务实例重复承担恢复职责 |
 
 **可选配置的变量**：
 
@@ -233,10 +234,10 @@ Redis 用于：缓存、限流、Token 黑名单、Celery 任务队列。
   "$schema": "https://railway.app/railway.schema.json",
   "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
   "deploy": {
-    "startCommand": "/app/entrypoint.sh",
     "releaseCommand": "alembic upgrade head",
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 60,
+    "startCommand": "/app/entrypoint.sh",
+    "healthcheckPath": "/ready",
+    "healthcheckTimeout": 600,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }
@@ -245,12 +246,12 @@ Redis 用于：缓存、限流、Token 黑名单、Celery 任务队列。
 
 - **启动命令**：`entrypoint.sh` 根据 `ROLE` 环境变量启动不同服务（api/worker/flower）
 - **发布命令**：`releaseCommand` 在部署前执行 `alembic upgrade head`（数据库迁移），Railway 会确保迁移成功后才启动新版本
-- **健康检查**：访问 `/health` 端点，检查 API + 数据库 + Redis 连通性
+- **健康检查**：Railway 按配置访问 `/ready`；排障时可访问 `/health` 查看同一组依赖状态
 - **重启策略**：失败时自动重启（最多 5 次）
 
-> ✅ **D9-01 已实施**：`railway.json` 已配置 `releaseCommand: "alembic upgrade head"`，Railway 在部署前自动执行迁移。配合环境变量 `MIGRATE_ON_STARTUP=false`（见 4.2 节），`entrypoint.sh` 启动时会跳过迁移步骤，避免多副本并发迁移冲突。
+> ✅ **D9-01 已实施**：`railway.json` 已配置 `releaseCommand: "alembic upgrade head"`，Railway 在部署前自动执行迁移。API 启动仍会校验 schema；设置 `MIGRATE_ON_STARTUP=false` 后不会再次执行迁移，设置 `DB_RECOVERY_ENABLED=false` 后不会启动常驻恢复循环。
 
-> ⚠️ **重要**：如使用 `releaseCommand`，**必须**在后端环境变量中设置 `MIGRATE_ON_STARTUP=false`，否则 `entrypoint.sh` 启动时会再次执行迁移（虽然 Alembic 幂等，但增加启动延迟且多副本仍有冲突风险）。
+> ⚠️ **重要**：Railway 使用 release phase 时，后端必须同时设置 `MIGRATE_ON_STARTUP=false` 和 `DB_RECOVERY_ENABLED=false`。如果目标平台不执行 `releaseCommand`，应改回 `true/true` 并确认只有一个实例负责迁移和恢复。
 
 #### 4.4 部署并验证
 
@@ -658,8 +659,9 @@ curl -I https://你的前端域名
 ENVIRONMENT=production
 DEBUG=False
 PORT=8000
-# Railway 已通过 releaseCommand 执行迁移，跳过启动时迁移
+# Railway 已通过 releaseCommand 执行迁移，启动阶段只校验 schema
 MIGRATE_ON_STARTUP=false
+DB_RECOVERY_ENABLED=false
 
 # ===== 数据库 =====
 DATABASE_URL=${{Postgres.DATABASE_URL}}
@@ -776,8 +778,9 @@ ROLE=worker
 ENVIRONMENT=production
 DEBUG=False
 # Worker 角色不执行数据库迁移（entrypoint.sh 仅在 ROLE=api 时迁移）
-# MIGRATE_ON_STARTUP 对 Worker 无影响，但建议也设为 false 保持一致
+# Worker 不执行数据库迁移；与 API 保持相同的 release phase 配置
 MIGRATE_ON_STARTUP=false
+DB_RECOVERY_ENABLED=false
 
 # ===== 数据库 =====
 DATABASE_URL=${{Postgres.DATABASE_URL}}
@@ -895,7 +898,7 @@ Railway 自动收集所有服务的标准输出日志。在 Dashboard 中点击�
 
 ### 健康监控
 
-- **后端健康检查**：`GET /health`（Railway 每 30 秒自动检查）
+- **后端健康检查**：`GET /ready`（Railway 按 `healthcheckTimeout` 配置检查）；排障可用 `GET /health`
   - 返回 `status: "healthy"` — 一切正常
   - 返回 `status: "degraded"` — 数据库或 Redis 异常
 - **前端健康检查**：`GET /`（nginx 返回 200）
@@ -973,28 +976,15 @@ git push origin main
 # Railway 会自动检测到新 push 并重新部署
 ```
 
-### 方式 3：数据库回滚
+### 方式 3：数据库迁移异常
 
-如果数据库迁移导致问题：
-
-```bash
-# 回退到上一个 Alembic 迁移版本
-alembic downgrade -1
-
-# 回退到指定版本
-alembic downgrade <revision_id>
-
-# 查看迁移历史
-alembic history
-```
-
-> ⚠️ **注意**：数据库回滚可能导致数据丢失，仅在必要时使用。回滚前务必备份数据库。
+应用回滚只改变镜像，不会自动回退数据库 schema。先记录当前 revision、备份数据库和上传文件，再在隔离目标库验证迁移兼容性。不要直接在唯一生产库执行 `alembic downgrade -1`：删除列、索引或约束的迁移可能不可逆并造成数据丢失。优先保持 schema 不变，回滚到仍兼容当前 schema 的应用版本，或准备经过验证的前向修复迁移。
 
 > ⚠️ **10D 审查提醒（D9-02）**：Railway Dashboard 回滚仅回滚代码，**不自动回滚数据库迁移**。完整的回滚 SOP 应为：
 > 1. **先判断**：当前部署是否包含新的 Alembic 迁移？（查看 `alembic history`）
 > 2. **如无新迁移**：直接 Railway Dashboard Redeploy 上一个版本即可
-> 3. **如有新迁移**：先备份数据库 → Railway 回滚代码 → 手动执行 `alembic downgrade -1` → 验证应用启动正常
-> 4. **如 downgrade 失败**（如删列迁移不可逆）：保持当前 schema，修复代码兼容旧 schema 后重新部署
+> 3. **如有新迁移**：先备份数据库和上传文件 → 在隔离库恢复并验证 → 仅在兼容性和可逆性已确认时执行经过审批的迁移操作
+> 4. **如迁移不可逆或验证失败**：保持当前 schema，修复代码兼容当前 schema，或从一致性备份恢复到独立目标库后再切换流量
 
 ---
 
@@ -1005,7 +995,7 @@ alembic history
 ### 基础设施
 - [ ] PostgreSQL 服务已创建，pgvector 扩展已启用（`CREATE EXTENSION vector;`）
 - [ ] Redis 服务已创建，持久化已启用
-- [ ] 后端 API 服务已部署，`/health` 返回 healthy
+- [ ] 后端 API 服务已部署，`/ready` 返回就绪状态（`/health` 可返回 healthy）
 - [ ] **超级管理员账号已创建**（`python -m scripts.create_superuser`）
 - [ ] Celery Worker 服务已部署，日志显示 ready
 - [ ] 前端服务已部署，可正常访问
@@ -1285,9 +1275,9 @@ UPDATE users SET is_superuser = true WHERE username = 'your_username';
 **症状**：后端 API 服务配置多副本（replicas > 1）时，部署日志出现 Alembic 迁移冲突错误
 
 **排查**：
-1. 确认 `railway.json` 已配置 `releaseCommand: "alembic upgrade head"`（**当前代码已配置**，Railway 会在部署前执行迁移）
-2. 确认后端环境变量 `MIGRATE_ON_STARTUP=false`（避免 `entrypoint.sh` 启动时重复迁移）
-3. 如果仍出现冲突，检查是否存在多个服务引用同一数据库且未设置 `MIGRATE_ON_STARTUP=false`
+1. 确认 `railway.json` 已配置 `releaseCommand: "alembic upgrade head"`（Railway 会在部署前执行迁移）
+2. 确认 API 和 Worker 的 `MIGRATE_ON_STARTUP=false`、`DB_RECOVERY_ENABLED=false` 已被实际注入
+3. 如果仍出现冲突，检查是否有其他服务绕过 release phase 执行 `ROLE=api`，以及是否错误启用了启动迁移
 
 **解决方案**：
 ```json
@@ -1299,11 +1289,12 @@ UPDATE users SET is_superuser = true WHERE username = 'your_username';
 ```
 
 ```bash
-# 后端环境变量（必须设置）
+# 后端环境变量（release phase 部署必须设置）
 MIGRATE_ON_STARTUP=false
+DB_RECOVERY_ENABLED=false
 ```
 
-> ✅ **当前状态**：`railway.json` 已配置 `releaseCommand`，`entrypoint.sh` 已支持 `MIGRATE_ON_STARTUP` 环境变量跳过迁移。只需确保环境变量正确设置即可，**无需修改代码**。
+> ✅ **当前状态**：`railway.json` 已配置 `releaseCommand`，应用启动会读取 `MIGRATE_ON_STARTUP` 和 `DB_RECOVERY_ENABLED`。只需确保环境变量与部署平台的迁移执行方式一致即可。
 
 ### Q15：访问 `/metrics` 返回 422 VALIDATION_ERROR
 

@@ -333,10 +333,12 @@ npm run dev
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `MIGRATE_ON_STARTUP` | API 容器启动时是否执行 `alembic upgrade head` | `true` |
+| `DB_RECOVERY_ENABLED` | 是否启动常驻数据库恢复检查循环 | `true` |
 
 - **本地开发**：保持默认 `true`，API 启动时自动迁移，无需手动执行 `alembic upgrade head`
 - **已手动迁移**：如需跳过启动迁移（如调试启动流程），设为 `false`
 - **Railway 生产环境**：因 `railway.json` 已配置 `releaseCommand` 执行迁移，应设为 `false` 避免重复执行
+- **Railway 生产环境**：同时设 `DB_RECOVERY_ENABLED=false`，让 release phase 负责迁移，API 启动只校验 schema
 
 > 📖 详见 [entrypoint.sh](file:///c:/Users/DOXIA/Desktop/企业知识库问答系统/kb_qa_system/backend/entrypoint.sh) 中 `run_migrations()` 函数的实现。
 

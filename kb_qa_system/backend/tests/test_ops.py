@@ -93,6 +93,35 @@ def test_readiness_requires_schema_and_redis():
         assert not check.call_args.args[0].OPS_API_ENABLED
 
 
+def test_application_config_preserves_migration_controls():
+    from types import SimpleNamespace
+
+    from app.ops.runtime import application_config
+
+    settings = SimpleNamespace(
+        DATABASE_URL="postgresql://app@db/app",
+        REDIS_URL="redis://cache/0",
+        MIGRATE_ON_STARTUP=False,
+        DB_RECOVERY_ENABLED=False,
+        DB_STARTUP_TIMEOUT_SECONDS=42,
+        DB_RETRY_INTERVAL_SECONDS=7,
+        DB_CONNECT_TIMEOUT_SECONDS=3,
+        DB_OPERATION_TIMEOUT_SECONDS=55,
+        OPS_INTERVAL_SECONDS=19,
+    )
+    cfg = application_config(settings)
+
+    assert cfg.DATABASE_URL == settings.DATABASE_URL
+    assert cfg.REDIS_URL == settings.REDIS_URL
+    assert cfg.MIGRATE_ON_STARTUP is False
+    assert cfg.DB_RECOVERY_ENABLED is False
+    assert cfg.DB_STARTUP_TIMEOUT_SECONDS == 42
+    assert cfg.DB_RETRY_INTERVAL_SECONDS == 7
+    assert cfg.DB_CONNECT_TIMEOUT_SECONDS == 3
+    assert cfg.DB_OPERATION_TIMEOUT_SECONDS == 55
+    assert cfg.OPS_INTERVAL_SECONDS == 19
+
+
 def test_runtime_recovery_retries_after_failure():
     from app.ops.runtime import recovery_loop
     calls = []

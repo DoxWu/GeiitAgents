@@ -922,3 +922,10 @@
 - 实际改动：`backend/tests/load/locustfile.py` 的 `MixedUser` 现在只删除当前虚拟用户成功上传并记录的文档 ID；删除请求失败时保留 ID，Locust 停止用户时逐个尽力清理剩余 ID。更新 `backend/tests/load/README.md` 的数据影响说明。这样压测不会通过“删除列表首条”触碰既有知识库文档。
 - 本地验证：`python -m py_compile tests/load/locustfile.py` 通过；使用 stub Locust 模块和 fake HTTP client 覆盖删除失败保留、成功移除、停止清理三条路径，输出 `fake Locust cleanup checks passed`；`git diff --check` 通过。没有连接目标服务、数据库、Redis 或模型。
 - 限制：仍需在专用环境中运行真实 PostgreSQL/Redis/Celery/RAG 阶梯压力；脚本默认 `ALLOW_MUTATIONS=false`，启用写入前必须使用隔离账号和环境。
+
+### 2026-10-17：补齐 Railway 发布迁移开关并收紧回滚文档
+
+- 实际改动：`kb_qa_system/backend/railway.json` 增加实际缺失的 `releaseCommand: "alembic upgrade head"`；后端 `Settings` 增加 `.env.example` 已声明的迁移、启动恢复和超时配置，`app.ops.runtime.application_config` 显式把这些开关传给运维配置。这样 Railway 可用 release phase 迁移，并由 `MIGRATE_ON_STARTUP=false`、`DB_RECOVERY_ENABLED=false` 控制 API 启动只校验 schema、不启动常驻恢复循环；Sealos/Compose 仍可保留 `true/true` 启动迁移路径。
+- 文档改动：修正 Railway 指南中缺失 `releaseCommand`、错误健康探针路径和重复迁移说明；回滚章节改为先备份、隔离恢复和兼容性评估，明确不应在唯一生产库盲目执行 `alembic downgrade -1`。同步本地部署/管理员配置说明、入口脚本注释，更新 `docs/REVIEW_REMEDIATION_2026-10-10.md` 的 A05/A06/A07/A17/A25/A26 状态和本 Runbook 提示。
+- 本地验证：隔离 Python 3.11.9 运行 `tests/test_ops.py`，**11 项通过 / 5 项环境相关跳过**（无真实 PostgreSQL）；新增应用配置开关断言通过；Python `py_compile`、Railway JSON 解析和 `git diff --check` 通过。Ruff 仍报告 `app/core/config.py` 与既有 `test_ops.py` 的历史导入/格式问题，本轮未做无关重排。
+- 边界：未读取 `.env`，未连接目标数据库、Redis、Railway 或线上服务，未执行 release phase、容器构建、迁移或回滚演练。Railway 目标环境仍需由部署者确认 release command 的实际执行、环境变量注入和备份恢复流程；旧 `main` 未修改，未推送。

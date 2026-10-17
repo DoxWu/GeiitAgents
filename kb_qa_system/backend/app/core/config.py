@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     # 连接超时时间（秒）
     DB_POOL_TIMEOUT: int = 30
 
+    # Database startup and runtime recovery controls. These are consumed by
+    # the independent operations settings used during application lifespan.
+    MIGRATE_ON_STARTUP: bool = True
+    DB_RECOVERY_ENABLED: bool = True
+    DB_STARTUP_TIMEOUT_SECONDS: int = 300
+    DB_RETRY_INTERVAL_SECONDS: int = 5
+    DB_CONNECT_TIMEOUT_SECONDS: int = 5
+    DB_OPERATION_TIMEOUT_SECONDS: int = 600
+    OPS_INTERVAL_SECONDS: int = 60
+
     # ============================================
     # Redis 配置
     # ============================================

@@ -204,7 +204,7 @@ redis-cli -u $REDIS_URL DEL celery dead_letter
 
 ```bash
 # 代码回滚：Railway Dashboard → 选择上一个部署 → Redeploy
-# 数据库回滚：alembic downgrade -1（需评估兼容性）
+# 数据库迁移异常：先按回滚 SOP 备份并在隔离库验证；不要直接在唯一生产库执行 downgrade
 ```
 
 ---
