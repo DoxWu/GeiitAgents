@@ -8,7 +8,7 @@
 
 **2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1282 项通过**；TypeScript、ESLint、Vite 生产构建通过；官方 npm 全量审计为 **0 漏洞**。构建仍报告两条既有工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过 DOCX/PPTX/XLS/XLSX 导出、公式文本安全、网页布局/颜色/动画、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；桌面/手机截图已目视检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
 
-**仍未验收/风险：** 旧云端来源不明的向量不会参与语义召回，须在目标数据库升级后重处理文档；迁移未应用到目标环境。A08 的 Trivy action、Rustls advisory 和 npm 漏洞已修复；CI `39017307179` 的依赖审计、SBOM、前后端测试/构建与 secret scan 通过，但后端镜像 Trivy 仍发现 81 项 OS HIGH/CRITICAL（含 1 CRITICAL）及 8 项 Python HIGH，前端镜像扫描因此跳过。当前 Dockerfile 已加入基础 Debian 安全升级及 Python base 工具修复，requirements 固定对应 Python 修复版；待新 CI 实际重建镜像扫描。本机 Docker daemon 与 cargo-audit 不可用。真实 Redis/WebSocket、上传文件/PVC/运行配置联合恢复、目标环境迁移/回滚、Windows 安装升级、真实 Safari/WebView2/移动真机业务流程、低配及生产容器验收均未做。A12 仍需脱敏业务问答和证据标签校准拒答/引用质量；Multi-CPR 未提供数据许可，样本和逐题结果留在 Git 忽略目录。A28 真实供应商/Resend 邮件与部署隐私核实仍待运行配置和测试收件地址。未访问线上服务或部署。
+**仍未验收/风险：** 旧云端来源不明的向量不会参与语义召回，须在目标数据库升级后重处理文档；迁移未应用到目标环境。A08 的 Trivy action、Rustls advisory 和 npm 漏洞已修复。CI `39017307179` 的后端 Trivy 曾发现 81 项 OS HIGH/CRITICAL（含 1 CRITICAL）及 8 项 Python HIGH。修复后的 `39018659421` 中后端测试、前端测试/构建、secret scan 和 LangChain 合约通过，但 Python 审计发现 `setuptools==78.1.1` 的 `PYSEC-2026-3447`，镜像构建/Trivy 被依赖审计门禁跳过；已升至 `83.0.0`，待新 CI 复验。本机 Docker daemon 与 cargo-audit 不可用。真实 Redis/WebSocket、上传文件/PVC/运行配置联合恢复、目标环境迁移/回滚、Windows 安装升级、真实 Safari/WebView2/移动真机业务流程、低配及生产容器验收均未做。A12 仍需脱敏业务问答和证据标签校准拒答/引用质量；Multi-CPR 未提供数据许可，样本和逐题结果留在 Git 忽略目录。A28 真实供应商/Resend 邮件与部署隐私核实仍待运行配置和测试收件地址。未访问线上服务或部署。
 
 **2026-10-12 补充复核：** 修正本地知识库基准脚本的 fixture 版本、合成 gold evidence 检查、稳定完成等待和网络隔离；在 Chromium 实测文件范围筛选与 390px 布局。selected-30 最新 30 文档/30 片段、84 查询结果：索引 1,371 ms、查询 P50/P95/最大 77/91/96 ms，正例 Recall@1/5 为 96.67%/100%；全部 API/外部/模型网络请求和页面错误为 0。默认合成基准 100 文档/334 片段、96 查询，Recall@5 95.83%，两个英文失败仍与历史一致。前端全量测试 132 文件/1272 项，check/lint 通过。CI 配置含 OSV、Rust audit、SBOM 和 Trivy；本机无 Rust audit 工具、Docker daemon 不可连接，未执行相应扫描。代码和基准记录先提交为 `671ca3d`；A15 冒烟与 A13/A21 隔离 PG 验收随后提交为 `e776072`、`c12e799`。最近一次成功 fetch 时远程开发分支为本地祖先；本轮 fetch 因 GitHub 443 不可达失败，当前本地比缓存远程领先 7 个提交，未尝试推送，网络恢复后须重新 fetch/检查再普通同步。原有未跟踪 `output/`、`tmp/` 保留，Multi-CPR 样本和结果仍在 `.tools/` 忽略目录；无线上部署变更。
 
@@ -848,5 +848,11 @@
 ### 2026-10-17：修复远程镜像扫描暴露的依赖问题
 
 - 远程 CI `39016498422`：Rustls 锁文件修复后的 `39017307179` 中，前后端测试/构建、PostgreSQL live、LangChain、secret scan、npm/Python OSV、Windows cargo-audit 与 Rust SBOM 全通过。镜像构建成功，但后端 Trivy 报 **81 项 OS HIGH/CRITICAL（80 HIGH / 1 CRITICAL）和 8 项 Python HIGH**，阻断前端镜像构建与扫描。Python findings 包括基础镜像 `setuptools 70.3.0`、`urllib3 2.7.0`、`wheel 0.45.1`；OS findings 分布在 Debian 基础层的 curl、systemd、libxml2、Tesseract、util-linux 等包。
-- 修复准备：运行阶段在安装 OCR/数据库运行依赖前先执行 `apt-get upgrade`；将 Python 运行时与基础镜像工具更新至 `setuptools 78.1.1`、`urllib3 2.8.0`、`wheel 0.46.2`，并将这三个兼容修复版本固定在 `requirements.txt`，避免虚拟环境回落。隔离 Python 3.11 `pip install --dry-run --ignore-installed -r requirements.txt` 成功完成依赖解析，待后端测试/容器 build 在远程重跑；本机无 Docker daemon，未声称镜像修复已通过。
-- Git/下一步：Rustls 修复 `cb477f5` 已普通推送并核对远端 SHA；本条 Docker/依赖修复与记录待独立提交。完成 Docker image rebuild、Trivy OS/Python scan 与前端镜像扫描后，才能关闭 A08 的本地/CI 依赖扫描缺口。没有部署、未更新线上服务；原 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 继续保留且不纳入提交。
+- 修复准备：运行阶段在安装 OCR/数据库运行依赖前先执行 `apt-get upgrade`；将 Python 运行时与基础镜像工具更新至 `setuptools 78.1.1`、`urllib3 2.8.0`、`wheel 0.46.2`，并将这三个版本固定在 `requirements.txt`。隔离 Python 3.11 `pip install --dry-run --ignore-installed -r requirements.txt` 成功完成依赖解析；第一轮远程后端和前端测试通过。
+- Git/下一步：Rustls 修复 `cb477f5` 已普通推送；Docker/依赖修复已在 `199e591` 普通推送。CI `39018659421` 的 pip-audit 发现 `setuptools==78.1.1` 的 `PYSEC-2026-3447`，镜像 build/Trivy 因门禁跳过；后续修改见下一条。没有部署、未更新线上服务；原 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 继续保留且不纳入提交。
+
+### 2026-10-17：处理 Python 审计新增的 setuptools advisory
+
+- 证据：CI `39018659421` 中后端测试、前端测试/TypeScript/构建、secret scan 和 LangChain 合约通过，npm 审计 0 漏洞；pip-audit 因 `setuptools==78.1.1` 的 `PYSEC-2026-3447` 失败。CycloneDX SBOM 将同一 advisory 分别从两个 OSV 来源列出。依赖审计失败使镜像构建和 Trivy 扫描跳过。
+- 改动：Docker 运行层与 Python 运行依赖均将 setuptools 更新至 `83.0.0`，高于 advisory 标注的修复版本；保留先前 `urllib3==2.8.0`、`wheel==0.46.2` 和 Debian 安全升级。该版本待 pip-audit/镜像扫描在远程复核。
+- 未完成/边界：本次没有部署或启动镜像。本机 Docker daemon 不可用；本机 Python 3.11 依赖 dry-run 通过，但本次没有完成 OSV 复扫。远程 CI `39018659421` 的 backend-test 成功，但本轮整体失败。`output/`、`tmp/` 和 `docs/PROJECT_OVERVIEW.md` 未跟踪文件保留，不纳入提交。

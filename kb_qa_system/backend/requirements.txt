@@ -80,7 +80,7 @@ openai==2.54.0
 # ============================================
 # 工具库
 # ============================================
-setuptools==78.1.1          # Trivy fix: CVE-2025-47273 in the Python base image
+setuptools==83.0.0          # Fixes CVE-2025-47273 and PYSEC-2026-3447
 urllib3==2.8.0              # Trivy fixes: CVE-2026-97687 and CVE-2026-97689
 wheel==0.46.2               # Trivy fix: CVE-2026-24049 in the Python base image
 python-dotenv==1.2.2
