@@ -13,6 +13,11 @@ await mkdir(output, { recursive: true });
 const profile = await mkdtemp(path.join(output, 'chromium-'));
 const password = 'synthetic-capacity-1234', key = 'geiit.workbench.encrypted.v1';
 const now = new Date().toISOString();
+const conversationCount = 5;
+const conversationBytes = Number(process.env.VAULT_CAPACITY_CONVERSATION_BYTES || 900000);
+if (!Number.isInteger(conversationBytes) || conversationBytes < 0 || conversationBytes > 950000) {
+  throw new Error('VAULT_CAPACITY_CONVERSATION_BYTES must be an integer between 0 and 950000.');
+}
 function seal(data) {
   const salt = randomBytes(16), iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', pbkdf2Sync(password, salt, 600000, 32, 'sha256'), iv);
@@ -83,7 +88,9 @@ try {
   const items = Array.from({ length: 500 }, (_, index) => ({ ...legacyItem, id: randomUUID(), title: `容量记录 ${String(index).padStart(3, '0')}`, content: `${index}:` + 'x'.repeat(20000 - String(index).length - 1) }));
   const drafts = Array.from({ length: 100 }, (_, index) => ({ id: index === 0 ? items[0].id : randomUUID(), editId: randomUUID(), baseRevision: index === 0 ? 1 : 0,
     input: { kind: 'note', title: `容量草稿 ${index}`, content: 'd'.repeat(20000), tags: [] }, tagsText: '', dueText: '', timezone: 'Asia/Shanghai', updatedAt: now }));
-  const fixture = { profiles: [], conversations: [], personalItems: items, personalDrafts: drafts };
+  const conversations = Array.from({ length: conversationCount }, (_, index) => ({ id: randomUUID(), title: `容量会话 ${index}`, profileId: '', updatedAt: now,
+    messages: [{ id: randomUUID(), role: 'user', content: `${index}:` + 'c'.repeat(Math.max(0, conversationBytes - String(index).length - 1)), createdAt: now }] }));
+  const fixture = { profiles: [], conversations, personalItems: items, personalDrafts: drafts };
   const plaintextBytes = Buffer.byteLength(JSON.stringify(fixture)), ciphertext = seal(fixture);
   await writeVaultCiphertext(page, ciphertext); await page.reload(); timings.unlockMs = await unlock();
   await button('笔记').click(); await button('容量记录 000').click();
@@ -93,7 +100,7 @@ try {
   timings.saveMs = Math.round(performance.now() - saveStarted);
   const committed = await readVaultCiphertext(page), committedData = unseal(committed);
   expect(committed.length).toBeGreaterThan(6 * 1024 * 1024); expect(committed).not.toContain('容量已保存');
-  expect(committedData.personalItems).toHaveLength(500); expect(committedData.personalDrafts).toHaveLength(99);
+  expect(committedData.conversations).toHaveLength(conversationCount); expect(committedData.personalItems).toHaveLength(500); expect(committedData.personalDrafts).toHaveLength(99);
   await button('工作台备份').click(); await page.getByLabel('备份口令', { exact: true }).fill('synthetic-backup-1234');
   await page.getByLabel('确认备份口令', { exact: true }).fill('synthetic-backup-1234');
   const backupStarted = performance.now(), downloadEvent = page.waitForEvent('download'); await button('下载加密工作台备份').click();
@@ -118,7 +125,7 @@ try {
   expect(await readVaultCiphertext(page)).toBe(committed); timings.restartUnlockMs = await unlock();
   await button('笔记').click(); await button('容量已保存').click(); await expect(page.getByLabel('笔记或待办内容')).toHaveValue('d'.repeat(20000));
   expect(errors).toEqual([]);
-  const result = { passed: true, personalItems: 500, personalDraftsBeforeSave: 100, contentCharactersEach: 20000, plaintextBytes, ciphertextCharacters: committed.length,
+  const result = { passed: true, personalItems: 500, personalDraftsBeforeSave: 100, contentCharactersEach: 20000, conversations: conversationCount, conversationCharactersEach: conversationBytes, plaintextBytes, ciphertextCharacters: committed.length,
     backupBytes: Buffer.byteLength(backup), timings, sampledJsHeapBytes: heap, checks: ['legacy UI migration', 'maximum record/draft counts and content length', 'save and exact independent decryption', 'actual encrypted backup download', 'uncommitted transaction discarded after forced browser process termination', 'previous committed notes recover after restart'],
     limits: ['development machine, not 8 GB or memory-constrained', 'Chromium main process termination, not physical power loss or Windows WebView2', 'no timing or memory SLA', 'whole-vault encryption remains', 'synthetic data only; no real API calls or emails'] };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
