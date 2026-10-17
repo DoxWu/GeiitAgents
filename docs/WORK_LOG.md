@@ -945,3 +945,9 @@
 - 实际修复：提交 `612a523` 从后端运行镜像移除基础 Python 全局 `setuptools` 与 `wheel` 及其 dist-info；同步扩展构建边界静态回归，确保镜像清理命令覆盖这两个目录。既有 `/opt/venv` 应用依赖保持不变。
 - 本地状态：GitHub 连接已恢复；普通 `git fetch agents --prune` 成功，确认远端开发分支为 `b9d3a44`，本地 `612a523` 是唯一后继，旧 `main` 仍为 `ea4917e`。Docker daemon 当前不可用，无法本机构建镜像。既有本地验证为构建上下文脚本 4/4、Trivy 策略单测 8/8、`git diff --check` 通过；这些测试不是远程镜像验收。
 - 后续：本条工作记录与 A08 跟踪更新后，普通推送 `612a523` 并检查新 CI 的 Trivy JSON；若仍有可修复 finding，再按包文件路径追因。当前未部署、未读取 `.env`、未调用供应商/邮件或访问生产服务；`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 原有未跟踪内容继续保留。
+
+### 2026-10-17：增加真实 Redis 通知 WebSocket 的 CI 集成回归
+
+- 实际改动：新增 `tests/test_ws_live_redis.py`，仅在 `GEIIT_WS_INTEGRATION=1` 时执行；使用随机 SQLite 测试用户与 CI disposable Redis，验证真实一次性票据、Pub/Sub 通知收发、Redis 吊销后的活动连接关闭、连接租约清理及已消费票据重放拒绝。CI 后端 job 显式开启该用例，缺少 Redis 时会失败而非静默跳过。
+- 本地验证：从 `.tools/test-cwd-20261017` 中性工作目录运行 A01/A29/A30、A31、A32/A33 相关回归 **73/73 通过**；新增 live Redis 测试本机 **1 项按预期跳过**（未安装/运行 Redis）。Ruff lint/format、Python 编译、CI YAML 解析和 `git diff --check` 通过。一次较早的测试尝试从 `backend/` 工作目录启动，而应用设置会自动查找 `.env`；该进程可能加载过配置，但没有打印或查看配置值，结果不作为证据。最终验证从项目外的忽略目录启动，避免发现项目 `.env`。
+- 边界与待办：真实 Redis WebSocket 结果须由新 Actions 运行确认；没有连接系统 PostgreSQL/Redis、调用模型/邮件或访问生产服务。A08 修复提交 `612a523` 及本工作记录提交 `0330eb1` 本地领先远端；普通 push 再次因 GitHub 443 超时失败，未强推或修改旧 `main`。网络恢复后须先 fetch 核对祖先关系，再普通推送并检查镜像报告与 live Redis 测试结果。原有 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 未跟踪内容保留。

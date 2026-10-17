@@ -184,6 +184,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://ops_test:test@localhost:5432/test
           GEIIT_OPS_TEST_ADMIN_URL: postgresql+psycopg://ops_test:test@localhost:5432/postgres
           REDIS_URL: redis://localhost:6379/0
+          GEIIT_WS_INTEGRATION: "1"
         run: |
           python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
 
