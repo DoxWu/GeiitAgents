@@ -177,7 +177,7 @@
 - 浏览器端到端验收 `npm run verify:ai-workbench` 通过；桌面和 390px 手机截图在 `.tools/document-task-qa/`，已目视检查。使用合成模型返回，没有真实供应商请求、外部网络尝试或页面错误。生产预览 `npm run test:browser-smoke` 的 Chromium 153、Edge 155、Firefox 155 和 Playwright WebKit 26.6 均通过 worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks、文件输入及窄屏检查；WebKit 宽度差异为 8px 滚动条度量。
 - 前端全量 **134 个测试文件 / 1281 项通过**；`npm run check`、`npm run lint`、`npm run build` 通过，保留两条工作流模块动态/静态导入提示。新参考库测试复跑 2/2 且 `act` 警告已清除。监控 7 份 YAML、合成变量渲染后的 Alertmanager YAML 和 Grafana dashboard JSON 解析通过；补充 `monitoring/.env.example` 并修正认证 `curl` 示例。本机未安装 Docker CLI，未能执行 Compose 配置检查或启动容器。后端及隔离 PG 本次未重跑，沿用 10 月 12 日历史结果。
 - 未完成：A08 修正后远程 CI/Trivy 未运行；A12 仍等业务问答/证据金标；A22 目标环境迁移、上传文件/PVC 与数据库联合恢复、部署回滚和桌面升级未做；A28 真实供应商/邮件/部署隐私仍留到最后。没有读取 `.env`、连接线上服务、发送邮件、构建后端镜像/桌面安装包或部署。
-- Git：`git fetch agents --prune` 因 GitHub 443 超时失败；远端差异暂时无法核实，因此不推送。本地开发分支原有 3 个待同步提交，本批继续保存本地提交；未强推或修改 `main`。`docs/PROJECT_OVERVIEW.md`、`output/` 和 `tmp/` 按现状保留为未跟踪内容。
+- Git：本批实现与文档保存为本地提交 `7a6cb1e`；`git fetch agents --prune` 因 GitHub 443 超时失败，远端差异暂时无法核实，因此未推送。开发分支当前比已缓存远端领先 4 个提交；未强推或修改 `main`。`docs/PROJECT_OVERVIEW.md`、`output/` 和 `tmp/` 按现状保留为未跟踪内容。
 
 ## 注意事项与已发现的坑
 
