@@ -61,6 +61,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Test image vulnerability gate
+        run: python -m unittest discover -s .github/scripts -p 'test_check_trivy_results.py'
+
       - name: Install Python dependency auditor
         run: python -m pip install --upgrade pip pip-audit
 
@@ -288,7 +291,9 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build backend image
+        id: build-backend
         uses: docker/build-push-action@v6
+        continue-on-error: true
         with:
           context: kb_qa_system/backend
           file: kb_qa_system/backend/Dockerfile
@@ -299,18 +304,22 @@ jobs:
             INSTALL_LOCAL_ML=false
 
       - name: Scan backend image for high and critical vulnerabilities
+        id: scan-backend
+        if: steps.build-backend.outcome == 'success'
         uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
         with:
           scan-type: image
           image-ref: geiit/backend:${{ github.sha }}
           scanners: vuln
-          # Debian has not published fixed package versions for the current 81 findings.
-          # Keep the gate focused on high/critical issues with an available vendor fix.
-          ignore-unfixed: true
           severity: HIGH,CRITICAL
-          exit-code: "1"
+          format: json
+          output: backend-trivy.json
+          list-all-pkgs: true
+          exit-code: "0"
 
       - name: Build frontend image
+        id: build-frontend
         uses: docker/build-push-action@v6
         with:
           context: kb_qa_system/frontend
@@ -322,11 +331,42 @@ jobs:
             VITE_API_BASE_URL=/api/v1
 
       - name: Scan frontend image for high and critical vulnerabilities
+        id: scan-frontend
         uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
         with:
           scan-type: image
           image-ref: geiit/frontend:${{ github.sha }}
           scanners: vuln
-          ignore-unfixed: true
           severity: HIGH,CRITICAL
-          exit-code: "1"
+          format: json
+          output: frontend-trivy.json
+          list-all-pkgs: true
+          exit-code: "0"
+
+      - name: Upload image scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-image-vulnerability-reports
+          path: |
+            backend-trivy.json
+            frontend-trivy.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce fixable high and critical vulnerability gate
+        if: always()
+        env:
+          BACKEND_BUILD_OUTCOME: ${{ steps.build-backend.outcome }}
+          BACKEND_SCAN_OUTCOME: ${{ steps.scan-backend.outcome }}
+          FRONTEND_BUILD_OUTCOME: ${{ steps.build-frontend.outcome }}
+          FRONTEND_SCAN_OUTCOME: ${{ steps.scan-frontend.outcome }}
+        run: |
+          for outcome in "$BACKEND_BUILD_OUTCOME" "$BACKEND_SCAN_OUTCOME" "$FRONTEND_BUILD_OUTCOME" "$FRONTEND_SCAN_OUTCOME"; do
+            if [ "$outcome" != success ]; then
+              echo "::error::An image build or scan did not succeed; inspect its step logs."
+              exit 1
+            fi
+          done
+          python .github/scripts/check_trivy_results.py backend-trivy.json frontend-trivy.json
