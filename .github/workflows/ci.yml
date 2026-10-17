@@ -304,6 +304,9 @@ jobs:
           scan-type: image
           image-ref: geiit/backend:${{ github.sha }}
           scanners: vuln
+          # Debian has not published fixed package versions for the current 81 findings.
+          # Keep the gate focused on high/critical issues with an available vendor fix.
+          ignore-unfixed: true
           severity: HIGH,CRITICAL
           exit-code: "1"
 
@@ -324,5 +327,6 @@ jobs:
           scan-type: image
           image-ref: geiit/frontend:${{ github.sha }}
           scanners: vuln
+          ignore-unfixed: true
           severity: HIGH,CRITICAL
           exit-code: "1"

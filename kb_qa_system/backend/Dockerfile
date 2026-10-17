@@ -104,7 +104,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-ins
     util-linux \
     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \
-    && python -m pip install --no-cache-dir --upgrade setuptools==83.0.0 urllib3==2.8.0 wheel==0.46.2 \
+    && python -m pip install --no-cache-dir --upgrade pip==26.2.1 msgpack==1.2.1 setuptools==83.0.0 urllib3==2.8.0 wheel==0.46.2 \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建非 root 用户（在 COPY 之前，以便使用 --chown 直接设置属主）
