@@ -28,12 +28,12 @@ ENV VITE_APP_TITLE=${VITE_APP_TITLE}
 RUN npm run build
 
 # 阶段 2：运行
-FROM nginx:1.25-alpine AS runtime
+FROM nginx:1.30-alpine3.24 AS runtime
 
 LABEL maintainer="kb-qa-system"
 
 # curl（健康检查）+ gettext（envsubst 变量替换）
-RUN apk add --no-cache curl gettext jq
+RUN apk upgrade --no-cache && apk add --no-cache curl gettext jq
 
 # nginx 配置复制为模板（启动时由 start.sh 通过 envsubst 替换变量）
 COPY nginx.conf /etc/nginx/conf.d/default.conf.template

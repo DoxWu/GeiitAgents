@@ -58,11 +58,15 @@ ARG INSTALL_LOCAL_ML=false
 
 # 升级 pip 并安装依赖到虚拟环境
 # 核心依赖始终安装；本地 ML 依赖按 INSTALL_LOCAL_ML 开关条件安装
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
+RUN /opt/venv/bin/python -m pip install --upgrade pip && \
+    /opt/venv/bin/python -m pip install -r requirements.txt && \
     if [ "${INSTALL_LOCAL_ML}" = "true" ]; then \
-        pip install -r requirements-local-ml.txt; \
-    fi
+        /opt/venv/bin/python -m pip install -r requirements-local-ml.txt; \
+    fi && \
+    rm -rf /opt/venv/lib/python3.11/site-packages/pip \
+        /opt/venv/lib/python3.11/site-packages/pip-*.dist-info \
+        /opt/venv/lib/python3.11/site-packages/pip-*.data \
+        /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.11
 
 
 # --------------------------------------------
@@ -83,7 +87,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ROLE=api \
     TZ=Asia/Shanghai
 
-# 安装运行时系统依赖
+# 安装运行时系统依赖并移除最终镜像中不需要的 Python 安装工具
 # 作用：
 #   - libpq5: psycopg 运行时库
 #   - tesseract-ocr + chi-sim + eng: OCR 中英文识别
@@ -104,7 +108,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-ins
     util-linux \
     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \
-    && python -m pip install --no-cache-dir --upgrade pip==26.2.1 msgpack==1.2.1 setuptools==83.0.0 urllib3==2.8.0 wheel==0.46.2 \
+    && rm -rf /usr/local/lib/python3.11/site-packages/pip \
+        /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
+        /usr/local/lib/python3.11/site-packages/pip-*.data \
+        /usr/local/lib/python3.11/ensurepip \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建非 root 用户（在 COPY 之前，以便使用 --chown 直接设置属主）
