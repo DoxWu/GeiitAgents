@@ -41,10 +41,31 @@ test-results/
 # 环境变量文件（构建时通过 build-arg 注入，不打入镜像）
 # ============================================
 .env
-.env.local
-.env.*.local
-.env.production
-.env.staging
+.env.*
+!.env.example
+
+# 运行配置、备份和凭据（构建上下文不应携带运行时数据）
+backups/
+backup/
+*.dump
+*.sql
+*.sql.gz
+*.backup*
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.bak
+kubeconfig
+kubeconfig.*
+credentials.json
+credentials.*.json
+secrets.json
+*.pem
+*.key
+.aws/
+.kube/
 
 # ============================================
 # 版本控制（镜像内不需要 Git 历史）

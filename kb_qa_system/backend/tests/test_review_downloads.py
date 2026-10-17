@@ -84,6 +84,33 @@ def test_stream_deadline():
         read_limited(response, 100, time.monotonic() - 1)
 
 
+def test_stream_limit_stops_chunked_response_without_content_length():
+    consumed = []
+
+    def chunks(**kwargs):
+        for chunk in (b'x' * 40, b'y' * 40, b'z' * 40):
+            consumed.append(chunk)
+            yield chunk
+
+    response = SimpleNamespace(headers={}, iter_content=chunks)
+    with pytest.raises(ValueError, match='大小限制'):
+        read_limited(response, 64, time.monotonic() + 5)
+    assert len(consumed) == 2
+
+
+def test_stream_rejects_invalid_content_length_before_reading():
+    consumed = []
+
+    def chunks(**kwargs):
+        consumed.append(True)
+        yield b'x'
+
+    response = SimpleNamespace(headers={'Content-Length': 'not-a-number'}, iter_content=chunks)
+    with pytest.raises(ValueError, match='声明无效'):
+        read_limited(response, 64, time.monotonic() + 5)
+    assert consumed == []
+
+
 def test_docx_expansion_budget_rejects_small_compressed_input(tmp_path):
     path = tmp_path / 'fixture.docx'
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:

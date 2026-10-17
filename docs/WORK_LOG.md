@@ -929,3 +929,10 @@
 - 文档改动：修正 Railway 指南中缺失 `releaseCommand`、错误健康探针路径和重复迁移说明；回滚章节改为先备份、隔离恢复和兼容性评估，明确不应在唯一生产库盲目执行 `alembic downgrade -1`。同步本地部署/管理员配置说明、入口脚本注释，更新 `docs/REVIEW_REMEDIATION_2026-10-10.md` 的 A05/A06/A07/A17/A25/A26 状态和本 Runbook 提示。
 - 本地验证：隔离 Python 3.11.9 运行 `tests/test_ops.py`，**11 项通过 / 5 项环境相关跳过**（无真实 PostgreSQL）；新增应用配置开关断言通过；Python `py_compile`、Railway JSON 解析和 `git diff --check` 通过。Ruff 仍报告 `app/core/config.py` 与既有 `test_ops.py` 的历史导入/格式问题，本轮未做无关重排。
 - 边界：未读取 `.env`，未连接目标数据库、Redis、Railway 或线上服务，未执行 release phase、容器构建、迁移或回滚演练。Railway 目标环境仍需由部署者确认 release command 的实际执行、环境变量注入和备份恢复流程；旧 `main` 未修改，未推送。
+
+### 2026-10-17：补齐构建上下文与分块下载门禁
+
+- 实际改动：收紧 `kb_qa_system/frontend/.dockerignore`，排除全部 `.env.*`（仅保留 `.env.example`）、备份目录/归档、kubeconfig、credentials、secrets 和密钥文件；新增 `.github/scripts/test_build_context_boundaries.py`，并接入依赖审计 CI，持续检查前后端 Docker 构建上下文的敏感文件边界。
+- A33 测试补充：`read_limited` 新增无 `Content-Length` 的分块响应超限提前中止，以及无效 `Content-Length` 在读取前拒绝两项回归；`tests/test_review_downloads.py` 隔离运行 **13/13 通过**。
+- 其他验证：构建上下文脚本 **2/2 通过**，脚本编译和 `git diff --check` 通过。首次直接运行资源测试受终端遗留 `DEBUG=release` 和系统临时目录权限影响失败，随后使用 `DEBUG=false` 与仓库内隔离 `--basetemp` 重跑通过；该环境修正不改变业务代码。
+- 边界与未完成：未构建生产镜像，Docker daemon 仍未启动；A08 的 OSV/Rust/Trivy 仍待网络恢复后的新 CI，A12 真实业务金标/模型拒答、A13/A18/A21 目标环境迁移恢复、A14/A16 多服务压力、A15 原生/真机、A28 真实供应商/Resend/部署隐私仍未验收。未读取 `.env`、未访问线上服务、未发送邮件或推送。

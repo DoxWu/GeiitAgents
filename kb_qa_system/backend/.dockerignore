@@ -24,13 +24,21 @@ ENV/
 backups/
 backup/
 *.dump
+*.sql
 *.sql.gz
 *.backup*
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.bak
 kubeconfig*
 credentials*.json
 *.pem
 *.key
 secrets.json
+secrets*.json
 .aws/
 .kube/
 
