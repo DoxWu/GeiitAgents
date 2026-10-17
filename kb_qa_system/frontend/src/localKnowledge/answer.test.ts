@@ -15,6 +15,20 @@ describe('local knowledge answer context', () => {
     expect(messages[0].content).not.toContain('</system>');
     expect(JSON.parse(messages[1].content).sources[0].content).toContain('</system>');
   });
+  it('requires direct evidence for the requested fact and abstains when a related source omits it', () => {
+    const messages = buildKnowledgeMessages('256G 内存笔记本一般的价格是多少', [{
+      ...hit,
+      text: '这款笔记本配备 256G 内存，采用铝合金外壳。',
+    }]);
+    const system = messages[0].content;
+
+    expect(system).toContain('逐项核对问题要求的关键事实');
+    expect(system).toContain('主题、实体或词语相近，以及向量相似度高，都不代表证据足以回答');
+    expect(system).toContain('关键事实缺失');
+    expect(system).toContain('明确说明“无法从所给资料中确定”');
+    expect(system).toContain('不得猜测、推断或用常识/外部知识补全');
+    expect(JSON.parse(messages[1].content).sources[0].content).not.toContain('价格');
+  });
   it('rejects empty or oversized source selections', () => {
     expect(() => buildKnowledgeMessages('问题', [])).toThrow();
     expect(() => buildKnowledgeMessages('问题', Array(6).fill(hit))).toThrow();
