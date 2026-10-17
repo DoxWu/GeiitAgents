@@ -8,6 +8,10 @@
 
 **2026-10-18 文档与本机验证：** 新增 [当前功能矩阵](CURRENT_FEATURE_MATRIX.md)，逐域记录入口、实现、验证和限制；旧编号清单已明确标为历史稿并修正 58/52 数量错误。矩阵引用的 39 个源码/文档路径均存在，`git diff --check` 与 live 测试文件 `py_compile` 通过。pytest 未能收集 live 用例：本机 Python 3.13 环境缺少 `psycopg`，因此不能记作测试通过；本机未启动 Redis。
 
+**2026-10-18 后续环境核对：** 隔离 Conda `simEnv` 有 Python 3.11 和 `psycopg`，但没有 pytest；直接导入 live 路由时该环境又缺少 PyJWT。故本批没有运行 Python 测试或真实 Redis；只将 `py_compile`、源码路径存在性与矩阵引用检查记为通过。
+
+**2026-10-18 Git 同步：** 本批本地提交为 `5029827`。随后 Git fetch 和普通 push 均因 GitHub Git 传输 443 超时失败；只读 GitHub API 确认远端开发分支仍为祖先 `0140406`、旧 `main` 仍为 `ea4917e`。本地提交待网络恢复后重新 fetch 核对并普通推送，没有远程写入或强推。
+
 本段之后的 2026-10-17 及更早阶段说明均为历史过程记录；其中当时的远端 SHA、待办和测试结果不覆盖上述 2026-10-18 当前状态。
 
 **2026-10-17 容器 CI 复核补充：** CI `39036887321`（提交 `1c29e90`）的构建与 Trivy 扫描步骤成功，但可修复漏洞门禁失败：后端有 4 条 pip vendored 依赖告警，来自最终镜像保留的全局/venv pip；前端 Alpine 3.19.1 有 20 条可修复 HIGH/CRITICAL 告警。提交 `b9d3a44` 已移除 pip/ensurepip 并升级前端镜像；CI `39041395118` 验证前端告警已清零，后端只剩基础镜像全局 setuptools 内嵌的 `jaraco.context 5.3.0` 与 wheel 0.45.1 两条可修复告警。当前继续移除运行层全局 setuptools/wheel；构建上下文检查 4/4、Trivy 门禁策略测试 8/8、`git diff --check` 通过。本机 Docker daemon 不可用；后续提交需再次由 CI 扫描，未部署。
@@ -968,5 +972,5 @@
 
 - 实际改动：新增 `docs/CURRENT_FEATURE_MATRIX.md`，按云端文档/问答、账号、备份恢复、本机工作台、本地知识库、AI Office/网页设计、个人工具、文件整理、工作流和监控部署列出入口、实现、测试证据及限制；README 改为链接当前矩阵。旧 `知识库项目功能清单.md` 标记为历史稿，指出其 58 个编号项并非当前功能数量，替换错误的“52 项”完成承诺。整改跟踪将 A22 更新为已建立矩阵、部署验收仍分项开放。
 - CI 复核：普通 push 后的 CI `39046967856`（提交 `0140406`）依赖审计、前端测试/构建、LangChain 合约与 secret scan 通过；后端 **698 通过 / 1 失败 / 1 跳过**。唯一失败是 `test_ws_live_redis.py` 请求 `app/api/routes/ws_notifications.py`，实际模块在 `app/api/ws_notifications.py`，造成容器构建/Trivy 跳过。
-- 实际修复与本地检查：测试改为装载正确路径，并新增无需 Redis 的路由模块加载回归。Python 3.13 `py_compile` 通过，源文件存在性检查确认正确路径存在、错误路径不存在；功能矩阵 39 个路径引用全部存在，无尾随空白，`git diff --check` 通过。隔离 pytest 未能收集：默认环境缺 `app` 导入路径，设置 `PYTHONPATH` 后又因继承的 `DEBUG=release` 非布尔失败；覆盖 `DEBUG=false` 后缺少 `psycopg`。三次均未执行测试，未连接 Redis；本机没有项目 Python 3.11 测试环境。
-- 状态与下一步：矩阵、测试路径修正和工作记录已本地提交；普通推送前重新 fetch 确认远端祖先，再推送并检查新 CI 的 live Redis 与 Trivy 报告。新功能的 Playwright/前端全量结果引用 2026-10-17 已完成记录，本批未重跑。没有读 `.env`、调用模型/邮件、连接生产服务或部署；`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 未跟踪内容保留。
+- 实际修复与本地检查：测试改为装载正确路径，并新增无需 Redis 的路由模块加载回归。Python 3.13 `py_compile` 通过，源文件存在性检查确认正确路径存在、错误路径不存在；功能矩阵 39 个路径引用全部存在，无尾随空白，`git diff --check` 通过。默认 pytest 环境缺 `psycopg`；`simEnv` 是 Python 3.11 但缺 pytest，直接路由导入缺 PyJWT。所有 pytest/导入尝试均在收集或导入阶段失败，未执行测试，也未连接 Redis。
+- 状态与下一步：矩阵、测试路径修正和工作记录已提交为 `5029827`。fetch/push 均因 443 超时失败；GitHub API 核对远端仍为祖先 `0140406`，旧 `main` 未变。网络恢复后重新 fetch、核对差异并普通推送，再检查 live Redis 与 Trivy 新 CI。新功能的 Playwright/前端全量结果引用 2026-10-17 已完成记录，本批未重跑。没有读 `.env`、调用模型/邮件、连接生产服务或部署；`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 未跟踪内容保留。
