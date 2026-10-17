@@ -8,6 +8,8 @@ import JSZip from 'jszip';
 import * as LegacyXLS from 'styled-exceljs';
 
 const output = path.resolve('../../.tools/document-task-qa');
+const baseUrl = process.env.DOCUMENT_TASK_BASE_URL ?? 'http://127.0.0.1:1423';
+const previewOrigin = new URL(baseUrl).origin;
 const liveProvider = process.env.DOCUMENT_TASK_LIVE === '1';
 await mkdir(output, { recursive: true });
 const context = await chromium.launchPersistentContext(path.join(output, 'browser-profile-' + Date.now()), { headless: true, acceptDownloads: true, viewport: { width: 1280, height: 900 } });
@@ -36,7 +38,7 @@ page.on('pageerror', error => errors.push(error.message));
 await context.routeWebSocket('**/ws/notifications', () => {});
 await context.route('**/*', route => {
   const url = new URL(route.request().url());
-  if (/^https?:$/.test(url.protocol) && url.origin !== 'http://127.0.0.1:1423') {
+  if (/^https?:$/.test(url.protocol) && url.origin !== previewOrigin) {
     externalAttempts.push(`${route.request().method()} ${url.origin}`);
     return route.abort();
   }
@@ -64,7 +66,7 @@ await context.route('**/api/v1/**', async route => {
   return route.fulfill({ status: 200, json: {} });
 });
 try {
-  await page.goto('http://127.0.0.1:1423/workbench');
+  await page.goto(new URL('/workbench', baseUrl).href);
   await page.evaluate(() => {
     localStorage.clear();
     localStorage.setItem('kb_auth_tokens', JSON.stringify({ access_token: 'synthetic-task-session', refresh_token: 'synthetic-task-session' }));
@@ -78,7 +80,19 @@ try {
   await expect(page.getByLabel('文档生成模型')).toContainText('fixture-document-model');
   await page.getByLabel('文档标题', { exact: true }).fill('项目周报');
   await page.getByLabel('生成要求', { exact: true }).fill('整理为包含进展、风险和下周计划的周报。');
-  await page.getByLabel('参考材料（可选）', { exact: true }).fill('登录模块已完成，等待安全评审。');
+  const sourceText = '登录模块已完成，等待安全评审。';
+  await page.getByLabel('参考材料（可选）', { exact: true }).fill(sourceText);
+  await page.getByRole('button', { name: '保存当前材料' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '材料已加密保存到本机资料库' })).toBeVisible();
+  const referenceCiphertext = await readVaultCiphertext(page);
+  expect(referenceCiphertext).not.toContain(sourceText);
+  await page.getByLabel('参考材料（可选）', { exact: true }).fill('');
+  const referenceLibrary = page.getByLabel('本机资料库');
+  const savedReferenceId = await referenceLibrary.locator('option').nth(1).getAttribute('value');
+  expect(savedReferenceId).toBeTruthy();
+  await referenceLibrary.selectOption(savedReferenceId);
+  await page.getByRole('button', { name: '载入所选材料' }).click();
+  await expect(page.getByLabel('参考材料（可选）', { exact: true })).toHaveValue(sourceText);
   const start = page.getByRole('button', { name: '开始生成' });
   await expect(start).toBeDisabled();
   await page.getByLabel(/我允许本次/).check(); await start.click();
@@ -89,7 +103,7 @@ try {
   expect(completionRequests).toHaveLength(1);
   const firstPayload = JSON.parse(sent[0].messages[1].content);
   expect(firstPayload).toEqual({ title: '项目周报', instruction: '整理为包含进展、风险和下周计划的周报。',
-    source: { file: '粘贴材料.txt', content: '登录模块已完成，等待安全评审。' }, images: [] });
+    source: { file: '粘贴材料.txt', content: sourceText }, images: [] });
   expect(JSON.stringify(sent[0])).not.toMatch(/synthetic-task-session|task-test-1234|api.?key/i);
   const encrypted = await readVaultCiphertext(page);
   expect(encrypted).not.toContain('登录模块'); expect(encrypted).not.toContain('项目周报');
@@ -105,7 +119,7 @@ try {
   await page.getByLabel('编辑 Markdown', { exact: true }).fill(revision);
   await expect(page.getByRole('button', { name: '导出 DOCX', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '保存新版本', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('版本已保存');
+  await expect(page.getByRole('status').filter({ hasText: '版本已保存' })).toBeVisible();
   await expect(page.getByRole('article', { name: '文档成果' })).toContainText('版本 2');
   await expect(page.getByLabel('成果版本')).toHaveCount(1);
   await page.getByRole('button', { name: '对比版本', exact: true }).click();
@@ -137,7 +151,7 @@ try {
   const stylesXml = await zip.file('word/styles.xml').async('string');
   expect(stylesXml).toContain('w:ascii="Arial"'); expect(stylesXml).toContain('w:sz w:val="28"');
   expect(stylesXml).toContain('w:line="360"');
-  await expect(page.getByRole('status')).toContainText('未下载或嵌入图片');
+  await expect(page.getByRole('status').filter({ hasText: '未下载或嵌入图片' })).toBeVisible();
   const pptxEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出 PPTX', exact: true }).click();
   const pptxDownload = await pptxEvent;
@@ -183,7 +197,7 @@ try {
   await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(2);
   await page.getByRole('button', { name: '恢复为新版本', exact: true }).click();
   await page.getByRole('button', { name: '确认恢复', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('已将版本 1');
+  await expect(page.getByRole('status').filter({ hasText: '已将版本 1' })).toBeVisible();
   await expect(page.getByLabel('成果版本').locator('option:checked')).toHaveText('版本 3 · 恢复自版本 1');
   await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(3);
   const restoredEvent = page.waitForEvent('download');
@@ -249,7 +263,7 @@ try {
   await expect(preview).toContainText('折线按输入行顺序');
   await expect(preview.locator('img')).toHaveAttribute('alt', '预览：季度营收 <内部>');
   await page.getByRole('button', { name: '保存图表任务' }).click();
-  await expect(page.getByRole('status')).toContainText('保存到本机加密库');
+  await expect(page.getByRole('status').filter({ hasText: '保存到本机加密库' })).toBeVisible();
   await expect(page.getByRole('region', { name: '图表任务详情' })).toContainText('已完成');
   await expect(page.getByRole('region', { name: '图表任务详情' })).toContainText('chart.check · 已完成');
   const svgDownload = page.waitForEvent('download');
@@ -285,7 +299,7 @@ try {
   await page.getByLabel('图表类型').selectOption('bar');
   await page.getByRole('button', { name: '检查并预览' }).click();
   await page.getByRole('button', { name: '保存图表任务' }).click();
-  await expect(page.getByRole('status')).toContainText('保存到本机加密库');
+  await expect(page.getByRole('status').filter({ hasText: '保存到本机加密库' })).toBeVisible();
   const barDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: '下载 PNG' }).click();
   await (await barDownload).saveAs(path.join(output, 'chart-bar.png'));
@@ -308,8 +322,42 @@ try {
   });
   await expect(primaryColor).toHaveValue('#123456');
   await page.getByLabel('视差滚动').check();
-  await page.getByLabel('动画示例', { exact: true }).selectOption('horizontal');
-  await expect(page.getByLabel('横向滚动动画示例')).toBeVisible();
+  const demoSelector = page.getByLabel('动画示例', { exact: true });
+  for (const [id, label] of [['reveal', '滚动触发'], ['linked', '滚动联动'], ['parallax', '视差滚动'], ['sticky', '吸顶'], ['snap', '滚动吸附'], ['horizontal', '横向滚动']]) {
+    await demoSelector.selectOption(id);
+    await expect(page.getByLabel(`${label}动画示例`)).toBeVisible();
+  }
+  await demoSelector.selectOption('reveal');
+  const revealExample = page.getByLabel('滚动触发动画示例');
+  const revealViewport = revealExample.locator('.overflow-auto').first();
+  const revealTarget = revealExample.getByText('动画内容进入视口');
+  await expect(revealTarget).toHaveClass(/opacity-20/);
+  await revealViewport.evaluate(node => { node.scrollTop = 60; node.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  await expect(revealTarget).not.toHaveClass(/opacity-20/);
+  await demoSelector.selectOption('linked');
+  const linkedExample = page.getByLabel('滚动联动动画示例');
+  await linkedExample.locator('.overflow-auto').first().evaluate(node => { node.scrollTop = 80; node.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  await expect(linkedExample.getByText(/滚动进度/)).not.toHaveText('滚动进度 0%');
+  await demoSelector.selectOption('parallax');
+  const parallaxExample = page.getByLabel('视差滚动动画示例');
+  await parallaxExample.locator('.overflow-auto').first().evaluate(node => { node.scrollTop = 80; node.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  await expect(parallaxExample.getByText('内容以不同速度移动')).toHaveAttribute('style', /translateY\(-/);
+  await demoSelector.selectOption('sticky');
+  const stickyExample = page.getByLabel('吸顶动画示例');
+  const stickyViewport = stickyExample.locator('.overflow-auto').first();
+  const stickyHeader = stickyExample.getByText('吸顶导航 · 滚动内容查看固定位置');
+  const stickyViewportBox = await stickyViewport.boundingBox();
+  await stickyViewport.evaluate(node => { node.scrollTop = 80; node.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  await expect.poll(async () => Math.abs((await stickyHeader.boundingBox()).y - stickyViewportBox.y)).toBeLessThan(2);
+  await demoSelector.selectOption('snap');
+  await expect(page.getByLabel('滚动吸附动画示例').locator('.snap-y')).toHaveCSS('scroll-snap-type', /y mandatory/);
+  await demoSelector.selectOption('horizontal');
+  const horizontalExample = page.getByLabel('横向滚动动画示例');
+  const horizontalViewport = horizontalExample.locator('.overflow-x-auto');
+  const horizontalMetrics = await horizontalViewport.evaluate(node => ({ scrollWidth: node.scrollWidth, clientWidth: node.clientWidth }));
+  expect(horizontalMetrics.scrollWidth).toBeGreaterThan(horizontalMetrics.clientWidth);
+  await horizontalViewport.evaluate(node => { node.scrollLeft = 180; node.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  expect(await horizontalViewport.evaluate(node => node.scrollLeft)).toBeGreaterThan(0);
   await page.getByLabel('示例文字').fill('品牌介绍\n预约工作坊');
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/SAAAAABJRU5ErkJggg==', 'base64');
   await page.getByLabel('选择网页图片').setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image });
@@ -358,5 +406,5 @@ try {
   expect(sent).toHaveLength(3);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLS/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'local image attachment and HTML embedding', 'sandboxed preview CSP and zero external requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
+  checks: ['explicit cloud consent', 'encrypted reusable reference save/load without reopening the source file', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLS/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'six scroll-animation examples including reveal, linked progress, parallax, sticky, snap, and horizontal scrolling', 'local image attachment and HTML embedding', 'sandboxed preview CSP and zero external requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
 } finally { releaseSecond?.(); await context.close(); }

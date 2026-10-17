@@ -6,7 +6,7 @@
 
 **2026-10-17 综合审查整改与 AI 办公工作台扩展：本地实现和前端验收完成，外部/部署验收仍开放。** 用户授权依据 [A01–A34 审查清单](COMPREHENSIVE_REVIEW_2026-10-10.md)，确认先修已有功能；OCR、复杂排版、工作流循环等仍暂缓，真实供应商/邮件/公开联系方式验收放在最后。工作台新增可视化 AI 网页设计、本机加密参考资料库和 DOCX/PPTX/XLS/XLSX/HTML 导出。逐项整改状态见 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md)。此前接入的 Multi-CPR selected-30 评估、文件范围筛选与检索相似度提示仍属本地公开样本验收，不代表真实业务校准。
 
-**2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1282 项通过**；TypeScript、ESLint、Vite 生产构建通过；官方 npm 全量审计为 **0 漏洞**。构建仍报告两条既有工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过 DOCX/PPTX/XLS/XLSX 导出、公式文本安全、网页布局/颜色/动画、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；桌面/手机截图已目视检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
+**2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1283 项通过**；TypeScript、ESLint、Vite 生产构建通过；官方 npm 全量审计为 **0 漏洞**。构建仍报告两条既有工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过参考文本加密保存/清空后载回、DOCX/PPTX/XLS/XLSX 导出、公式文本安全、网页布局/颜色、六类滚动动画示例与关键滚动行为、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；该流程使用模拟生成且没有模型网络请求，截图已检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
 
 **仍未验收/风险：** 旧云端来源不明的向量不会参与语义召回，须在目标数据库升级后重处理文档；迁移未应用到目标环境。CI `39019783332` 检查的镜像 SHA 为旧提交 `59bedce`：Trivy 报告 81 项 Debian 13.7 OS HIGH/CRITICAL（无 Fixed Version）与 4 项 Python advisory，而同一报告的 Python finding 版本和包清单不一致。本地分支有 `711a67e` 运行层依赖更新和 `0257e61` 镜像 JSON 报告/包路径/门禁修复；单测 8/8、Python 编译、Ruff lint/format、CI YAML 解析通过，仍待新 CI 验收。Git fetch/push 仍因 GitHub 443 超时；只读 API 确认远端开发分支为 `59bedce`、旧 `main` 未变。本机 Docker daemon 已停止，未构建镜像。未修复 Debian advisories 保留追踪。真实 Redis/WebSocket、上传文件/PVC/运行配置联合恢复、目标环境迁移/回滚、Windows 安装升级、真实 Safari/WebView2/移动真机业务流程、低配及生产容器验收均未做。A12 已重跑公开 selected-30 检索并加强回答提示词，但真实模型是否对 12 条候选逐题拒答仍未验证；仍需脱敏业务问答/证据标签和数据许可。Multi-CPR 样本及逐题结果留在 Git 忽略目录。A28 真实供应商/Resend 邮件与部署隐私核实仍待运行配置和测试收件地址。未访问线上服务或部署。
 
@@ -878,3 +878,10 @@
 - 实际代码改动：回答 system prompt 要求逐项核对关键事实、区分主题/向量相似与证据充分、对缺失或部分证据明确拒答、不用常识补全且逐项直接引用。新增相关来源缺少所问价格时的提示词合约测试。本地答案构造测试 **4/4 通过**，`npm run check`、`npm run lint` 和 `git diff --check` 通过。
 - 边界：浏览器验证记录业务 API、外部网络、模型网络请求均为 0，页面错误为 0；本次没有调用聊天模型。因此本结果是本地检索和拒答提示词合约验收，不代表真实 LLM 在 12 道候选上的回答/拒答表现。用户候选只说明 selected-30 证据不足，不代表全量语料或现实中无答案；Multi-CPR 未见单独数据许可，样本与逐题结果不提交、不公开。后续真实模型逐题拒答、引用正确率仍待用户约定最后进行的 A28 联调阶段；A12 企业业务校准还需业务题和证据标签。无部署或线上变更。
 - 收尾复核：重新运行答案提示词测试 **4/4 通过**、`npm run check`、`npm run lint` 与 `git diff --check` 通过。普通 `git fetch agents --prune` 因 GitHub 443 连接超时失败；本批仅本地普通提交，未推送、未访问线上服务，也未改旧 `main`。`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 原有未跟踪内容保持不纳入提交。
+
+### 2026-10-17：补齐参考资料复用浏览器验收并支持预览端口
+
+- 实际改动：AI 工作台浏览器验收脚本新增参考文本加密保存、清空输入、从本机资料库载回并作为生成输入的流程，同时检查资料密文不含原文；验收脚本新增 `DOCUMENT_TASK_BASE_URL`，预览端口可配置，避免默认端口被占用时中断。多个状态区域改用内容限定的定位器，避免新增参考资料提示与任务状态产生严格选择器冲突。
+- 本地验证：重新构建生产 Web，构建通过并保留两条既有工作流导入提示；`npm run verify:ai-workbench` 通过，使用合成账号与模拟模型，确认模型请求为 0、外网请求为 0，覆盖网页布局/颜色/六类滚动示例与行为（触发延迟、联动进度、视差、吸顶、吸附、横向滚动）、文字与图片、沙箱预览及 HTML 下载、DOCX/PPTX/XLS/XLSX 导出、参考资料复用和 390px 布局。前端全量 **134 文件 / 1283 项通过**，`npm run check`、`npm run lint` 和 `git diff --check` 通过；截图与验收 JSON 保存在忽略目录 `.tools/document-task-qa/`。
+- 途中修正：滚动触发示例原目标在初始视口已露出超过 `IntersectionObserver` 阈值，会在手动滚动前显示完成态；现将目标放至阈值以下，并在浏览器流程中确认滚动后才触发。
+- 未完成/边界：该模拟流程不代表真实 LLM 生成质量、供应商图片理解、Word/LibreOffice 分页或目标部署验收。远程 A08 CI 仍因 GitHub 443 fetch 超时不能触发；目标数据库迁移、联合恢复/回滚、真实 Redis/WebSocket/压力、低配与原生端验收，以及最后阶段的 A28 真实 provider/邮件/隐私核验仍开放。未读取 `.env`、未调用真实模型/邮件、未部署或访问线上服务；原有未跟踪文件继续保留。

@@ -47,7 +47,7 @@ function Demo({ effect }: { effect: EffectId }) {
       {effect === 'horizontal' ? <div className="flex h-full snap-x snap-mandatory items-center gap-3 overflow-x-auto px-4">{['01 · 概览', '02 · 方案', '03 · 成果', '04 · 联系'].map(item => <div key={item} className="flex h-32 w-48 shrink-0 snap-center items-end border border-line bg-muted p-3 text-sm">{item}</div>)}</div> :
         effect === 'snap' ? <div className="h-full snap-y snap-mandatory overflow-y-auto">{['滚动到这里吸附', '第二个内容区', '第三个内容区'].map((item, index) => <div key={item} className="flex h-full snap-start items-center justify-center border-b border-line px-4 text-sm" style={{ color: index === 1 ? '#187a72' : undefined }}>{item}</div>)}</div> :
         <div className="grid min-h-[460px] content-start gap-3 p-4">
-          <div className="flex h-20 items-center justify-center border border-line bg-muted text-sm">向下滚动体验：{effects.find(item => item.id === effect)?.label}</div>
+          <div className="flex h-36 items-center justify-center border border-line bg-muted text-sm">向下滚动体验：{effects.find(item => item.id === effect)?.label}</div>
           <div ref={revealTarget} className={`flex h-28 items-center justify-center border border-line bg-muted text-sm transition-all duration-700 ${effect === 'reveal' && !revealed ? 'translate-y-6 opacity-20' : ''}`} style={effect === 'parallax' ? { transform: `translateY(${-offset}px)` } : undefined}>{effect === 'parallax' ? '内容以不同速度移动' : '动画内容进入视口'}</div>
           <div className="flex h-28 items-center justify-center border border-line text-sm">继续滚动</div>
         </div>}
