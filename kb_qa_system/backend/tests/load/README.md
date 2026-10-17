@@ -60,17 +60,11 @@ curl http://localhost:8000/health
 压测脚本需要 2 个测试账号（通过前端注册或 `create_superuser` 脚本创建）：
 
 ```bash
-# 创建第一个测试账号（用于只读和问答场景）
-python -m scripts.create_superuser \
-  --username testuser \
-  --email testuser@example.com \
-  --password "Test1234"
-
-# 创建第二个测试账号（用于混合读写场景）
-python -m scripts.create_superuser \
-  --username testuser2 \
-  --email testuser2@example.com \
-  --password "Test1234"
+# 在隔离测试环境中创建专用的普通账号；不要复用管理员或生产用户。
+# 通过组织的密钥管理器将账号注入 Locust 进程环境：
+#   TEST_USERNAME / TEST_PASSWORD
+# 只有运行 MixedUser 时才需要第二个账号：
+#   TEST_USER2_USERNAME / TEST_USER2_PASSWORD
 ```
 
 > 💡 也可以通过前端注册审批流程创建普通用户账号。
@@ -134,10 +128,8 @@ locust -f locustfile.py \
 ### 3.3 指定环境变量
 
 ```bash
-# 压测 Railway 生产环境（注意 LLM 成本！）
-TARGET_HOST=https://your-backend.up.railway.app \
-TEST_USERNAME=admin \
-TEST_PASSWORD="YourPassword" \
+# 将 TARGET_HOST 和测试账号凭据由受控环境注入后，在隔离的预发布环境执行。
+# 不要把生产管理员、账号密码或密钥写进命令行、脚本或仓库。
 locust -f locustfile.py ReadOnlyUser --headless -u 20 -r 2 --run-time 60s
 ```
 
@@ -164,14 +156,14 @@ locust -f locustfile.py ReadOnlyUser --headless -u 20 -r 2 --run-time 60s
 - **端点**：`GET /documents`、`GET /documents/stats/overview`、`GET /chat/conversations`、`GET /auth/me`
 - **目的**：测量数据库查询和缓存性能
 - **特点**：需登录、有数据库查询、无 LLM 调用
-- **适用**：验证索引效果、缓存命中率、连接池配置
+- **适用**：验证索引效果和连接池配置；脚本不测量 FAQ 答案缓存命中率
 
 ### 场景 3：QAUser（问答 — RAG 链路）
 
 - **端点**：`POST /chat/ask`、`GET /chat/conversations`
 - **目的**：测量 RAG 端到端延迟（向量检索 → 重排序 → LLM 生成）
 - **特点**：需登录、有向量检索、有 LLM 调用、响应时间 5-30 秒
-- **适用**：验证 LLM 熔断器、FAQ 缓存、RAG 链路性能基线
+- **适用**：验证 LLM 熔断器和 RAG 链路性能基线；当前问答路径没有接入 FAQ 答案缓存
 - **⚠️ 注意**：每次提问消耗 LLM Token，控制压测时长避免成本超支
 
 ### 场景 4：MixedUser（混合读写）
@@ -188,12 +180,12 @@ locust -f locustfile.py ReadOnlyUser --headless -u 20 -r 2 --run-time 60s
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `TARGET_HOST` | `http://localhost:8000` | 目标后端地址 |
-| `TEST_USERNAME` | `testuser` | 只读/问答场景的测试账号 |
-| `TEST_PASSWORD` | `Test1234` | 测试账号密码 |
-| `TEST_USER2_USERNAME` | `testuser2` | 混合读写场景的测试账号 |
-| `TEST_USER2_PASSWORD` | `Test1234` | 第二个测试账号密码 |
+| `TEST_USERNAME` | 无 | 只读/问答场景的测试账号，必须在未跟踪环境中显式设置 |
+| `TEST_PASSWORD` | 无 | 测试账号密码，必须在未跟踪环境中显式设置 |
+| `TEST_USER2_USERNAME` | 无 | 混合读写场景的第二个测试账号，必须在未跟踪环境中显式设置 |
+| `TEST_USER2_PASSWORD` | 无 | 第二个测试账号密码，必须在未跟踪环境中显式设置 |
 
-> 💡 生产环境压测时，建议使用非管理员账号（避免管理员权限绕过限流影响测试结果）。
+> 只在明确授权的隔离或预发布环境进行压测。不要直接对生产环境运行混合读写或 LLM 场景；账号必须是专用普通用户，并通过外部密钥管理机制注入环境变量。
 
 ---
 

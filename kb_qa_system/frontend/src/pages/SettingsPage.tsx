@@ -276,8 +276,8 @@ export default function SettingsPage() {
             <div className="flex-1">
               <p className="text-sm font-medium text-ink">删除账号</p>
               <p className="mt-1 text-xs text-ink-secondary">
-                永久删除您的账号及所有数据（文档、对话记录等）。
-                此操作不可恢复，请谨慎操作。
+                删除服务端在线账号及关联记录；服务器文件清理可能异步完成。
+                既有备份、已发送邮件和本机数据不会由此删除。
               </p>
             </div>
             <Button

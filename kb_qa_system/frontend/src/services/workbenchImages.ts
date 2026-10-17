@@ -2,6 +2,7 @@ import type { WorkImage } from '@/types/workbench';
 
 export const MAX_WORK_IMAGE_BYTES = 1_500_000;
 export const MAX_CONVERSATION_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_VAULT_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_IMAGES_PER_MESSAGE = 3;
 
 export async function readWorkImages(files: FileList | File[]): Promise<WorkImage[]> {

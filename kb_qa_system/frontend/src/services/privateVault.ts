@@ -80,6 +80,7 @@ export class PrivateVault {
           || data.taskRuns !== undefined && !Array.isArray(data.taskRuns)
           || data.toolRuns !== undefined && !Array.isArray(data.toolRuns)
           || data.artifacts !== undefined && !Array.isArray(data.artifacts)
+          || data.referenceDocuments !== undefined && !Array.isArray(data.referenceDocuments)
           || data.personalItems !== undefined && !Array.isArray(data.personalItems)
           || data.personalDrafts !== undefined && !Array.isArray(data.personalDrafts)
           || data.reminderDrafts !== undefined && !Array.isArray(data.reminderDrafts)

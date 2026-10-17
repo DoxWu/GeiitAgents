@@ -14,10 +14,10 @@ Locust 压测脚本 — GeiIt企业知识库
 
 环境变量：
     TARGET_HOST           — 目标地址（默认 http://localhost:8000）
-    TEST_USERNAME         — 测试账号用户名（只读/问答场景）
-    TEST_PASSWORD         — 测试账号密码
-    TEST_USER2_USERNAME   — 第二个测试账号用户名（混合读写场景，可选）
-    TEST_USER2_PASSWORD   — 第二个测试账号密码
+    TEST_USERNAME         — 测试账号用户名（只读/问答场景，必须显式设置）
+    TEST_PASSWORD         — 测试账号密码（必须显式设置）
+    TEST_USER2_USERNAME   — 第二个测试账号用户名（混合读写场景，必须显式设置）
+    TEST_USER2_PASSWORD   — 第二个测试账号密码（必须显式设置）
 
 注意事项：
     - 登录限流 5次/分钟，因此登录放在 on_start 中（每个虚拟用户仅登录一次）
@@ -43,10 +43,10 @@ from locust import HttpUser, StopUser, task, between
 # ============================================
 
 TARGET_HOST: str = os.getenv("TARGET_HOST", "http://localhost:8000")
-TEST_USERNAME: str = os.getenv("TEST_USERNAME", "testuser")
-TEST_PASSWORD: str = os.getenv("TEST_PASSWORD", "Test1234")
-TEST_USER2_USERNAME: str = os.getenv("TEST_USER2_USERNAME", "testuser2")
-TEST_USER2_PASSWORD: str = os.getenv("TEST_USER2_PASSWORD", "Test1234")
+TEST_USERNAME: str = os.getenv("TEST_USERNAME", "").strip()
+TEST_PASSWORD: str = os.getenv("TEST_PASSWORD", "")
+TEST_USER2_USERNAME: str = os.getenv("TEST_USER2_USERNAME", "").strip()
+TEST_USER2_PASSWORD: str = os.getenv("TEST_USER2_PASSWORD", "")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("LOCUST_REQUEST_TIMEOUT_SECONDS", "20"))
 ALLOW_MUTATIONS = os.getenv("ALLOW_MUTATIONS", "false").lower() == "true"
 ENABLE_LLM_TRAFFIC = os.getenv("ENABLE_LLM_TRAFFIC", "false").lower() == "true"
@@ -62,7 +62,9 @@ logger = logging.getLogger(__name__)
 # 辅助函数
 # ============================================
 
-def login_and_get_token(client, username: str, password: str) -> Optional[str]:
+def login_and_get_token(
+    client, username: str, password: str, required_env: str = "TEST_USERNAME/TEST_PASSWORD"
+) -> Optional[str]:
     """
     登录并获取 Access Token
 
@@ -78,6 +80,9 @@ def login_and_get_token(client, username: str, password: str) -> Optional[str]:
     返回：
         Optional[str] — Access Token 字符串，登录失败返回 None
     """
+    if not username or not password:
+        logger.error("压测账号未配置；请通过受控环境设置 %s。", required_env)
+        return None
     with client.post(
         f"{API_PREFIX}/auth/login",
         json={"username": username, "password": password},
@@ -275,7 +280,7 @@ class QAUser(HttpUser):
     使用场景：
         测量 RAG 端到端延迟（检索 + 生成）
         验证 LLM 熔断器在高负载下的行为
-        测试 FAQ 缓存命中率对延迟的影响
+        对比重复问题请求的端到端延迟；当前系统没有接入 FAQ 答案缓存，不能据此报告缓存命中率
 
     注意事项：
         - 提问限流 20次/分钟，wait_time 设为 3-5 秒避免限流
@@ -418,7 +423,8 @@ class MixedUser(HttpUser):
         configure_request_timeout(self.client)
         self._created_document_ids: list[int] = []
         self.token: Optional[str] = login_and_get_token(
-            self.client, TEST_USER2_USERNAME, TEST_USER2_PASSWORD
+            self.client, TEST_USER2_USERNAME, TEST_USER2_PASSWORD,
+            "TEST_USER2_USERNAME/TEST_USER2_PASSWORD",
         )
         if self.token:
             self.auth_headers = {"Authorization": f"Bearer {self.token}"}

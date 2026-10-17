@@ -7,6 +7,7 @@ import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import type { TaskRun } from '@/types/workbench';
 import { finishLabel } from '@/services/modelStream';
 import { GenerationPreview } from './GenerationPreview';
+import { ReferenceLibrary } from './ReferenceLibrary';
 
 const statusText: Record<TaskRun['status'], string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 
@@ -99,6 +100,7 @@ export function DocumentTasks() {
               {store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>
             <label className="work-label sm:col-span-2">生成要求<textarea aria-label="生成要求" className="work-input min-h-28 resize-y" required maxLength={10000} value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="例如：整理为项目周报，包含进展、风险、下周计划和待确认事项。" /></label>
             <label className="work-label sm:col-span-2">参考材料（可选）<textarea aria-label="参考材料（可选）" className="work-input min-h-32 resize-y" maxLength={100000} value={sourceContent} onChange={e => { setSourceContent(e.target.value); if (!e.target.value) setSourceName(''); }} placeholder="粘贴文本，或选择 Markdown/TXT 文件" /></label>
+            <div className="sm:col-span-2"><ReferenceLibrary valueName={sourceName || '粘贴材料.txt'} valueContent={sourceContent} disabled={submitting} onLoad={(name, content) => { setSourceName(name); setSourceContent(content); setError(''); }} /></div>
           </fieldset>
           <div className="flex flex-wrap items-center gap-2"><button type="button" className="work-command" disabled={submitting} onClick={() => input.current?.click()}><FileUp size={16} />选择参考文件</button>
             {sourceName && <span className="max-w-72 truncate text-xs text-ink-secondary" title={sourceName}>{sourceName}</span>}

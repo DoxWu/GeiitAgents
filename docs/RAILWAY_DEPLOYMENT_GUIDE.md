@@ -740,11 +740,6 @@ RATE_LIMIT_UPLOAD_PER_HOUR=20
 LOGIN_FAILURE_LOCK_THRESHOLD=5
 LOGIN_FAILURE_LOCK_MINUTES=15
 
-# ===== 缓存 =====
-ENABLE_FAQ_CACHE=True
-FAQ_CACHE_SIMILARITY_THRESHOLD=0.95
-FAQ_CACHE_TTL=604800
-
 # ===== RAG 优化 =====
 ENABLE_INTENT_DETECTION=True
 ENABLE_CONFLICT_DETECTION=True
@@ -871,10 +866,6 @@ CONVERSATION_HISTORY_MAX_TOKENS=2000
 ENABLE_HISTORY_SUMMARY=True
 SUMMARY_EVERY_N_TURNS=5
 
-# ===== 缓存 =====
-ENABLE_FAQ_CACHE=True
-FAQ_CACHE_SIMILARITY_THRESHOLD=0.95
-FAQ_CACHE_TTL=604800
 ```
 
 ### 前端服务
@@ -959,17 +950,9 @@ psql "${DATABASE_URL}" < backup_20260710.sql
 
 ### Redis 备份
 
-Redis 中的数据（Token 黑名单、限流计数、FAQ 缓存）均为临时数据，可通过应用逻辑重建。建议在 Redis 服务设置中启用 AOF 持久化，减少重启后的数据丢失。
+Redis 可保存认证吊销、限流和队列等运行时状态；这不是 PostgreSQL 或上传文件的备份。FAQ 答案缓存没有接入问答路径。请按实际 Redis/队列部署策略配置持久化，不要把 AOF 当作数据库备份。
 
-> ⚠️ **10D 审查提醒（D7-01）**：项目当前无自动备份脚本。建议创建 `scripts/backup_db.sh` 定时备份脚本，配合 Railway Cron Service 或外部 cron 定时执行 `pg_dump`，确保数据安全。备份脚本示例：
-> ```bash
-> #!/bin/bash
-> # 每日备份，保留 30 天
-> BACKUP_DIR="/app/backups"
-> mkdir -p "$BACKUP_DIR"
-> pg_dump "${DATABASE_URL}" | gzip > "$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S).sql.gz"
-> find "$BACKUP_DIR" -name "backup_*.sql.gz" -mtime +30 -delete
-> ```
+项目现有加密备份与管理员恢复接口、快照验证和恢复预检查，见 [备份与恢复说明](BACKUP_RECOVERY_API.md)。部署者仍需在目标环境验证运行配置、上传文件和数据库的联合恢复，并记录可接受的 RPO/RTO；本页旧版 Railway 指南不代表已完成这些演练。
 
 ---
 

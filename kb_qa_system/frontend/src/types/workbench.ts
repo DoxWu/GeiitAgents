@@ -84,6 +84,7 @@ export interface TaskRun {
   instruction: string;
   sourceName?: string;
   sourceContent?: string;
+  referenceImages?: WorkImage[];
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;
@@ -99,7 +100,7 @@ export interface ToolRun {
   finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   taskId: string;
-  tool: 'model.complete' | 'workflow.condition' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
+  tool: 'model.complete' | 'workflow.condition' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'document.export-pptx' | 'document.export-xlsx' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
   callId?: string;
   arguments?: string;
   result?: string;
@@ -148,6 +149,15 @@ export interface VaultData {
   taskRuns?: TaskRun[];
   toolRuns?: ToolRun[];
   artifacts?: WorkArtifact[];
+  referenceDocuments?: StoredReferenceDocument[];
+}
+
+export interface StoredReferenceDocument {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface LocalDocument {

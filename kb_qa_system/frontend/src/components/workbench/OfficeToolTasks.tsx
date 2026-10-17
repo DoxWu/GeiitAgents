@@ -7,6 +7,7 @@ import type { OfficeToolInput } from '@/officeTasks/toolRunner';
 import type { TaskStatus, WorkArtifact } from '@/types/workbench';
 import { ToolArtifact } from './ToolArtifact';
 import { artifactSeries } from '@/officeTasks/artifactSeries';
+import { ReferenceLibrary } from './ReferenceLibrary';
 
 const statusText: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 const toolText: Record<string, string> = { 'model.tools': '请求模型', 'office.inspect_csv': '读取 CSV', 'office.render_chart': '生成图表', 'office.create_document': '创建文档', 'office.search_wikipedia': '搜索维基百科', 'document.export-docx': '导出 Word' };
@@ -108,6 +109,7 @@ export function OfficeToolTasks() {
           <label className="work-label">办公目标<textarea className="work-input min-h-24" required maxLength={10000} placeholder="例如：检查销售 CSV，绘制趋势图，并生成带结论与待确认事项的汇报文档。" value={input.instruction} onChange={e => change({ instruction: e.target.value })} /></label>
           <label className="work-label">任务模型<select className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setAllowCloud(false); }}><option value="" disabled>请选择模型</option>{store.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端 · {store.accountModel.model}</option>}</select></label>
           <label className="work-label">参考材料（可选）<textarea className="work-input min-h-24" maxLength={50000} value={input.sourceContent || ''} onChange={e => change({ sourceContent: e.target.value, sourceName: undefined })} /></label>
+          <ReferenceLibrary valueName={input.sourceName || '粘贴材料.txt'} valueContent={input.sourceContent || ''} maxCharacters={50000} disabled={busy} onLoad={(name, content) => change({ sourceName: name, sourceContent: content })} />
           <label className="work-label">导入参考文件（MD/TXT 200 KB，DOCX 2 MB，PPTX 5 MB，PDF 10 MB）<input type="file" accept=".md,.txt,.docx,.pptx,.pdf" onChange={e => { void open(e.target.files?.[0], 'reference'); e.target.value = ''; }} /></label>{importNotice && <p role="status" className="text-xs text-ink-secondary">{importNotice}</p>}
           <label className="work-label">任务 CSV（可选）<textarea className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv || ''} onChange={e => change({ csv: e.target.value })} /></label>
           <label className="work-label">导入任务 CSV / XLSX（CSV 400 KB，XLSX 2 MB）<input type="file" accept=".csv,.xlsx" onChange={e => { void open(e.target.files?.[0], 'csv'); e.target.value = ''; }} /></label>{importedSheet && <p role="status" className="text-xs text-ink-secondary">工作表：{importedSheet}</p>}

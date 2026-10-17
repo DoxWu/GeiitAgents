@@ -222,3 +222,41 @@ export async function exportChartXlsx(input: ChartInput): Promise<Uint8Array> {
   zip.file('xl/worksheets/sheet1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`);
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 }
+
+export const XLSX_DOCUMENT_CONVERTER_VERSION = 'markdown-xlsx/1';
+
+export function markdownTableRows(content: string): string[][] {
+  if (!content.trim() || content.length > 1_000_000 || content.includes('\0')) fail('工作簿内容为空或超过限制。');
+  const lines = content.split(/\r?\n/);
+  let start = -1, end = -1;
+  for (let index = 0; index < lines.length; index++) {
+    if (/^\s*\|.*\|\s*$/.test(lines[index])) {
+      if (start < 0) start = index;
+      end = index;
+    } else if (start >= 0) break;
+  }
+  if (start < 0 || end <= start) fail('Markdown 中没有可导出的表格；请让模型至少生成一张含表头和数据行的表格。');
+  const rows = lines.slice(start, end + 1).flatMap(line => {
+    const cells = line.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim().replace(/\\\|/g, '|').replace(/<br\s*\/?\s*>/gi, '\n'));
+    if (cells.every(cell => /^:?-{3,}:?$/.test(cell))) return [];
+    return [cells];
+  });
+  if (rows.length < 2 || rows.length > MAX_ROWS || !rows[0].length || rows[0].length > MAX_COLUMNS || rows.some(row => row.length !== rows[0].length)) fail('导出表格需要至少一行数据，最多 50 行、12 列，且各行列数一致。');
+  if (rows.some(row => row.some(cell => cell.length > MAX_CELL_CHARS))) fail('工作簿单元格最多 2000 个字符。');
+  return rows;
+}
+
+export async function exportMarkdownTableXlsx(content: string, title: string): Promise<Uint8Array> {
+  const rows = markdownTableRows(content);
+  const sheetRows = rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => {
+    const reference = `${columnName(columnIndex)}${rowIndex + 1}`;
+    return `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${xmlText(value)}</t></is></c>`;
+  }).join('')}</row>`).join('');
+  const zipModule = await import('jszip'), zip = new zipModule.default();
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+  zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+  zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xmlText(sheetName(title))}" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+  zip.file('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  zip.file('xl/worksheets/sheet1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`);
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+}

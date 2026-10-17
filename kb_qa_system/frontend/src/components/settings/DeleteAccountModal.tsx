@@ -82,7 +82,7 @@ export function DeleteAccountModal({
 
     try {
       await deleteAccount(password);
-      success("账号已删除", "您的账号及所有数据已永久删除。");
+      success("账号已删除", "在线关联记录已移除；服务器文件清理可能异步完成，既有备份、已发送邮件和本机数据不会由此删除。");
       resetForm();
       onClose();
       // 跳转登录页
@@ -128,8 +128,8 @@ export function DeleteAccountModal({
         <div className="text-sm text-ink-secondary">
           <p className="font-medium text-ink">此操作不可恢复</p>
           <p className="mt-1">
-            删除后，您的账号、文档、对话记录将被永久删除，且无法恢复。
-            请确认您已备份重要数据。
+            删除后，在线账号及关联记录将被移除，服务器文件清理可能异步完成。
+            既有备份、已发送邮件和本机数据不会由此删除；请先导出或备份重要数据。
           </p>
         </div>
       </div>

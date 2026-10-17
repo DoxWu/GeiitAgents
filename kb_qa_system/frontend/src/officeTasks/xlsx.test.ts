@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { expect, it } from 'vitest';
-import { exportChartXlsx, parseFirstXlsxSheet } from './xlsx';
+import { exportChartXlsx, exportMarkdownTableXlsx, markdownTableRows, parseFirstXlsxSheet } from './xlsx';
 
 const workbook = (sheets: string, sheetXml: string, sharedStrings?: string, relationshipTarget = 'worksheets/sheet1.xml') => {
   const zip = new JSZip();
@@ -67,4 +67,16 @@ it('exports the selected scatter X column as a numeric cell', async () => {
   const zip = await JSZip.loadAsync(bytes), sheetXml = await zip.file('xl/worksheets/sheet1.xml')!.async('text');
   expect(sheetXml).toContain('<c r="A2"><v>1.5</v></c>');
   expect(sheetXml).toContain('<c r="B2"><v>2</v></c>');
+});
+
+it('exports the first Markdown table as literal workbook cells and rejects missing or oversized tables', async () => {
+  const content = '# 报告\n\n| 指标 | 数值 |\n| --- | ---: |\n| 增长 | =1+1 |\n| 备注 | 100% |';
+  expect(markdownTableRows(content)).toEqual([['指标', '数值'], ['增长', '=1+1'], ['备注', '100%']]);
+  const bytes = await exportMarkdownTableXlsx(content, '经营/报告');
+  await expect(parseFirstXlsxSheet(bytes)).resolves.toEqual({ csv: '指标,数值\n增长,=1+1\n备注,100%', sheetName: '经营 报告' });
+  const zip = await JSZip.loadAsync(bytes), sheetXml = await zip.file('xl/worksheets/sheet1.xml')!.async('text');
+  expect(sheetXml).toContain('<c r="B2" t="inlineStr"><is><t xml:space="preserve">=1+1</t></is></c>');
+  expect(sheetXml).not.toMatch(/<f(?:\s|>)/);
+  await expect(exportMarkdownTableXlsx('# 没有表格', '空表')).rejects.toThrow('没有可导出的表格');
+  expect(() => markdownTableRows(`| A | B |\n| --- | --- |\n${Array.from({ length: 51 }, () => '| x | y |').join('\n')}`)).toThrow('50 行');
 });

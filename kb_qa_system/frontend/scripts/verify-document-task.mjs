@@ -12,7 +12,7 @@ await mkdir(output, { recursive: true });
 const context = await chromium.launchPersistentContext(path.join(output, 'browser-profile-' + Date.now()), { headless: true, acceptDownloads: true, viewport: { width: 1280, height: 900 } });
 const page = await context.newPage();
 for (const old of context.pages()) if (old !== page) await old.close();
-const requests = [], sent = [], errors = [];
+const requests = [], sent = [], errors = [], externalAttempts = [];
 let releaseSecond;
 async function live(messages) {
   return new Promise((resolve, reject) => {
@@ -33,6 +33,14 @@ async function live(messages) {
 context.on('request', request => requests.push(request.url()));
 page.on('pageerror', error => errors.push(error.message));
 await context.routeWebSocket('**/ws/notifications', () => {});
+await context.route('**/*', route => {
+  const url = new URL(route.request().url());
+  if (/^https?:$/.test(url.protocol) && url.origin !== 'http://127.0.0.1:1423') {
+    externalAttempts.push(`${route.request().method()} ${url.origin}`);
+    return route.abort();
+  }
+  return route.continue();
+});
 await context.route('**/api/v1/**', async route => {
   const endpoint = new URL(route.request().url()).pathname;
   if (endpoint.endsWith('/private-models/account')) return route.fulfill({ json: { available: true, model: 'fixture-document-model' } });
@@ -40,8 +48,13 @@ await context.route('**/api/v1/**', async route => {
     const body = route.request().postDataJSON();
     sent.push(body);
     const completions = requests.filter(url => url.includes('/private-models/account/complete')).length;
-    if (completions > 1) await new Promise(resolve => { releaseSecond = resolve; });
-    const result = liveProvider && completions === 1 ? await live(body.messages) : { model: 'fixture-document-model', content: '```markdown\n# 项目周报\n\n## 进展\n\n登录模块已完成。\n\n## 风险\n\n- 安全评审待完成\n```' };
+    const serialized = JSON.stringify(body.messages);
+    const webDesign = serialized.includes('web-design-spec.json');
+    const cancellation = serialized.includes('不会被保存的测试文档');
+    if (cancellation && completions > 1) await new Promise(resolve => { releaseSecond = resolve; });
+    const result = liveProvider && completions === 1 ? await live(body.messages) : webDesign
+      ? { model: 'fixture-document-model', content: '```html\n<!doctype html><html><head><title>合成网页</title></head><body><main><h1>合成网页</h1><img src="asset://image-1" alt="sample.png"></main><script>fetch("https://external.invalid/track").catch(() => {})</script></body></html>\n```' }
+      : { model: 'fixture-document-model', content: '```markdown\n# 项目周报\n\n## 进展\n\n登录模块已完成。\n\n## 风险\n\n- 安全评审待完成\n```' };
     const wire = 'data: ' + JSON.stringify({ type: 'chunk', content: result.content }) + '\n\n'
       + 'data: ' + JSON.stringify({ type: 'done', ...result, finish_reason: 'stop' }) + '\n\n';
     try { return await route.fulfill({ status: 200, contentType: 'text/event-stream', body: wire }); }
@@ -75,7 +88,7 @@ try {
   expect(completionRequests).toHaveLength(1);
   const firstPayload = JSON.parse(sent[0].messages[1].content);
   expect(firstPayload).toEqual({ title: '项目周报', instruction: '整理为包含进展、风险和下周计划的周报。',
-    source: { file: '粘贴材料.txt', content: '登录模块已完成，等待安全评审。' } });
+    source: { file: '粘贴材料.txt', content: '登录模块已完成，等待安全评审。' }, images: [] });
   expect(JSON.stringify(sent[0])).not.toMatch(/synthetic-task-session|task-test-1234|api.?key/i);
   const encrypted = await readVaultCiphertext(page);
   expect(encrypted).not.toContain('登录模块'); expect(encrypted).not.toContain('项目周报');
@@ -87,7 +100,7 @@ try {
   // Office conversion is local: generation remains at exactly one API request.
   expect(requests.some(url => /docx(?:\.worker|Client)/.test(url))).toBe(false);
   await page.getByRole('button', { name: '编辑新版本' }).click();
-  const revision = '# 项目周报\n\n## 进展\n\n**登录模块**已完成，安全评审已通过。\n\n## 下周计划\n\n3. 测试验收\n4. 发布确认\n\n- [x] 代码评审\n- [ ] 验收测试\n\n| 事项 | 负责人 | 状态 |\n| --- | --- | --- |\n| 登录模块 | 项目组 | 完成 |\n| 发布 | 测试组 | 待确认 |\n\n```text\n复核数据 <safe>\n```\n\n![示意图](https://example.test/never-fetch.png)\n\n[说明](https://example.test/never-fetch)\n';
+  const revision = '# 项目周报\n\n## 进展\n\n**登录模块**已完成，安全评审已通过。\n\n## 下周计划\n\n3. 测试验收\n4. 发布确认\n\n- [x] 代码评审\n- [ ] 验收测试\n\n| 事项 | 负责人 | 状态 |\n| --- | --- | --- |\n| 登录模块 | 项目组 | 完成 |\n| 发布 | =SUM(1,2) | 待确认 |\n\n```text\n复核数据 <safe>\n```\n\n![示意图](https://example.test/never-fetch.png)\n\n[说明](https://example.test/never-fetch)\n';
   await page.getByLabel('编辑 Markdown', { exact: true }).fill(revision);
   await expect(page.getByRole('button', { name: '导出 DOCX', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '保存新版本', exact: true }).click();
@@ -124,6 +137,23 @@ try {
   expect(stylesXml).toContain('w:ascii="Arial"'); expect(stylesXml).toContain('w:sz w:val="28"');
   expect(stylesXml).toContain('w:line="360"');
   await expect(page.getByRole('status')).toContainText('未下载或嵌入图片');
+  const pptxEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出 PPTX', exact: true }).click();
+  const pptxDownload = await pptxEvent;
+  expect(pptxDownload.suggestedFilename()).toMatch(/-v2\.pptx$/);
+  const pptxZip = await JSZip.loadAsync(await readFile(await pptxDownload.path()));
+  const slideFiles = Object.keys(pptxZip.files).filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name));
+  const presentationText = (await Promise.all(slideFiles.map(async name =>
+    (await pptxZip.file(name).async('string')).replace(/<[^>]+>/g, ' '),
+  ))).join(' ');
+  expect(presentationText).toContain('项目周报'); expect(presentationText).toContain('安全评审已通过');
+  const xlsxEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出 XLSX', exact: true }).click();
+  const xlsxDownload = await xlsxEvent;
+  expect(xlsxDownload.suggestedFilename()).toMatch(/-v2\.xlsx$/);
+  const xlsxZip = await JSZip.loadAsync(await readFile(await xlsxDownload.path()));
+  const sheet = await xlsxZip.file('xl/worksheets/sheet1.xml').async('string');
+  expect(sheet).toContain('=SUM(1,2)'); expect(sheet).toContain('t="inlineStr"'); expect(sheet).not.toMatch(/<f(?:\s|>)/);
   expect(requests.some(url => url.includes('example.test/never-fetch'))).toBe(false);
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(1);
   const newEncrypted = await readVaultCiphertext(page);
@@ -175,7 +205,7 @@ try {
   await expect(page.getByRole('button', { name: '下载 Markdown' })).toBeVisible();
   await expect(page.getByLabel('成果版本').locator('option')).toHaveCount(3);
   await expect(page.getByLabel('成果版本').locator('option:checked')).toHaveText('版本 3 · 恢复自版本 1');
-  await page.getByText('执行记录 · 5', { exact: true }).click();
+  await page.getByText('执行记录 · 7', { exact: true }).click();
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.export-docx · 已完成 · 源版本 2');
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('document.restore · 已完成 · 源版本 1');
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('基于版本 2 · 生成版本 3');
@@ -183,7 +213,8 @@ try {
   await expect(page.getByRole('button', { name: '恢复为新版本', exact: true })).toBeDisabled();
   await page.getByLabel('成果版本').selectOption({ label: '版本 2 · 手动编辑' });
   await expect(page.getByRole('article', { name: '文档成果' })).toContainText('安全评审已通过');
-  expect(requests.some(url => /\/assets\/(?:ChartTasks|chart)-/.test(url))).toBe(false);
+  // XLSX conversion shares CSV utilities with chart.ts; the chart UI stays lazy.
+  expect(requests.some(url => /\/assets\/ChartTasks-/.test(url))).toBe(false);
   await page.getByRole('tab', { name: '图表工具' }).click();
   const beforeCharts = sent.length;
   const chartApiRequests = requests.filter(url => url.includes('/api/v1/')).length;
@@ -247,6 +278,57 @@ try {
   await page.getByRole('button', { name: '删除图表任务' }).click();
   await expect(page.getByRole('region', { name: '图表任务详情' })).toContainText('折线按输入行顺序');
   expect(sent.length).toBe(beforeCharts);
+  await page.getByRole('tab', { name: '网页设计' }).click();
+  await expect(page.getByRole('heading', { name: 'AI 网页设计' })).toBeVisible();
+  await page.getByLabel('网页名称').fill('工作室首页');
+  await page.getByLabel('网页需求').fill('为手作工作室设计首页，介绍服务并展示预约入口。');
+  await page.getByRole('button', { name: /左右分栏/ }).click();
+  await expect(page.locator('[data-layout]')).toHaveAttribute('data-layout', 'split');
+  const primaryColor = page.getByLabel('主色');
+  await primaryColor.evaluate(element => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(element, '#123456');
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(primaryColor).toHaveValue('#123456');
+  await page.getByLabel('视差滚动').check();
+  await page.getByLabel('动画示例', { exact: true }).selectOption('horizontal');
+  await expect(page.getByLabel('横向滚动动画示例')).toBeVisible();
+  await page.getByLabel('示例文字').fill('品牌介绍\n预约工作坊');
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/SAAAAABJRU5ErkJggg==', 'base64');
+  await page.getByLabel('选择网页图片').setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image });
+  await expect(page.getByRole('region', { name: '网页图片素材' }).getByRole('img', { name: 'sample.png' })).toBeVisible();
+  await page.getByLabel('网页生成模型').selectOption({ label: '账号云端模型 · fixture-document-model' });
+  const generateWeb = page.getByRole('button', { name: '生成网页代码' });
+  await expect(generateWeb).toBeDisabled();
+  await page.getByLabel(/允许本次将需求/).check();
+  await expect(generateWeb).toBeEnabled();
+  const webRequestsBefore = sent.length;
+  await generateWeb.click();
+  const webPreview = page.frameLocator('iframe[title="生成的网页预览"]');
+  await expect(webPreview.getByRole('heading', { name: '合成网页' })).toBeVisible();
+  await expect(webPreview.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  const webPayload = sent.slice(webRequestsBefore).find(item => JSON.stringify(item.messages).includes('web-design-spec.json'));
+  expect(webPayload).toBeTruthy();
+  const webMessage = webPayload.messages[1].content;
+  expect(Array.isArray(webMessage)).toBe(true);
+  const webInput = JSON.parse(webMessage[0].text);
+  const design = JSON.parse(webInput.source.content);
+  expect(design.layout).toBe('split'); expect(design.colors.primary).toBe('#123456');
+  expect(design.effects).toContain('parallax'); expect(webMessage.some(item => item.type === 'image_url')).toBe(true);
+  const htmlEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: '下载 HTML' }).click();
+  const htmlDownload = await htmlEvent;
+  const html = await readFile(await htmlDownload.path(), 'utf8');
+  expect(html).toContain('data:image/png;base64,'); expect(html).toContain("connect-src 'none'");
+  await page.screenshot({ path: path.join(output, 'web-designer-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(output, 'web-designer-mobile.png'), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  expect(externalAttempts).toEqual([]);
+  expect(sent).toHaveLength(webRequestsBefore + 1);
   await page.getByRole('tab', { name: '文档生成' }).click();
   await page.getByLabel('文档标题', { exact: true }).fill('取消测试');
   await page.getByLabel('生成要求', { exact: true }).fill('生成一份不会被保存的测试文档。');
@@ -257,9 +339,9 @@ try {
   releaseSecond?.();
   await expect(page.getByRole('region', { name: '任务详情' })).toContainText('已取消', { timeout: 10000 });
   expect(await page.getByRole('button', { name: '下载 Markdown' }).count()).toBe(0);
-  expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(2);
-  expect(sent).toHaveLength(2);
+  expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(3);
+  expect(sent).toHaveLength(3);
   expect(errors).toEqual([]);
   await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'lazy DOCX worker', 'custom paper/font/size/spacing/margins in downloaded OOXML', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'no external images or model calls during local tools', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
+    checks: ['explicit cloud consent', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'local image attachment and HTML embedding', 'sandboxed preview CSP and zero external requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
 } finally { releaseSecond?.(); await context.close(); }

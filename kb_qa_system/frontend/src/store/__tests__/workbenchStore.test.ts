@@ -109,6 +109,32 @@ it('keeps image attachments encrypted at rest and sends OpenAI-compatible parts 
   expect(store.getState().conversations.find(item => item.id === id)?.messages[0].images).toEqual([image]);
 });
 
+it('keeps reusable parsed references in the encrypted vault and validates their backup shape', async () => {
+  const marker = 'private-reference-material-c5c8f0';
+  const id = await store.getState().saveReferenceDocument('policy.md', `# Policy\n\n${marker}`);
+  expect(store.getState().referenceDocuments[0]).toMatchObject({ id, name: 'policy.md', content: `# Policy\n\n${marker}` });
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(marker);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().referenceDocuments[0]).toMatchObject({ id, name: 'policy.md', content: `# Policy\n\n${marker}` });
+  await expect(validateVaultBackup({ profiles: [{ ...profile, apiKey: 'fixture-key' }], conversations: [], referenceDocuments: store.getState().referenceDocuments })).resolves.toMatchObject({ referenceDocuments: [{ id }] });
+  await store.getState().removeReferenceDocument(id);
+  expect(store.getState().referenceDocuments).toEqual([]);
+});
+
+it('sends design images with the document request and restores the image from encrypted task history', async () => {
+  const image = { name: 'hero-reference.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+  vi.mocked(completeModel).mockResolvedValue('```html\n<!doctype html><html><body>page</body></html>\n```');
+  const id = await store.getState().startDocumentTask(profile.id, { title: '网页设计：品牌', instruction: '做一个首页', sourceName: 'web-design-spec.json', sourceContent: '{"layout":"split"}', referenceImages: [image] }, false);
+  const task = store.getState().taskRuns.find(item => item.id === id)!;
+  expect(task.referenceImages).toEqual([image]);
+  expect(vi.mocked(completeModel).mock.calls.at(-1)?.[2][1].content).toEqual([
+    { type: 'text', text: expect.stringContaining('hero-reference.png') }, { type: 'image_url', image_url: { url: image.dataUrl } },
+  ]);
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain(image.dataUrl);
+  await store.getState().lock(); await store.getState().unlock(password);
+  expect(store.getState().taskRuns.find(item => item.id === id)?.referenceImages).toEqual([image]);
+});
+
 it('requires a fresh opt-in before a cloud model receives any image history', async () => {
   const image = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
   await store.getState().saveProfile({ ...profile, id: 'relay', name: 'relay', mode: 'relay', baseUrl: 'https://models.example/v1' }, 'fixture-key');

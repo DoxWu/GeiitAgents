@@ -56,18 +56,23 @@
 
 ### 1. 启用 Prometheus 指标采集
 
-在 `backend/.env` 中设置：
+在后端私有运行环境中设置指标端点及认证：
 
 ```bash
 ENABLE_PROMETHEUS=true
+PROMETHEUS_AUTH_ENABLED=true
+PROMETHEUS_AUTH_USER=prometheus
+PROMETHEUS_AUTH_PASSWORD=<强随机密码>
 ```
+
+生产环境必须启用认证。将 [`.env.example`](.env.example) 复制为 `monitoring/.env`，设置强密码，并将 `PROMETHEUS_AUTH_USER` / `PROMETHEUS_AUTH_PASSWORD` 与后端运行环境保持一致。不要把认证信息放进前端公开配置或开放公网 `/metrics`。
 
 ### 2. 启动监控栈
 
 监控栈需与主服务一起启动（共享 Docker 网络）：
 
 ```bash
-# 在 kb_qa_system 目录下执行。monitoring/.env 仅存监控凭据，不要提交。
+# 在 kb_qa_system 目录下执行。先按 .env.example 填好 monitoring/.env；不要提交该文件。
 docker compose --env-file monitoring/.env -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
 ```
 
@@ -92,8 +97,8 @@ Grafana 启动后会自动加载 "RAG 监控" 文件夹下的仪表盘，并自�
 ### 4. 验证指标采集
 
 ```bash
-# 直接访问应用 /metrics 端点
-curl http://localhost:8000/metrics
+# 使用与后端相同的指标凭据访问应用 /metrics 端点
+curl -u "$PROMETHEUS_AUTH_USER:$PROMETHEUS_AUTH_PASSWORD" http://localhost:8000/metrics
 
 # 在 Prometheus 中检查 target 状态
 # 访问 http://localhost:9090/targets，kb_qa_api 应显示 UP
@@ -363,8 +368,8 @@ monitoring/
 
 ### Q: 如何在生产环境只监控关键指标？
 
-- 在 Railway 上设置 `ENABLE_PROMETHEUS=true` 即可启用
-- 认证启用时，Prometheus 抓取任务也必须配置相同用户名和密码；按上面的配置同时设置 `backend/.env` 与 `monitoring/.env`
+- 后端私有运行配置必须同时设置 `ENABLE_PROMETHEUS=true`、`PROMETHEUS_AUTH_ENABLED=true`、认证用户名和非空密码
+- Prometheus 抓取任务必须配置相同用户名和密码，并能通过受信任的私有网络访问后端；云托管环境需要单独配置可达的抓取目标，不能只设置开关
 - 可在 `prometheus.yml` 中调整 `scrape_interval` 降低采集频率
 
 ### Q: Loki/Promtail 日志查询为空？

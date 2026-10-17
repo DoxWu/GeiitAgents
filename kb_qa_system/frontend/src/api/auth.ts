@@ -86,7 +86,7 @@ export async function getCurrentUser(): Promise<UserResponse> {
  * 删除当前用户账号（GDPR/PIPL 合规）
  *
  * 调用 DELETE /auth/account，需密码确认。
- * 删除成功后账号及所有数据将被永久删除，Token 立即失效。
+ * 删除成功后在线账号及关联记录被移除，服务器文件由持久队列异步清理；既有备份、已发送邮件和本机数据不由此删除。
  *
  * @param password - 当前账号密码
  * @param refreshToken - Refresh Token（可选，提供后一并吊销）
