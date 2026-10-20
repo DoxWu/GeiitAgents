@@ -5,17 +5,27 @@ import json
 import logging
 import secrets
 import time
+from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+import anyio
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from app.api.deps import get_current_active_user, oauth2_scheme
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.redis import redis_client, RedisManager
+from app.core.rate_limit import rate_limit
+from app.core.redis import RedisManager, redis_client
 from app.core.security import decode_access_token, is_token_blacklisted
 from app.models.user import User
-from app.core.rate_limit import rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,7 +50,8 @@ def _ticket_key(ticket: str) -> str:
 
 @router.post(settings.API_V1_PREFIX + "/auth/ws-ticket", dependencies=[Depends(rate_limit("ws_ticket", per_minute=12))])
 def create_ws_ticket(request: Request, response: Response,
-                     user: User = Depends(get_current_active_user), token: str = Depends(oauth2_scheme)):
+                     user: Annotated[User, Depends(get_current_active_user)],
+                     token: Annotated[str, Depends(oauth2_scheme)]):
     origin = request.headers.get("origin", "")
     if not _allowed_origin(origin):
         raise HTTPException(403, detail="通知来源不在允许列表")
@@ -169,16 +180,20 @@ async def websocket_notifications(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        if receiver:
-            receiver.cancel()
-            await asyncio.gather(receiver, return_exceptions=True)
-        if pubsub:
-            try:
-                await asyncio.to_thread(pubsub.close)
-            except Exception:
-                pass
-        if lease_key:
-            try:
-                await asyncio.to_thread(redis_client.zrem, lease_key, lease_id)
-            except Exception:
-                pass
+        # An ASGI disconnect can cancel this scope immediately after the close
+        # frame is sent. Give lease removal a bounded, shielded cleanup window.
+        # The Redis TTL still releases the lease if Redis itself is unavailable.
+        with anyio.move_on_after(5, shield=True):
+            if receiver:
+                receiver.cancel()
+                await asyncio.gather(receiver, return_exceptions=True)
+            if lease_key:
+                try:
+                    await asyncio.to_thread(redis_client.zrem, lease_key, lease_id)
+                except Exception:
+                    pass
+            if pubsub:
+                try:
+                    await asyncio.to_thread(pubsub.close)
+                except Exception:
+                    pass

@@ -15,17 +15,10 @@
     python -m pytest tests/test_email_system.py -v
 """
 
-import sys
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-# Mock aiosmtplib 模块（本地环境未安装，behavior 测试仅验证渲染逻辑，不实际发送 SMTP）
-# 作用：让 email_service.py 顶部的 `import aiosmtplib` 不报 ModuleNotFoundError
-# 安全说明：生产环境（Railway）通过 requirements.txt 安装真实 aiosmtplib==3.0.2，不受影响
-if "aiosmtplib" not in sys.modules:
-    sys.modules["aiosmtplib"] = MagicMock()
-
+import pytest
 
 # ============================================
 # 辅助函数：读取源码文件内容（不导入模块，避免依赖问题）
@@ -503,8 +496,8 @@ class TestSecurityAudit:
         # 不应出现真实的 re_ 开头的 API Key
         for source in [source_service, source_tasks, source_config]:
             # 排除注释和示例值
-            lines = [l for l in source.split("\n")
-                     if not l.strip().startswith("#") and "re_your" not in l]
+            lines = [line for line in source.split("\n")
+                     if not line.strip().startswith("#") and "re_your" not in line]
             content = "\n".join(lines)
             # 不应出现 re_ 后跟 10+ 字符的疑似真实 Key
             import re
@@ -543,7 +536,7 @@ class TestSecurityAudit:
         """验证明文 Token 不被记录到日志"""
         source = read_source("app/api/routes/registration.py")
         # 日志中不应出现 plain_token 变量
-        log_lines = [l for l in source.split("\n") if "logger" in l and "info" in l]
+        log_lines = [line for line in source.split("\n") if "logger" in line and "info" in line]
         for line in log_lines:
             assert "plain_token" not in line, \
                 "日志中不应记录明文 Token"

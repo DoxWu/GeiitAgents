@@ -23,23 +23,13 @@
 """
 
 import os
-import sys
-import pytest
-from unittest.mock import MagicMock, patch
 from pathlib import Path
+from unittest.mock import MagicMock
 
-# ============================================
-# Mock 重依赖（langchain_core / langchain_openai）
-# ============================================
-# 作用：测试环境未安装 langchain 系列包，但 model_provider 包的 __init__.py
-# 导入链会触发 base.py → langchain_core.messages.BaseMessage 和
-# openai_text.py → langchain_openai.ChatOpenAI 的导入。
-# 此处预先注入 MagicMock 到 sys.modules，使导入链成功。
-# 实际行为测试（TestConfigLoader/TestFailoverRouter）不依赖这些类的真实实现。
-_langchain_core_mock = MagicMock()
-sys.modules.setdefault("langchain_core", _langchain_core_mock)
-sys.modules.setdefault("langchain_core.messages", _langchain_core_mock.messages)
-sys.modules.setdefault("langchain_openai", MagicMock())
+import pytest
+
+# LangChain is a required runtime dependency. Mock individual clients below;
+# replacing its packages in sys.modules breaks unrelated tests at collection.
 
 
 # ============================================
@@ -265,8 +255,8 @@ class TestFailoverRouter:
 
     def test_router_raises_when_no_clients(self):
         """无注册客户端时抛 ModelClientUnavailableError"""
-        from app.core.model_provider.failover_router import FailoverRouter
         from app.core.model_provider.exceptions import ModelClientUnavailableError
+        from app.core.model_provider.failover_router import FailoverRouter
 
         registry = MagicMock()
         registry.get_clients.return_value = []

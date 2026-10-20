@@ -4,9 +4,11 @@
 
 ## 当前阶段
 
-**2026-10-20 当前状态：** 当前分支 `develop/geiit-agents`；此前本地基线 `bdadb4f`，本轮实现、验证与文档保存为本地提交。结束前 fetch 再次遭 GitHub 443 连接失败，未推送；远端缓存 `0140406` 未重新确认。上轮 CI `39046967856` 的 WebSocket 路径修复仍待新 CI/真实 Redis 验收，A08 Trivy 仍待后续 CI。本轮新增有界 OCR、最多 5 轮的可恢复工作流循环、DOCX/PPTX/XLS/XLSX 导出改进和用户自选云端重排（默认保持现状、可选主 API `qwen3.7-text-rerank`）；修复供应商配置未读取 `.env` 的问题。主备 LLM 聊天/工具、新 Embedding 1024 维和 Qwen 合成重排均已真实直连通过；用户确认一封合成 SMTP 测试邮件已收件。SMTP 单封验收不代表生产 provider 已切换、Resend HTTP 或 Celery 提醒链已通过。数据库现有连接不可用，用户指定稍后用 Docker 镜像复测；本机 Docker Engine 未运行。1024 维 schema、迁移、旧向量重处理及完整 RAG 均待测，未修改目标库或部署。
+**2026-10-20 当前状态：** 当前分支 `develop/geiit-agents`，本轮承接 `ed68ea1`。已启动本机 Docker，在隔离 PostgreSQL 16.14 + pgvector / Redis 7.4 上补完固定依赖后端全量 **747 项通过、0 跳过，覆盖率 49.34%**；真实 Redis 暴露的 WebSocket 取消清理中断已修复，新增吊销/禁用/客户端退出租约释放回归。空库迁移到 head、`vector(1024)`、同维度 NULL 旧空间显式重生成与权限 SQL 通过；真实 Embedding→pgvector→权限过滤→Qwen 重排→非流式/流式 RAG 的合成资料服务层联调通过。未迁移用户目标库，旧列跨维度转换、HTTP 上传/登录/Celery 和业务质量不在本次范围。按用户要求已删除本轮 3 个容器与新增 Redis 镜像/两个标签，原有 3 镜像/4 卷保留。Git 已通过命令级 schannel 与 DNS 地址覆盖恢复 fetch，确认远端开发分支 `0140406` 为本地祖先；本轮提交/普通推送及新 CI/Trivy 待最后核对，未操作线上部署或旧 `main`。
 
-**2026-10-20 本机验证：** 前端全量 **135 个测试文件 / 1298 项通过**，`npm run check`、`npm run lint`、`npm run build` 通过；构建保留两条已有 workflow 导入提示。后端使用隔离 Python 3.11.9 / pytest 9.1.1，重排 27 项、`.env` 配置 2 项、provider 15 项、OCR 6 项及相关供应商/生命周期/向量空间回归共 **133 项通过**。AI 工作台 Playwright 使用模拟模型通过；PowerPoint COM 实开 4 页 PPTX、Excel COM 实开 3×3 XLSX/XLS；另验证 XLS 数字、400 字中文、前导零及公式纯文本。Word 原生脚本自动检查英文 10 页、中文长表格 23 页和增强样例 3 页共 36 页通过，目录/页眉/页码/分页与重复表头有效；全页做了边界/内容/像素检查，人工仅抽看部分页。Python 编译、改动模块 Ruff 与 Playwright 脚本语法检查记录见本轮条目。未运行后端全量、完整 Docker/Redis、安装包或线上部署。
+**2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
+
+**2026-10-20 上一批本机验证：** 前端全量 **135 个测试文件 / 1298 项通过**，`npm run check`、`npm run lint`、`npm run build` 通过；构建保留两条已有 workflow 导入提示。后端隔离 Python 3.11.9 / pytest 9.1.1 定向 **133 项通过**。AI 工作台 Playwright 使用模拟模型通过；PowerPoint COM 实开 4 页 PPTX、Excel COM 实开 3×3 XLSX/XLS；另验证 XLS 数字、400 字中文、前导零及公式纯文本。Word 原生脚本自动检查英文 10 页、中文长表格 23 页和增强样例 3 页共 36 页通过，目录/页眉/页码/分页与重复表头有效；全页做了边界/内容/像素检查，人工仅抽看部分页。这些是同日上一批证据，本批未重跑；后端全量/Docker/Redis 已由上段新结果更新，安装包和线上部署仍未验证。
 
 **2026-10-18 文档与本机验证：** 新增 [当前功能矩阵](CURRENT_FEATURE_MATRIX.md)，逐域记录入口、实现、验证和限制；旧编号清单已明确标为历史稿并修正 58/52 数量错误。矩阵引用的 39 个源码/文档路径均存在，`git diff --check` 与 live 测试文件 `py_compile` 通过。pytest 未能收集 live 用例：本机 Python 3.13 环境缺少 `psycopg`，因此不能记作测试通过；本机未启动 Redis。
 
@@ -24,7 +26,7 @@
 
 **2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1283 项通过**；TypeScript、ESLint、Vite 生产构建通过；官方 npm 全量审计为 **0 漏洞**。构建仍报告两条既有工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过参考文本加密保存/清空后载回、DOCX/PPTX/XLS/XLSX 导出、公式文本安全、网页布局/颜色、六类滚动动画示例与关键滚动行为、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；该流程使用模拟生成且没有模型网络请求，截图已检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
 
-**仍未验收/风险：** 当前 Embedding 已换至新 1024 维模型并直连成功，但旧云端来源不明/旧模型空间向量须在 Docker 测试库确认 1024 维 schema、迁移并按新模型重处理；本轮未应用迁移或写入目标库。数据库 Docker Engine 当前未启动。CI `39019783332` 扫描旧镜像 SHA `59bedce` 的 81 项无 Fixed Version Debian advisories 和 4 项 Python findings 保留追踪；本地 Trivy 门禁修复待新 CI。真实 Redis/WebSocket、上传文件/PVC/运行配置联合恢复、目标迁移/回滚、Windows 安装升级、Safari/WebView2/移动真机、低配及生产容器验收未做。A12 小样本真实模型评估已完成，但仍有个别正例措辞越证据范围、区间引用未计数；需有业务权限的脱敏问答/证据金标和人工判分。SMTP 合成邮件收件已由用户确认；Resend、Celery 生产提醒链、部署者实际数据区域/保留/跨境/运营主体隐私核实未验。未访问线上应用或部署。
+**仍未验收/风险：** 新 1024 维空库迁移、同维度旧空间重生成和真实合成 RAG 服务层已通过；旧目标库现有列从 1536 等维度切换至 1024 的安全迁移/全量重建仍未做，未写入用户目标库。CI/Trivy 修复后新结果待确认；无修复版本的 Debian advisories 保留追踪。数据库+上传文件/PVC+运行配置联合恢复、目标迁移/回滚、Windows 安装升级、Safari/WebView2/移动真机、8 GB 低配/断电及生产容器验收未做。A12 小样本真实模型评估仍有个别措辞越证据范围、区间引用未计数，需要有数据许可的问答/证据金标和业务判分。单封 SMTP 已确认收件；Resend HTTP、Celery 生产提醒链、实际区域/保留/跨境/运营主体核实未验。未访问线上应用或部署。
 
 **2026-10-12 补充复核：** 修正本地知识库基准脚本的 fixture 版本、合成 gold evidence 检查、稳定完成等待和网络隔离；在 Chromium 实测文件范围筛选与 390px 布局。selected-30 最新 30 文档/30 片段、84 查询结果：索引 1,371 ms、查询 P50/P95/最大 77/91/96 ms，正例 Recall@1/5 为 96.67%/100%；全部 API/外部/模型网络请求和页面错误为 0。默认合成基准 100 文档/334 片段、96 查询，Recall@5 95.83%，两个英文失败仍与历史一致。前端全量测试 132 文件/1272 项，check/lint 通过。CI 配置含 OSV、Rust audit、SBOM 和 Trivy；本机无 Rust audit 工具、Docker daemon 不可连接，未执行相应扫描。代码和基准记录先提交为 `671ca3d`；A15 冒烟与 A13/A21 隔离 PG 验收随后提交为 `e776072`、`c12e799`。最近一次成功 fetch 时远程开发分支为本地祖先；本轮 fetch 因 GitHub 443 不可达失败，当前本地比缓存远程领先 7 个提交，未尝试推送，网络恢复后须重新 fetch/检查再普通同步。原有未跟踪 `output/`、`tmp/` 保留，Multi-CPR 样本和结果仍在 `.tools/` 忽略目录；无线上部署变更。
 
@@ -133,7 +135,7 @@
 
 ## 下一步执行顺序
 
-2026-10-20 下一步：网络恢复后先 fetch/核对祖先及差异，再普通推送开发分支并查看新 CI/Trivy/Redis 验收；按用户安排使用隔离 Docker 测试库核对 1024 维 schema、迁移与旧向量重处理，随后验证完整 RAG 与可选重排。A12 仍需有数据许可的业务问答/证据金标和人工判分；Resend/Celery 提醒链及部署隐私、目标恢复/升级、低配/断电和原生端验收保持开放。
+2026-10-20 下一步：完成本轮本地提交，重新 fetch/核对祖先与差异后普通推送开发分支，跟踪新 CI/Trivy；隔离 Docker 数据库/Redis/1024 维合成 RAG 已通过且测试容器/新增镜像已清理。后续推进可独立完成的恢复/配置与评估改进；旧目标库跨维度迁移、A12 有许可的业务金标/人工判分、Resend/Celery 提醒链、部署隐私、联合恢复/升级、低配/断电和原生端验收保持开放。
 
 以下表格保留 2026-10-10 及此前的实施顺序；当前整改结果见顶部状态和修复跟踪，不再将已实现的认证、出站安全、上传一致性等重复列为未修复。
 
@@ -991,3 +993,13 @@
 - A12 质量边界：本轮使用 2026-10-17 保存的 E5 Top-5，实际调用主模型 30 正例及主/备各 12 不可回答候选，三组均零 API 错误，主/备负例各 12/12 呈现拒答启发式。逐题复核仍有用途/品牌/个案推断及区间引用计数问题，不能据此报告答案正确率或误拒率。聚合复核说明保存于 `.tools/a12-real-model-eval-20261020/manual-review-summary.json`；语料许可和业务金标仍待确认，样本文本与逐题输出不入 Git。
 - 构建与部署边界：本轮只有 Web 构建产物及本机 Office/测试产物；未重建桌面安装包或容器、未访问或变更线上部署。数据库连接失败后用户指定后续 Docker 镜像测试；本机 Docker Engine 未运行。1024 维列/迁移/旧向量重处理/完整 RAG、真实 Redis、新 CI/Trivy、Resend/Celery、部署恢复/升级、业务隐私核实及低配/断电验收仍未完成。
 - Git：本批在 `develop/geiit-agents` 保存本地提交。结束前重试 `git fetch agents`，GitHub 443 连接失败，无法核对远端最新差异，因此没有继续推送或触发新 CI；缓存远端仍为 `0140406`，不作为远端当前状态确认。网络恢复后须先 fetch/检查祖先及差异，再普通推送；不强推、不改旧 main。用户已有未跟踪 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留，忽略目录的样本和构建产物不提交。
+
+### 2026-10-20：Docker 数据库/Redis、真实合成 RAG 验收与资源清理
+
+- 实际修复：`ws_notifications.py` 的 finally 改为 5 秒有界 shield，防止发关闭帧后的 ASGI 取消打断租约释放；优先删除租约，再关闭 pubsub，Redis 故障仍有 TTL 兜底。真实 Redis 回归覆盖通知投递、令牌吊销、账号禁用和客户端主动退出、票据重放与租约归零。新增显式 opt-in 的 pgvector 实库回归，验证新 schema 维度、文档状态、空范围、本人/他人/公开/游客权限和 NULL 旧空间显式重生成。
+- 测试可靠性：删除 provider/email 测试在模块收集期全局替换 LangChain/aiosmtplib 的 mock；真实 LangChain HTTP 合约现在参与全量，不再被静默跳过。客户端调用仍局部 mock，不额外发送邮件。
+- 本地验证：隔离 Linux Python 3.11.16 / pytest 9.0.3、当前固定 requirements，后端 **747 passed / 0 skipped / 1 warning，57.43s，coverage 49.34%**（门槛 44.3%）；含恢复/维护 29 项、真实 Redis 4 项、pgvector 1 项、真实 Tesseract OCR 6 项及 LangChain 合约。容器使用临时字体，未提交字体。最后导入/注解/变量整理后 Windows 定向 **128 passed / 1 warning**，六个改动 Python 文件 Ruff 通过；JWT warning 来自测试的 SHA384 非生产样例。前端、Office 和供应商单项探测沿用本日上一批结果，本批未重跑。
+- 数据库工具边界：最初宿主 PostgreSQL 18 工具恢复到容器 PG16 失败，换用 16.14 匹配工具后恢复/维护通过；属于跨主版本不受支持，不据此修改业务恢复实现。同步备份文档的版本检查要求。
+- 真实合成联调：只从 `.env` 读取模型配置，所有数据库连接覆盖到随机隔离库。三份合成私有资料验证真实 1024 维 Embedding 入 pgvector、文档权限、真实 Qwen 重排、非流式与流式回答；核对相关来源、答案、另一账号隔离和唯一 done。关闭 query rewrite/intent/conflict/旧 BGE 以限定范围，不代表 HTTP 上传/登录/Celery、真实企业质量或旧目标库跨维度迁移。结果保存在 `.tools/docker-acceptance-20261020/` 忽略目录，不含真实凭据。
+- 清理已完成：随机测试库残留计数 0；删除 `geiit-acceptance-app-20261020`、`geiit-acceptance-redis-20261020`、`geiit-acceptance-pg-20261020`，删除本轮新增 Redis 镜像及 `redis:7.4-alpine` / ECR 两个标签。没有创建命名卷或自定义网络；复核原有后端/前端/PostgreSQL 三镜像 ID 不变、四个原有数据卷保留、容器列表为空。未执行全局 prune。
+- Git 与未完成：命令级 `http.sslBackend=schannel` + `http.curloptResolve` 使用正常 TLS 校验成功 fetch，未修改全局配置；远端开发分支 `0140406` 是本地祖先，旧 main 仍 `ea4917e`。本轮代码/文档待提交并普通推送，随后核对 CI/Trivy。原有未跟踪 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留，不提交；没有线上部署变更。A12 业务金标、A13 联合恢复、A28 部署隐私/Resend/Celery、旧目标库维度切换、低配/断电与原生升级仍开放。

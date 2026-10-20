@@ -110,4 +110,6 @@ python -m app.ops.cli monitor
 
 新增后端测试使用专用隔离 PostgreSQL 集群，不连接生产。覆盖权限、非法输入脱敏、幂等、任务消费、指定快照恢复、空库重检、目标变更、中断标记、单消费者、快照保留、队列容量与来源隔离。
 
+2026-10-20 在隔离 Docker PostgreSQL 16.14 + pgvector 上，使用匹配的 PostgreSQL 16.14 `pg_dump`/`pg_restore` 运行恢复与维护队列 29 项，均通过，且纳入后端全量 747 项。宿主 PostgreSQL 18 工具生成的归档恢复到 PostgreSQL 16 曾因跨主版本不兼容失败；换用匹配工具后通过。部署时核对源库、导出/恢复客户端和目标库版本，优先保持同主版本；`pg_dump` 不能低于源库版本，恢复到较旧主版本不受支持。这不等于目标部署、上传文件或配置的联合恢复已完成。
+
 前端测试覆盖禁用状态、确认门槛、未知提交结果重试与中断展示。`frontend/scripts/verify-maintenance.mjs` 使用模拟 API 验证桌面和 390px 窄屏、确认与提交，不会执行真实备份恢复。截图输出到 `.tools/maintenance-qa/`。具体本次测试结果记录在 [工作记录](WORK_LOG.md)。

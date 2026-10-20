@@ -1,18 +1,13 @@
 """Real pinned ChatOpenAI serialization against HTTP fixtures, no real credentials."""
 import asyncio
 import json
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
 import pytest
-
-langchain = pytest.importorskip("langchain_openai")
-# The legacy model-provider suite injects MagicMock modules at collection time.
-# This integration test must run separately with real optional dependencies.
-if not isinstance(langchain, ModuleType):
-    pytest.skip("Run separately with real LangChain dependencies, not legacy module mocks", allow_module_level=True)
 from langchain_openai import ChatOpenAI
+
 from app.core.model_provider.clients.openai_text import OpenAITextClient
 from app.schemas.office_tools import AccountToolCompletion
 from app.services.office_tools import complete_account_tools

@@ -36,7 +36,8 @@ def test_notification_route_module_is_loadable():
     os.getenv("GEIIT_WS_INTEGRATION") != "1",
     reason="requires the disposable Redis service enabled by CI",
 )
-def test_live_redis_notification_revocation_and_ticket_replay(monkeypatch):
+@pytest.mark.parametrize("termination", ["revoked", "disabled", "client"])
+def test_live_redis_notification_revocation_and_ticket_replay(monkeypatch, termination):
     try:
         redis_client.ping()
     except Exception as exc:
@@ -89,9 +90,16 @@ def test_live_redis_notification_revocation_and_ticket_replay(monkeypatch):
                         continue
                     assert message == notification
                     break
-                redis_client.set(blacklist_key, "1", ex=60)
-                with pytest.raises(WebSocketDisconnect):
-                    socket.receive_json()
+                if termination == "revoked":
+                    redis_client.set(blacklist_key, "1", ex=60)
+                elif termination == "disabled":
+                    with factory() as db:
+                        db.get(User, user_id).is_active = False
+                        db.commit()
+                if termination != "client":
+                    with pytest.raises(WebSocketDisconnect) as closed:
+                        socket.receive_json()
+                    assert closed.value.code == 4001
 
             assert redis_client.zcard(lease_key) == 0
             with pytest.raises(WebSocketDisconnect):
