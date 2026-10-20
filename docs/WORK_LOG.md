@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-20 当前状态：** 当前分支 `develop/geiit-agents`，本轮承接 `ed68ea1`。已启动本机 Docker，在隔离 PostgreSQL 16.14 + pgvector / Redis 7.4 上补完固定依赖后端全量 **747 项通过、0 跳过，覆盖率 49.34%**；真实 Redis 暴露的 WebSocket 取消清理中断已修复，新增吊销/禁用/客户端退出租约释放回归。空库迁移到 head、`vector(1024)`、同维度 NULL 旧空间显式重生成与权限 SQL 通过；真实 Embedding→pgvector→权限过滤→Qwen 重排→非流式/流式 RAG 的合成资料服务层联调通过。未迁移用户目标库，旧列跨维度转换、HTTP 上传/登录/Celery 和业务质量不在本次范围。按用户要求已删除本轮 3 个容器与新增 Redis 镜像/两个标签，原有 3 镜像/4 卷保留。Git 已通过命令级 schannel 与 DNS 地址覆盖恢复 fetch，确认远端开发分支 `0140406` 为本地祖先；本轮提交/普通推送及新 CI/Trivy 待最后核对，未操作线上部署或旧 `main`。
+**2026-10-20 当前状态：** 当前分支 `develop/geiit-agents`，本轮承接 `ed68ea1`。已启动本机 Docker，在隔离 PostgreSQL 16.14 + pgvector / Redis 7.4 上补完固定依赖后端全量 **747 项通过、0 跳过，覆盖率 49.34%**；真实 Redis 暴露的 WebSocket 取消清理中断已修复，新增吊销/禁用/客户端退出租约释放回归。空库迁移到 head、`vector(1024)`、同维度 NULL 旧空间显式重生成与权限 SQL 通过；真实 Embedding→pgvector→权限过滤→Qwen 重排→非流式/流式 RAG 的合成资料服务层联调通过。未迁移用户目标库，旧列跨维度转换、HTTP 上传/登录/Celery 和业务质量不在本次范围。按用户要求已删除本轮 3 个容器与新增 Redis 镜像/两个标签，原有 3 镜像/4 卷保留。Git 已通过命令级 schannel 与 DNS 地址覆盖恢复传输，检查祖先后普通推送至 `ad21711`；新 [CI 39399397307](https://github.com/DoxWu/GeiitAgents/actions/runs/39399397307) 全部通过（后端 741 通过/6 项 OCR 环境跳过、前端 135 文件/1298 项、构建/依赖审计/secret scan/LangChain 合约/Trivy）。后端扫描保留 76 条无修复版本 HIGH/CRITICAL，前端为 0，两镜像可修复 HIGH/CRITICAL 为 0。未操作线上部署或旧 `main`。
 
 **2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
 
@@ -26,7 +26,7 @@
 
 **2026-10-17 本机验证：** 前端全量 **134 个测试文件 / 1283 项通过**；TypeScript、ESLint、Vite 生产构建通过；官方 npm 全量审计为 **0 漏洞**。构建仍报告两条既有工作流模块动态/静态导入提示。AI 工作台 Playwright 流程通过参考文本加密保存/清空后载回、DOCX/PPTX/XLS/XLSX 导出、公式文本安全、网页布局/颜色、六类滚动动画示例与关键滚动行为、图片素材、云端逐次授权、沙箱预览、HTML 下载及 390px 检查；该流程使用模拟生成且没有模型网络请求，截图已检查。生产预览上的 Chromium、Edge、Firefox、Playwright WebKit 冒烟通过 Worker、IndexedDB、Crypto/WASM、CacheStorage、Web Locks 和 1280/390px 检查。监控 7 份 YAML、渲染后的 Alertmanager YAML 与 Grafana dashboard JSON 语法解析通过。后端全量 **680 项通过 / 16 项环境相关跳过**及隔离 PostgreSQL 28/28 是此前 10 月 12 日的历史结果，本次未重跑。此前的 Python 漏洞扫描、SBOM 和本地 E5/Multi-CPR 指标也按历史日期使用，不代表本轮重跑。
 
-**仍未验收/风险：** 新 1024 维空库迁移、同维度旧空间重生成和真实合成 RAG 服务层已通过；旧目标库现有列从 1536 等维度切换至 1024 的安全迁移/全量重建仍未做，未写入用户目标库。CI/Trivy 修复后新结果待确认；无修复版本的 Debian advisories 保留追踪。数据库+上传文件/PVC+运行配置联合恢复、目标迁移/回滚、Windows 安装升级、Safari/WebView2/移动真机、8 GB 低配/断电及生产容器验收未做。A12 小样本真实模型评估仍有个别措辞越证据范围、区间引用未计数，需要有数据许可的问答/证据金标和业务判分。单封 SMTP 已确认收件；Resend HTTP、Celery 生产提醒链、实际区域/保留/跨境/运营主体核实未验。未访问线上应用或部署。
+**仍未验收/风险：** 新 1024 维空库迁移、同维度旧空间重生成和真实合成 RAG 服务层已通过；旧目标库现有列从 1536 等维度切换至 1024 的安全迁移/全量重建仍未做，未写入用户目标库。新 CI/Trivy 已通过；后端 76 条无修复版本的 Debian HIGH/CRITICAL 保留追踪。数据库+上传文件/PVC+运行配置联合恢复、目标迁移/回滚、Windows 安装升级、Safari/WebView2/移动真机、8 GB 低配/断电及生产容器验收未做。A12 小样本真实模型评估仍有个别措辞越证据范围、区间引用未计数，需要有数据许可的问答/证据金标和业务判分。单封 SMTP 已确认收件；Resend HTTP、Celery 生产提醒链、实际区域/保留/跨境/运营主体核实未验。未访问线上应用或部署。
 
 **2026-10-12 补充复核：** 修正本地知识库基准脚本的 fixture 版本、合成 gold evidence 检查、稳定完成等待和网络隔离；在 Chromium 实测文件范围筛选与 390px 布局。selected-30 最新 30 文档/30 片段、84 查询结果：索引 1,371 ms、查询 P50/P95/最大 77/91/96 ms，正例 Recall@1/5 为 96.67%/100%；全部 API/外部/模型网络请求和页面错误为 0。默认合成基准 100 文档/334 片段、96 查询，Recall@5 95.83%，两个英文失败仍与历史一致。前端全量测试 132 文件/1272 项，check/lint 通过。CI 配置含 OSV、Rust audit、SBOM 和 Trivy；本机无 Rust audit 工具、Docker daemon 不可连接，未执行相应扫描。代码和基准记录先提交为 `671ca3d`；A15 冒烟与 A13/A21 隔离 PG 验收随后提交为 `e776072`、`c12e799`。最近一次成功 fetch 时远程开发分支为本地祖先；本轮 fetch 因 GitHub 443 不可达失败，当前本地比缓存远程领先 7 个提交，未尝试推送，网络恢复后须重新 fetch/检查再普通同步。原有未跟踪 `output/`、`tmp/` 保留，Multi-CPR 样本和结果仍在 `.tools/` 忽略目录；无线上部署变更。
 
@@ -135,7 +135,7 @@
 
 ## 下一步执行顺序
 
-2026-10-20 下一步：完成本轮本地提交，重新 fetch/核对祖先与差异后普通推送开发分支，跟踪新 CI/Trivy；隔离 Docker 数据库/Redis/1024 维合成 RAG 已通过且测试容器/新增镜像已清理。后续推进可独立完成的恢复/配置与评估改进；旧目标库跨维度迁移、A12 有许可的业务金标/人工判分、Resend/Celery 提醒链、部署隐私、联合恢复/升级、低配/断电和原生端验收保持开放。
+2026-10-20 下一步：本轮 Docker/Redis/合成 RAG 服务层及 CI/Trivy 验收已完成，测试容器/新增镜像已清理。后续推进可独立完成的恢复/配置与评估改进；旧目标库跨维度迁移、A12 有许可的业务金标/人工判分、Resend/Celery 提醒链、部署隐私、数据库/文件/配置联合恢复、低配/断电和原生安装升级验收保持开放。后端无修复版本的系统包告警随上游更新复扫。
 
 以下表格保留 2026-10-10 及此前的实施顺序；当前整改结果见顶部状态和修复跟踪，不再将已实现的认证、出站安全、上传一致性等重复列为未修复。
 
@@ -1003,3 +1003,11 @@
 - 真实合成联调：只从 `.env` 读取模型配置，所有数据库连接覆盖到随机隔离库。三份合成私有资料验证真实 1024 维 Embedding 入 pgvector、文档权限、真实 Qwen 重排、非流式与流式回答；核对相关来源、答案、另一账号隔离和唯一 done。关闭 query rewrite/intent/conflict/旧 BGE 以限定范围，不代表 HTTP 上传/登录/Celery、真实企业质量或旧目标库跨维度迁移。结果保存在 `.tools/docker-acceptance-20261020/` 忽略目录，不含真实凭据。
 - 清理已完成：随机测试库残留计数 0；删除 `geiit-acceptance-app-20261020`、`geiit-acceptance-redis-20261020`、`geiit-acceptance-pg-20261020`，删除本轮新增 Redis 镜像及 `redis:7.4-alpine` / ECR 两个标签。没有创建命名卷或自定义网络；复核原有后端/前端/PostgreSQL 三镜像 ID 不变、四个原有数据卷保留、容器列表为空。未执行全局 prune。
 - Git 与未完成：命令级 `http.sslBackend=schannel` + `http.curloptResolve` 使用正常 TLS 校验成功 fetch，未修改全局配置；远端开发分支 `0140406` 是本地祖先，旧 main 仍 `ea4917e`。本轮代码/文档待提交并普通推送，随后核对 CI/Trivy。原有未跟踪 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留，不提交；没有线上部署变更。A12 业务金标、A13 联合恢复、A28 部署隐私/Resend/Celery、旧目标库维度切换、低配/断电与原生升级仍开放。
+
+### 2026-10-20：普通推送与远程 CI/Trivy 全部通过
+
+- Git：检查远端开发分支为本地祖先后，普通推送 `0140406..ad21711` 到 `agents/develop/geiit-agents`；此前待同步的 `5029827`、`bdadb4f`、`ed68ea1` 一并同步。未强推，旧 `main` 仍 `ea4917e`，没有部署或发布镜像。命令级 schannel/DNS 覆盖仍使用正常主机名与 TLS 校验，不改全局 Git 配置。
+- 远程证据：[CI 39399397307](https://github.com/DoxWu/GeiitAgents/actions/runs/39399397307)，代码 SHA `ad21711e4136eae8ef14e12e848e285738016b51`，全部 job 成功。后端 Python 3.11.17 **741 passed / 6 skipped / 2 warnings，coverage 48.11%**；六项跳过均是 OCR 环境项，本机 Docker 已用真实 Tesseract 跑过这六项并达到 747/0 跳过。真实 PostgreSQL 新用例及 Redis 三种断连路径全部在 CI 通过；远程 PostgreSQL 使用 CI 默认维度，本机另验 1024 维，不混淆两组结果。前端 **135 文件 / 1298 项通过**，lint、TypeScript、生产构建通过，保留既有 workflow 导入提示。
+- 依赖与镜像：npm/Python 审计、Windows Rust audit、secret scan、独立真实 LangChain 合约通过；SBOM 产物分别含前端 216、Python 160、Rust 308 个组件。前后端生产镜像构建/Trivy 扫描及门禁通过。下载完整报告并本地重跑 `.github/scripts/check_trivy_results.py` 通过：后端 **76 条尚无修复版本**（75 HIGH、1 CRITICAL），前端 **0 条**；两者可修复 HIGH/CRITICAL 为 **0**。这不是后端零漏洞或生产部署验收。
+- 产物与清理：CI 日志、SBOM、Trivy JSON 保存在 `.tools/docker-acceptance-20261020/` 忽略目录；镜像只在 CI 构建，不发布、不下载到用户机器。用户机器本轮容器/新增镜像已清理，原有镜像/卷保留。后续仅同步本条与状态文档，不修改已验证代码；文档提交带 `[skip ci]` 避免同一实现无变化的全量重建，代码证据对应上述 `ad21711`。
+- 剩余项：A12 企业业务金标/许可/人工判分，A13 数据库+上传文件+运行配置联合恢复，旧目标库跨维度安全迁移，Resend HTTP/Celery 与实例隐私核实，8 GB/断电/原生安装升级和目标部署回滚。保持全局任务开放，不将本轮 CI 成功等同全部审查关闭。
