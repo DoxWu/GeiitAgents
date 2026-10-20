@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-20 当前状态：** 当前分支 `develop/geiit-agents`，本轮承接 `ed68ea1`。已启动本机 Docker，在隔离 PostgreSQL 16.14 + pgvector / Redis 7.4 上补完固定依赖后端全量 **747 项通过、0 跳过，覆盖率 49.34%**；真实 Redis 暴露的 WebSocket 取消清理中断已修复，新增吊销/禁用/客户端退出租约释放回归。空库迁移到 head、`vector(1024)`、同维度 NULL 旧空间显式重生成与权限 SQL 通过；真实 Embedding→pgvector→权限过滤→Qwen 重排→非流式/流式 RAG 的合成资料服务层联调通过。未迁移用户目标库，旧列跨维度转换、HTTP 上传/登录/Celery 和业务质量不在本次范围。按用户要求已删除本轮 3 个容器与新增 Redis 镜像/两个标签，原有 3 镜像/4 卷保留。Git 已通过命令级 schannel 与 DNS 地址覆盖恢复传输，检查祖先后普通推送至 `ad21711`；新 [CI 39399397307](https://github.com/DoxWu/GeiitAgents/actions/runs/39399397307) 全部通过（后端 741 通过/6 项 OCR 环境跳过、前端 135 文件/1298 项、构建/依赖审计/secret scan/LangChain 合约/Trivy）。后端扫描保留 76 条无修复版本 HIGH/CRITICAL，前端为 0，两镜像可修复 HIGH/CRITICAL 为 0。未操作线上部署或旧 `main`。
+**2026-10-20 当前状态：** 当前分支 `develop/geiit-agents`，最新已同步提交 `d82ec00`；当前联合恢复包改动尚未提交。A13 新增离线加密联合恢复 CLI，打包数据库、上传树和显式指定配置，支持认证/哈希检查、空库恢复及活动文档路径重定位；隔离 PostgreSQL 18.4/pgvector 上恢复包 + 原有运维/维护测试共 **64 项通过**，前端全量 **136 个文件/1299 项通过**，TypeScript、Lint、生产 Web build、Ruff 与构建上下文边界检查通过。真实联测覆盖登录、文本/PDF 下载、pgvector 检索、待办读写；尚非目标部署/生产恢复验收。恢复包不含 Redis/Celery 队列，会话或外部对象存储，待处理消息需人工检查/重派；配置须人工审阅。按用户要求，本批 PG 临时库已清零、隔离 PG18 已停止；Docker Engine 本批未运行，没有创建测试容器/镜像。Git 普通推送和新 CI 待本批提交后执行；未操作线上部署或旧 `main`。
 
 **2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
 
@@ -1011,3 +1011,10 @@
 - 依赖与镜像：npm/Python 审计、Windows Rust audit、secret scan、独立真实 LangChain 合约通过；SBOM 产物分别含前端 216、Python 160、Rust 308 个组件。前后端生产镜像构建/Trivy 扫描及门禁通过。下载完整报告并本地重跑 `.github/scripts/check_trivy_results.py` 通过：后端 **76 条尚无修复版本**（75 HIGH、1 CRITICAL），前端 **0 条**；两者可修复 HIGH/CRITICAL 为 **0**。这不是后端零漏洞或生产部署验收。
 - 产物与清理：CI 日志、SBOM、Trivy JSON 保存在 `.tools/docker-acceptance-20261020/` 忽略目录；镜像只在 CI 构建，不发布、不下载到用户机器。用户机器本轮容器/新增镜像已清理，原有镜像/卷保留。后续仅同步本条与状态文档，不修改已验证代码；文档提交带 `[skip ci]` 避免同一实现无变化的全量重建，代码证据对应上述 `ad21711`。
 - 剩余项：A12 企业业务金标/许可/人工判分，A13 数据库+上传文件+运行配置联合恢复，旧目标库跨维度安全迁移，Resend HTTP/Celery 与实例隐私核实，8 GB/断电/原生安装升级和目标部署回滚。保持全局任务开放，不将本轮 CI 成功等同全部审查关闭。
+
+### 2026-10-20：离线联合恢复实现与隔离验收
+
+- 实际改动：新增 `app.ops.recovery_bundle` 的 `create`/`verify`/`restore` 离线命令，逐块 AEAD 加密并校验 source/key、长度与终止帧；归档数据库、完整上传目录、显式选择配置及活动文档引用，拒绝链接/危险路径/变化文件/超限/非空目标。恢复前全包验签与临时库演练，恢复到新 workspace 后校验文件和数据库并将活动 `documents.file_path` 重定位至新上传目录；不自动回滚不完整恢复，保留 marker。修正备份覆盖说明的重复导入/渲染，管理备份、工作台和本地知识库页面统一显示备份范围；同步 Git/Docker 构建上下文忽略、数据库快照/API、Sealos 和功能矩阵文档。
+- 本地验证：隔离 PostgreSQL 18.4 + pgvector 的恢复包、`test_ops.py`、`test_maintenance.py` 共 **64/64 通过（126 秒）**，含 35 个恢复包用例和真实 PG 联合恢复：两文档/派生图片/配置备份还原、登录、文本预览、PDF 字节下载、真实 pgvector 查询、文档路径指向新 workspace 和待办更新。前端全量 **136 个文件/1299 项通过**；`npm run check`、`npm run lint`、`npm run build`、Ruff、`git diff --check`、构建上下文 boundary 脚本均通过。Vite 保留两条既有 workflow 动态/静态导入提示。恢复目标与样本均为随机隔离/合成内容，未读取项目 `.env`。
+- 边界与清理：bundle 不含 Redis/Celery 队列/会话、云外对象存储、客户端本地数据或未显式选定配置；待处理文档任务须人工审阅并重派。配置文件仅作为加密归档，不自动覆写 Secret。成功测试后临时数据库计数 0，专用 PG18 集群正常停止；Docker Engine 本轮不可用，未创建 Docker 容器或镜像，故本轮无容器/镜像需要删除，原有镜像/卷未触碰。目标 PVC/Secret 编排、目标站点停写、异地恢复、断电与 RPO/RTO 尚未验收。
+- Git 与下一步：本批代码/文档待提交；提交前 fetch 检查远端祖先和差异，再普通推送并检查 CI，禁止强推/修改旧 `main`。保留未跟踪的 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/`，不纳入提交。A12 业务金标、旧目标库跨维度迁移、A28 Resend/Celery 与隐私核实、8 GB/断电/原生升级和目标部署回滚仍开放。

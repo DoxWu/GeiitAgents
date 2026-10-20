@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Database, RefreshCw } from "lucide-react";
 import { Button } from "@/components/common/Button";
+import { BackupCoverage } from "@/components/common/BackupCoverage";
 import { maintenanceApi, maintenanceError, type JobInput, type MaintenanceJob, type MaintenanceStatus, type RestorePlan, type Snapshot } from "@/api/maintenance";
 
 const labels = { backup: "备份", verify: "恢复验证", restore: "恢复" };
@@ -73,6 +74,7 @@ export default function BackupRecoveryPage() {
     <main className="mx-auto grid max-w-5xl gap-6 px-5 py-6">
       {error && <p role="alert" className="rounded border border-danger/30 p-3 text-sm text-danger">{error}</p>}
       {notice && <p role="status" className="rounded bg-brand-light p-3 text-sm">{notice}</p>}
+      <BackupCoverage />
       <section className="rounded-lg border border-line bg-surface p-5">
         <h2 className="mb-2 font-semibold">服务状态</h2>
         {loading ? <p>正在读取状态…</p> : status ? <>

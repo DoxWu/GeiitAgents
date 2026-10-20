@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { BackupCoverage } from '@/components/common/BackupCoverage';
 import { exportBackup, importBackup } from '@/localKnowledge/backup';
 import { commitIndex, loadIndex, SESSION_LOCK } from '@/localKnowledge/storage';
 import type { LocalIndex } from '@/localKnowledge/core';
@@ -65,6 +66,7 @@ export default function LocalKnowledgeBackup({ disabled, onRestore }: Props) {
   }
   return <section className="lk-card lk-search" aria-label="本地知识库备份与恢复">
     <h2>4. 备份与恢复</h2>
+    <BackupCoverage />
     <p className="lk-muted">导出包含本地文档、向量和模型设置的加密文件，不包含模型权重、聊天记录或 API Key。备份口令不保存，遗失后无法恢复。请先关闭本地模型。</p>
     <fieldset disabled={disabled || busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
       <div className="lk-backup-fields"><label>备份口令<input type="password" autoComplete="new-password" minLength={4} maxLength={256} value={password} onChange={e => setPassword(e.target.value)} /></label>

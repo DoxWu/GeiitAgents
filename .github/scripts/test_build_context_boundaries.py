@@ -26,6 +26,8 @@ def test_frontend_dockerignore_has_runtime_secret_boundaries():
         "*.sql",
         "*.sql.gz",
         "*.backup*",
+        "*.geiit-recovery",
+        "recovery-workspaces/",
         "*.zip",
         "*.tar",
         "*.tar.gz",
@@ -53,6 +55,8 @@ def test_backend_dockerignore_keeps_example_only_environment_exception():
     assert "backups/" in rules
     assert "*.sql" in rules
     assert "*.zip" in rules
+    assert "*.geiit-recovery" in rules
+    assert "recovery-workspaces/" in rules
     assert "*.tar.gz" in rules
     assert "*.bak" in rules
     assert "credentials*.json" in rules
@@ -79,6 +83,8 @@ def test_gitignore_blocks_private_inputs_but_keeps_reviewed_sources():
         "backups/private.zip",
         "kubeconfig",
         "credentials.private.json",
+        "acceptance.geiit-recovery",
+        "recovery-workspaces/private/config/runtime.env",
     ]
     allowed = [
         ".env.example",

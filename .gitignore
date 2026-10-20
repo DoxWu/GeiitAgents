@@ -214,6 +214,8 @@ backup/
 *.backup
 *.backup.zip
 *.backup.tar*
+*.geiit-recovery
+recovery-workspaces/
 kubeconfig
 kubeconfig.*
 credentials.json

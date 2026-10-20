@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { BackupCoverage } from '@/components/common/BackupCoverage';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { MAX_VAULT_BACKUP_BYTES, type VaultBackupSummary } from '@/services/vaultBackup';
 
@@ -25,6 +26,7 @@ export function WorkbenchBackup({ onUnlock }: { onUnlock: () => void }) {
   const busy = store.vaultTransferBusy;
   return <section className="min-h-0 flex-1 overflow-auto p-4 sm:p-6" aria-label="工作台备份与恢复"><div className="mx-auto max-w-3xl space-y-6">
     <div><h1 className="text-xl font-semibold">工作台备份与恢复</h1><p className="mt-3 text-sm text-ink-secondary">备份在本机加密后下载，不上传服务器。包含对话、办公成果、笔记/待办、持久草稿与文件操作历史；本地知识库文档/向量请使用其独立备份入口。模型权重、云端数据、登录凭据、未保存的页面输入和外部目录文件不在此备份中。</p></div>
+    <BackupCoverage />
     <section className="space-y-3 rounded border border-line p-4" aria-label="导出工作台备份"><h2 className="font-semibold">导出加密备份</h2>
       {store.unlocked ? <form className="space-y-3" onSubmit={e => { e.preventDefault(); void run(async () => {
         if (password !== confirmation) throw new Error('两次备份口令不一致。');
