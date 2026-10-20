@@ -13,6 +13,9 @@ export interface DocxFormatOptions {
   fontSize?: typeof DOCX_FONT_SIZES[number];
   lineSpacing?: typeof DOCX_LINE_SPACINGS[number];
   marginInches?: typeof DOCX_MARGINS[number];
+  tableOfContents?: boolean;
+  pageNumbers?: boolean;
+  headerText?: string;
 }
 
 export const DEFAULT_DOCX_FORMAT: DocxFormatOptions = {};
@@ -29,7 +32,7 @@ export function isDocxStyle(value: unknown): value is DocxStyle {
 
 export function validateDocxFormat(value: unknown): DocxFormatOptions {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Word 页面与字体设置无效。');
-  const source = value as Record<string, unknown>, allowed = ['paperSize', 'fontFamily', 'fontSize', 'lineSpacing', 'marginInches'];
+  const source = value as Record<string, unknown>, allowed = ['paperSize', 'fontFamily', 'fontSize', 'lineSpacing', 'marginInches', 'tableOfContents', 'pageNumbers', 'headerText'];
   if (Object.keys(source).some(key => !allowed.includes(key))) throw new Error('Word 页面与字体设置包含未知选项。');
   const result: DocxFormatOptions = {};
   if (source.paperSize !== undefined) {
@@ -51,6 +54,18 @@ export function validateDocxFormat(value: unknown): DocxFormatOptions {
   if (source.marginInches !== undefined) {
     if (!DOCX_MARGINS.includes(source.marginInches as typeof DOCX_MARGINS[number])) throw new Error('Word 页边距无效。');
     result.marginInches = source.marginInches as DocxFormatOptions['marginInches'];
+  }
+  if (source.tableOfContents !== undefined) {
+    if (typeof source.tableOfContents !== 'boolean') throw new Error('Word 目录设置无效。');
+    result.tableOfContents = source.tableOfContents;
+  }
+  if (source.pageNumbers !== undefined) {
+    if (typeof source.pageNumbers !== 'boolean') throw new Error('Word 页码设置无效。');
+    result.pageNumbers = source.pageNumbers;
+  }
+  if (source.headerText !== undefined) {
+    if (typeof source.headerText !== 'string' || source.headerText.length > 120 || Array.from(source.headerText).some(char => char.charCodeAt(0) < 32)) throw new Error('Word 页眉最多 120 个有效字符。');
+    result.headerText = source.headerText;
   }
   return result;
 }

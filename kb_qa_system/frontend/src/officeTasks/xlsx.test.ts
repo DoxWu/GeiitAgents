@@ -72,29 +72,42 @@ it('exports the selected scatter X column as a numeric cell', async () => {
 });
 
 it('exports the first Markdown table as literal workbook cells and rejects missing or oversized tables', async () => {
-  const content = '# 报告\n\n| 指标 | 数值 |\n| --- | ---: |\n| 增长 | =1+1 |\n| 备注 | 100% |';
-  expect(markdownTableRows(content)).toEqual([['指标', '数值'], ['增长', '=1+1'], ['备注', '100%']]);
+  const content = '# 报告\n\n| 指标 | 数值 |\n| --- | ---: |\n| 增长 | =1+1 |\n| 备注 | 100% |\n| 产出 | 42 |';
+  expect(markdownTableRows(content)).toEqual([['指标', '数值'], ['增长', '=1+1'], ['备注', '100%'], ['产出', '42']]);
   const bytes = await exportMarkdownTableXlsx(content, '经营/报告');
-  await expect(parseFirstXlsxSheet(bytes)).resolves.toEqual({ csv: '指标,数值\n增长,=1+1\n备注,100%', sheetName: '经营 报告' });
+  await expect(parseFirstXlsxSheet(bytes)).resolves.toEqual({ csv: '指标,数值\n增长,=1+1\n备注,100%\n产出,42', sheetName: '经营 报告' });
   const zip = await JSZip.loadAsync(bytes), sheetXml = await zip.file('xl/worksheets/sheet1.xml')!.async('text');
-  expect(sheetXml).toContain('<c r="B2" t="inlineStr"><is><t xml:space="preserve">=1+1</t></is></c>');
+  const stylesXml = await zip.file('xl/styles.xml')!.async('text');
+  expect(sheetXml).toContain('<c r="B2" s="2" t="inlineStr"><is><t xml:space="preserve">=1+1</t></is></c>');
+  expect(sheetXml).toContain('<c r="B4" s="4"><v>42</v></c>');
+  expect(sheetXml).toContain('<pane xSplit="1" ySplit="1" topLeftCell="B2"');
+  expect(sheetXml).toContain('<autoFilter ref="A1:B4"/>');
+  expect(stylesXml).toContain('<cellXfs count="6">');
+  expect(stylesXml).toContain('FF187A72');
   expect(sheetXml).not.toMatch(/<f(?:\s|>)/);
   await expect(exportMarkdownTableXlsx('# 没有表格', '空表')).rejects.toThrow('没有可导出的表格');
   expect(() => markdownTableRows(`| A | B |\n| --- | --- |\n${Array.from({ length: 51 }, () => '| x | y |').join('\n')}`)).toThrow('50 行');
 });
 
 it('exports a real BIFF8 XLS workbook with Unicode text cells and no formulas', async () => {
-  const bytes = await exportMarkdownTableXls('# 报告\n\n| 指标 | 数值 |\n| --- | --- |\n| 增长 | =1+1 |', '经营/报告');
+  const longText = '中文'.repeat(200);
+  const bytes = await exportMarkdownTableXls(`# 报告\n\n| 指标 | 数值 |\n| --- | --- |\n| 增长 | =1+1 |\n| 产出 | 42 |\n| 说明 | ${longText} |\n| 编号 | 0012 |\n| 大整数 | 9007199254740993 |\n| 调整 | -1.25 |`, '经营/报告');
   expect(Array.from(bytes.slice(0, 8))).toEqual([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
-  const workbook = LegacyXLS.read(bytes, { type: 'array' });
+  const workbook = LegacyXLS.read(bytes, { type: 'array', cellStyles: true });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   expect(sheetName).toBe('经营 报告');
   expect(LegacyXLS.utils.sheet_to_json(sheet, { header: 1, raw: false })).toEqual([
     ['指标', '数值'],
-    ['增长', '=1+1'],
+    ['增长', '=1+1'], ['产出', '42'], ['说明', longText],
+    ['编号', '0012'], ['大整数', '9007199254740993'], ['调整', '-1.25'],
   ]);
   expect(sheet.B2).toMatchObject({ t: 's', v: '=1+1' });
   expect(sheet.B2.f).toBeUndefined();
+  expect(sheet.B3).toMatchObject({ t: 'n', v: 42 });
+  expect(sheet.B4).toMatchObject({ t: 's', v: longText });
+  expect(sheet.B5).toMatchObject({ t: 's', v: '0012' });
+  expect(sheet.B6).toMatchObject({ t: 's', v: '9007199254740993' });
+  expect(sheet.B7).toMatchObject({ t: 'n', v: -1.25 });
   await expect(exportMarkdownTableXls('# 没有表格', '空表')).rejects.toThrow('没有可导出的表格');
 });

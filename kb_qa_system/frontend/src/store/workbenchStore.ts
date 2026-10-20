@@ -16,7 +16,7 @@ import { answerMarkdown, type KnowledgeAnswerArtifact } from '@/localKnowledge/a
 import { buildDocumentMessages, documentExportContent, normalizeDocumentMarkdown, sha256Text, validateDocumentTask, type DocumentTaskInput } from '@/officeTasks/document';
 import { generationPreview, type GenerationPreview } from '@/services/generationPreview';
 import type { FinishReason } from '@/services/modelStream';
-import { validateWorkflow, workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
+import { isWorkflowModelNode, validateWorkflow, workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
 import { isDue, nextIntervalAt, scheduleEvent, validateWorkflowSchedule, type WorkflowSchedule } from '@/workflows/schedule';
 import type { ChartInput } from '@/officeTasks/chart';
 import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
@@ -274,7 +274,7 @@ async function pollWorkflowSchedules() {
         continue;
       }
       const cloud = definition.nodes.some(node => {
-        if (node.kind !== 'generate_document') return false;
+        if (!isWorkflowModelNode(node)) return false;
         const routeId = node.profileId || schedule.profileId;
         return routeId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(state.profiles.find(profile => profile.id === routeId)?.mode || '');
       });
@@ -1335,7 +1335,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         const seen = new Set<string>();
         while (current && !seen.has(current.id)) {
           seen.add(current.id);
-          const step = get().toolRuns.find(tool => tool.taskId === current!.id && tool.workflowNodeId === nodeId);
+          const step = get().toolRuns.find(tool => tool.taskId === current!.id && tool.workflowNodeId === nodeId && !tool.callId);
           if (step) return step;
           const skippedBefore = ordered.findIndex(node => node.id === current!.resumeFromNodeId);
           if (!current.resumedFromTaskId || ordered.findIndex(node => node.id === nodeId) >= skippedBefore) break;
@@ -1371,8 +1371,32 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         restoredCheckpoints.push({ step: restoredStep, artifact: restoredArtifact });
         completedResults.set(node.id, result);
       }
+      const loopNode = frozen.definition.nodes.find(node => node.id === resumeNodeId && node.kind === 'loop');
+      if (loopNode) {
+        const findIteration = (iteration: number) => {
+          let current: TaskRun | undefined = source;
+          const seen = new Set<string>();
+          while (current && !seen.has(current.id)) {
+            seen.add(current.id);
+            const step = get().toolRuns.find(tool => {
+              if (tool.taskId !== current!.id || tool.workflowNodeId !== loopNode.id || !tool.callId || !tool.arguments) return false;
+              try { return JSON.parse(tool.arguments).iteration === iteration; } catch { return false; }
+            });
+            if (step) return step;
+            current = current.resumedFromTaskId ? get().taskRuns.find(task => task.id === current!.resumedFromTaskId) : undefined;
+          }
+          return undefined;
+        };
+        for (let iteration = 1; iteration <= loopNode.loop!.maxIterations; iteration++) {
+          const step = findIteration(iteration);
+          if (!step || step.status !== 'succeeded' || step.finishReason !== 'stop' || step.result === undefined) break;
+          restoredCheckpoints.push({ step: { ...step, id: crypto.randomUUID(), warnings: [...new Set([...(step.warnings ?? []), '已恢复成功循环轮次，本次未重新执行。'])] } });
+          completedResults.set(`workflow-loop:${loopNode.id}:${iteration}`, step.result);
+          if (loopNode.loop!.stopWhen && step.result.includes(loopNode.loop!.stopWhen)) break;
+        }
+      }
     }
-    const modelNodes = frozen.definition.nodes.filter(node => node.kind === 'generate_document');
+    const modelNodes = frozen.definition.nodes.filter(isWorkflowModelNode);
     const usesModel = modelNodes.length > 0;
     const routes = new Map(modelNodes.map(node => {
       const routeId = node.profileId || profileId;

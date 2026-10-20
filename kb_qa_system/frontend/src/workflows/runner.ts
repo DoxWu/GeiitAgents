@@ -3,7 +3,7 @@ import { documentExportContent, normalizeDocumentMarkdown, sha256Text, type Docu
 import { checkChart, parseChartCsv } from '@/officeTasks/chart';
 import type { FinishReason } from '@/services/modelStream';
 import type { ToolRun, WorkArtifact } from '@/types/workbench';
-import { validateWorkflow, validateWorkflowInput, workflowOrder, type WorkflowCondition, type WorkflowDefinition, type WorkflowInput, type WorkflowNode } from './definition';
+import { isWorkflowModelNode, validateWorkflow, validateWorkflowInput, workflowOrder, type WorkflowCondition, type WorkflowDefinition, type WorkflowInput, type WorkflowNode } from './definition';
 
 export const WORKFLOW_SKIPPED_RESULT = '__geiit_workflow_skipped__';
 
@@ -25,8 +25,9 @@ export function evaluateWorkflowCondition(condition: WorkflowCondition, input: W
 }
 
 function toolName(node: WorkflowNode): ToolRun['tool'] {
-  return node.kind === 'condition' ? 'workflow.condition' : node.kind === 'generate_document' ? 'model.complete' : `office.${node.kind}`;
+  return node.kind === 'condition' ? 'workflow.condition' : node.kind === 'generate_document' || node.kind === 'loop' ? 'model.complete' : `office.${node.kind}`;
 }
+function loopIterationKey(nodeId: string, iteration: number) { return `workflow-loop:${nodeId}:${iteration}`; }
 
 export interface WorkflowResumeOptions {
   completedResults?: Map<string, string>;
@@ -67,15 +68,51 @@ export async function runWorkflow(taskId: string, definition: WorkflowDefinition
     }
     const sources = enabled.map(e => ({ step: graph.nodes.find(n => n.id === e.from)!.title, output: results.get(e.from)! }));
     const context = JSON.stringify({ ...(node.includeInputs ? { reference: values.reference, csv: values.csv } : {}), previousSteps: sources });
-    if (node.kind === 'generate_document' && context.length > 100000) throw new Error('前置步骤结果超过 100000 字符，请拆分工作流；不会静默截断。');
+    if (isWorkflowModelNode(node) && context.length > 100000) throw new Error('前置步骤结果超过 100000 字符，请拆分工作流；不会静默截断。');
     const step: ToolRun = { id: crypto.randomUUID(), taskId, workflowNodeId: node.id, tool: toolName(node), status: 'running', startedAt: new Date().toISOString() };
     await checkpoint({ step }); guard();
     let artifact: WorkArtifact | undefined, result: string, modelName: string | undefined, finishReason: FinishReason | undefined;
     try {
       if (node.kind === 'condition') {
         result = String(evaluateWorkflowCondition(node.condition!, values, sources.map(source => source.output).join('\n')));
-      } else if (node.kind === 'generate_document') {
-        const reply = await model({ title: node.title, instruction: node.text, sourceName: '工作流所选输入与前置步骤.json', sourceContent: context }, node); guard();
+      } else if (node.kind === 'generate_document' || node.kind === 'loop') {
+        let reply: { content: string; model: string; finishReason: FinishReason };
+        if (node.kind === 'loop') {
+          let previousIteration = '';
+          const maxIterations = node.loop!.maxIterations;
+          for (let iteration = 1; iteration <= maxIterations; iteration++) {
+            guard();
+            const resumed = options.completedResults?.get(loopIterationKey(node.id, iteration));
+            if (resumed !== undefined) {
+              previousIteration = resumed;
+              if (node.loop!.stopWhen && resumed.includes(node.loop!.stopWhen)) break;
+              continue;
+            }
+            const iterationStep: ToolRun = { id: crypto.randomUUID(), taskId, workflowNodeId: node.id, tool: 'workflow.loop-iteration', callId: crypto.randomUUID(),
+              arguments: JSON.stringify({ iteration, maxIterations }), status: 'running', startedAt: new Date().toISOString() };
+            await checkpoint({ step: iterationStep }); guard();
+            try {
+              const sourceContent = JSON.stringify({ priorContext: context, previousIteration: previousIteration || undefined, iteration, maxIterations });
+              if (sourceContent.length > 100000) throw new Error('循环步骤上下文超过 100000 字符。');
+              const instruction = `${node.text}\n\n这是第 ${iteration}/${maxIterations} 轮。${node.loop!.stopWhen ? `若已满足要求，请在输出中包含停止标记：${node.loop!.stopWhen}` : '完成本轮后返回可直接使用的完整成果。'}`;
+              const next = await model({ title: node.title, instruction, sourceName: '工作流循环上下文.json', sourceContent }, node);
+              guard();
+              if (next.finishReason !== 'stop') throw new Error('循环模型未报告正常完成，本轮结果不会进入后续步骤。');
+              if (next.content.length > 100000) throw new Error('循环模型结果超过 100000 字符。');
+              await checkpoint({ step: { ...iterationStep, status: 'succeeded', finishedAt: new Date().toISOString(), result: next.content, model: next.model, finishReason: next.finishReason } }); guard();
+              previousIteration = next.content; modelName = next.model;
+              if (node.loop!.stopWhen && previousIteration.includes(node.loop!.stopWhen)) break;
+            } catch (error) {
+              guard();
+              await checkpoint({ step: { ...iterationStep, status: 'failed', finishedAt: new Date().toISOString(), error: error instanceof Error ? error.message : '循环迭代失败。' } });
+              throw error;
+            }
+          }
+          reply = { content: previousIteration, model: modelName ?? 'unknown', finishReason: 'stop' };
+        } else {
+          reply = await model({ title: node.title, instruction: node.text, sourceName: '工作流所选输入与前置步骤.json', sourceContent: context }, node);
+        }
+        guard();
         const content = normalizeDocumentMarkdown(reply.content);
         finishReason = reply.finishReason; modelName = reply.model;
         artifact = { id: crypto.randomUUID(), taskId, kind: 'markdown', version: 1, name: node.title.replace(/[<>:"/\\|?*]/g, '_') + '.md',

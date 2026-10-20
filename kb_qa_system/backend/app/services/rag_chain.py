@@ -126,6 +126,7 @@ class RAGChainService:
         user_id: Optional[int] = None,
         document_ids: Optional[List[int]] = None,
         user_type: str = "regular",
+        rerank_mode: str = "current",
     ) -> List[Dict[str, Any]]:
         """
         检索相关文档片段（权限隔离版）
@@ -182,7 +183,11 @@ class RAGChainService:
             # 计算检索数量（启用 reranking 时扩大召回）
             # 作用：向量检索多召回候选（top_k × 倍数），cross-encoder 重排序后取 final_top_k
             #       高召回 + 高精度 = 兼顾不漏召和精确排序
-            if settings.ENABLE_RERANKING:
+            use_qwen = rerank_mode == "qwen3.7-text-rerank"
+            if use_qwen:
+                from app.services.qwen_reranker import MAX_CANDIDATES
+                search_k = min(MAX_CANDIDATES, final_top_k * settings.RERANKER_CANDIDATE_MULTIPLIER)
+            elif settings.ENABLE_RERANKING:
                 search_k = final_top_k * settings.RERANKER_CANDIDATE_MULTIPLIER
             else:
                 search_k = final_top_k
@@ -225,7 +230,10 @@ class RAGChainService:
             # Reranking 重排序
             # 作用：cross-encoder 对候选结果二次打分，提升 Top-K 精确度
             # 启用 reranking 且候选数大于 final_top_k 时才重排序（否则无意义）
-            if settings.ENABLE_RERANKING and len(results) > final_top_k:
+            if use_qwen:
+                from app.services.qwen_reranker import rerank_with_primary
+                results = rerank_with_primary(query, results, top_k=final_top_k)
+            elif settings.ENABLE_RERANKING and len(results) > final_top_k:
                 from app.services.reranker import reranker_service
                 rerank_start = _time.time()
                 results = reranker_service.rerank(query, results, top_k=final_top_k)
@@ -1175,6 +1183,7 @@ class RAGChainService:
         summary: Optional[str] = None,
         intent_switched: bool = False,
         user_type: str = "regular",
+        rerank_mode: str = "current",
     ) -> Dict[str, Any]:
         """
         问答（非流式）
@@ -1273,6 +1282,7 @@ class RAGChainService:
             user_id=user_id,
             document_ids=document_ids,
             user_type=user_type,
+            rerank_mode=rerank_mode,
         )
         retrieval_time_ms = int((_time.time() - retrieval_start) * 1000)
 
@@ -1516,6 +1526,7 @@ class RAGChainService:
         summary: Optional[str] = None,
         intent_switched: bool = False,
         user_type: str = "regular",
+        rerank_mode: str = "current",
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         问答（流式输出）
@@ -1607,6 +1618,7 @@ class RAGChainService:
             user_id=user_id,
             document_ids=document_ids,
             user_type=user_type,
+            rerank_mode=rerank_mode,
         )
         retrieval_time_ms = int((_time.time() - retrieval_start) * 1000)
 

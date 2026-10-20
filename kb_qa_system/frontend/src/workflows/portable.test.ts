@@ -19,10 +19,21 @@ it('roundtrips a portable definition with fresh local IDs and without model conn
 it.each([
   ['invalid JSON', '{'],
   ['unknown envelope fields', JSON.stringify({ format: 'geiit-workflow-definition', version: 1, exportedAt: new Date().toISOString(), workflow: { name: 'x', nodes: [], edges: [] }, secret: 'x' })],
-  ['unsupported version', JSON.stringify({ format: 'geiit-workflow-definition', version: 2, exportedAt: new Date().toISOString(), workflow: { name: 'x', nodes: [], edges: [] } })],
+  ['unsupported version', JSON.stringify({ format: 'geiit-workflow-definition', version: 3, exportedAt: new Date().toISOString(), workflow: { name: 'x', nodes: [], edges: [] } })],
   ['invalid reference', JSON.stringify({ format: 'geiit-workflow-definition', version: 1, exportedAt: new Date().toISOString(), workflow: { name: 'x', nodes: [newWorkflowNode('inspect_csv', 0)], edges: [{ from: 'missing', to: 'missing' }] } })],
 ])('rejects %s before a definition can be saved', (_name, value) => {
   expect(() => importWorkflowDefinition(value)).toThrow();
+});
+
+it('roundtrips bounded loop settings and still imports version 1 workflow files', () => {
+  const loop = newWorkflowNode('loop', 0); loop.loop = { maxIterations: 4, stopWhen: '[DONE]' };
+  const saved = { ...newWorkflow(), name: 'loop', revision: 1, nodes: [loop] };
+  const imported = importWorkflowDefinition(exportWorkflowDefinition(saved));
+  expect(imported.nodes[0]).toMatchObject({ kind: 'loop', loop: { maxIterations: 4, stopWhen: '[DONE]' } });
+  const oldNode = newWorkflowNode('inspect_csv', 0) as unknown as Record<string, unknown>;
+  delete oldNode.loop;
+  const v1 = JSON.stringify({ format: 'geiit-workflow-definition', version: 1, exportedAt: new Date().toISOString(), workflow: { name: 'legacy', nodes: [oldNode], edges: [] } });
+  expect(importWorkflowDefinition(v1).nodes[0].kind).toBe('inspect_csv');
 });
 
 it('rejects a cycle after remapping imported step identifiers', () => {

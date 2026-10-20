@@ -27,15 +27,32 @@ vi.mock("@/api/client", () => ({
   apiClient: mockApiClient,
 }));
 
-import { ask, askStream, getConversations, getConversationDetail, deleteConversation } from "@/api/chat";
+import { ask, askStream, regenerateStream, getConversations, getConversationDetail, deleteConversation } from "@/api/chat";
+import { setRerankMode } from '@/services/rerankPreference';
+import { safeStorage } from '@/utils/safeStorage';
+import { USER_STORAGE_KEY } from '@/utils/constants';
 import type { AnswerResponse, Conversation, ConversationListResponse } from "@/types/chat";
 
 describe("chat API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
   describe("ask", () => {
+    it('将显式选择同时用于非流式、流式及重新生成，默认可恢复', async () => {
+      safeStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ id: 17 }));
+      setRerankMode(17, 'qwen3.7-text-rerank');
+      await ask({ question: 'test' });
+      expect(mockApiClient.post.mock.calls.at(-1)?.[1]).toMatchObject({ rerank_mode: 'qwen3.7-text-rerank' });
+      await askStream({ question: 'test' }, {});
+      expect(mockApiClient.streamPost.mock.calls.at(-1)?.[1]).toMatchObject({ rerank_mode: 'qwen3.7-text-rerank' });
+      await regenerateStream({ conversation_id: 1 }, {});
+      expect(mockApiClient.streamPost.mock.calls.at(-1)?.[1]).toMatchObject({ rerank_mode: 'qwen3.7-text-rerank' });
+      setRerankMode(17, 'current');
+      await ask({ question: 'test' });
+      expect(mockApiClient.post.mock.calls.at(-1)?.[1]).toEqual({ question: 'test' });
+    });
     it("调用 POST /chat/ask 并返回回答", async () => {
       const mockResponse: AnswerResponse = {
         answer: "测试回答",

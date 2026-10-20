@@ -1,18 +1,20 @@
-"""One-shot provider and Resend acceptance checks using process environment only."""
+"""One-shot provider and email acceptance checks using process environment only."""
 
 from __future__ import annotations
 
 import argparse
 import os
 import re
+import smtplib
+import ssl
 import sys
+from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 import yaml
 from openai import OpenAI
-
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 PROVIDER_CONFIG = BACKEND_DIR / "app" / "core" / "model_provider" / "providers.yaml"
@@ -73,6 +75,10 @@ def safe_failure(error: BaseException) -> str:
         return "rate_limited"
     if isinstance(error, (TimeoutError, httpx.TimeoutException)):
         return "timeout"
+    if isinstance(error, smtplib.SMTPResponseException):
+        return f"smtp_{error.smtp_code}"
+    if isinstance(error, (smtplib.SMTPServerDisconnected, ConnectionError)):
+        return "connection_error"
     if isinstance(error, (httpx.RequestError,)):
         return "connection_error"
     if status is not None:
@@ -81,14 +87,12 @@ def safe_failure(error: BaseException) -> str:
 
 
 def probe_chat(item: dict, label: str) -> None:
-    client = OpenAI(
-        api_key=item["api_key"], base_url=item["api_base"], timeout=30, max_retries=0
-    )
+    client = OpenAI(api_key=item["api_key"], base_url=item["api_base"], timeout=30, max_retries=0)
     try:
         response = client.chat.completions.create(
             model=item["model"],
             messages=[{"role": "user", "content": "Reply with OK. Synthetic acceptance probe."}],
-            max_tokens=16,
+            max_tokens=256,
             temperature=0,
         )
         if not response.choices or not response.choices[0].message.content:
@@ -103,9 +107,7 @@ def probe_chat(item: dict, label: str) -> None:
 
 
 def probe_tools(item: dict, label: str) -> None:
-    client = OpenAI(
-        api_key=item["api_key"], base_url=item["api_base"], timeout=30, max_retries=0
-    )
+    client = OpenAI(api_key=item["api_key"], base_url=item["api_base"], timeout=30, max_retries=0)
     tool = {
         "type": "function",
         "function": {
@@ -124,8 +126,8 @@ def probe_tools(item: dict, label: str) -> None:
             model=item["model"],
             messages=[{"role": "user", "content": "Call acceptance_probe with marker set to ok."}],
             tools=[tool],
-            tool_choice={"type": "function", "function": {"name": "acceptance_probe"}},
-            max_tokens=32,
+            tool_choice="auto",
+            max_tokens=256,
             temperature=0,
         )
         calls = response.choices[0].message.tool_calls if response.choices else None
@@ -141,14 +143,12 @@ def probe_tools(item: dict, label: str) -> None:
 
 
 def probe_embedding(item: dict, label: str, expected_dimension: int) -> None:
-    client = OpenAI(
-        api_key=item["api_key"], base_url=item["api_base"], timeout=30, max_retries=0
-    )
+    client = OpenAI(api_key=item["api_key"], base_url=item["api_base"], timeout=30, max_retries=0)
     request: dict = {
         "model": item["model"],
         "input": "GeiIt provider acceptance probe; synthetic text only.",
     }
-    if item.get("supports_dimensions"):
+    if str(item.get("supports_dimensions", False)).strip().lower() in {"true", "1", "yes", "on"}:
         request["dimensions"] = expected_dimension
     try:
         response = client.embeddings.create(**request)
@@ -198,6 +198,62 @@ def send_resend_test(recipient: str) -> str:
     return "accepted" if message_id else "unknown:missing_provider_id"
 
 
+def preflight_smtp(recipient: str) -> list[str]:
+    issues: list[str] = []
+    for name in ("SMTP_HOST", "SMTP_PASSWORD", "EMAIL_FROM"):
+        if not os.environ.get(name):
+            issues.append(f"{name}: missing")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
+        issues.append("email recipient: invalid address")
+    try:
+        port = int(os.environ.get("SMTP_PORT", "465"))
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except ValueError:
+        issues.append("SMTP_PORT: must be between 1 and 65535")
+    use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"true", "1", "yes", "on"}
+    start_tls = os.environ.get("SMTP_START_TLS", "false").lower() in {"true", "1", "yes", "on"}
+    if use_tls and start_tls:
+        issues.append("SMTP_USE_TLS and SMTP_START_TLS: choose one TLS mode")
+    return issues
+
+
+def send_smtp_test(recipient: str) -> str:
+    message = EmailMessage()
+    message["From"] = os.environ["EMAIL_FROM"]
+    message["To"] = recipient
+    message["Subject"] = "GeiIt deployment acceptance test"
+    message.set_content(
+        "This is a one-time deployment acceptance test. No account or business data was included."
+    )
+    host = os.environ["SMTP_HOST"]
+    port = int(os.environ.get("SMTP_PORT", "465"))
+    timeout = int(os.environ.get("SMTP_TIMEOUT", "15"))
+    use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"true", "1", "yes", "on"}
+    start_tls = os.environ.get("SMTP_START_TLS", "false").lower() in {"true", "1", "yes", "on"}
+    client_type = smtplib.SMTP_SSL if use_tls else smtplib.SMTP
+    options = {"context": ssl.create_default_context()} if use_tls else {}
+    try:
+        with client_type(host, port, timeout=timeout, **options) as client:
+            if start_tls:
+                client.starttls(context=ssl.create_default_context())
+            username = os.environ.get("SMTP_USER", "")
+            if username:
+                client.login(username, os.environ["SMTP_PASSWORD"])
+            refused = client.send_message(message)
+    except smtplib.SMTPRecipientsRefused:
+        return "rejected:recipient_refused"
+    except smtplib.SMTPResponseException as error:
+        return f"rejected:{safe_failure(error)}"
+    except (TimeoutError, httpx.TimeoutException) as error:
+        return f"unknown:{safe_failure(error)}"
+    except (smtplib.SMTPServerDisconnected, ConnectionError, OSError) as error:
+        return f"unknown:{safe_failure(error)}"
+    except Exception as error:
+        return f"unknown:{safe_failure(error)}"
+    return "rejected:recipient_refused" if refused else "accepted"
+
+
 def preflight(providers: dict) -> list[str]:
     issues: list[str] = []
     primary_llm = endpoint(providers, "llm", "primary")
@@ -209,7 +265,9 @@ def preflight(providers: dict) -> list[str]:
     if not is_enabled(backup_llm):
         issues.append("deepseek_backup_llm: endpoint is disabled")
     if is_enabled(endpoint(providers, "embedding", "cloud_fallback")):
-        issues.append("embedding fallback must be disabled unless a compatible embedding service is configured")
+        issues.append(
+            "embedding fallback must be disabled unless a compatible embedding service is configured"
+        )
     try:
         expected_dimension = int(os.environ.get("EMBEDDING_DIMENSION", ""))
         if expected_dimension < 1:
@@ -271,18 +329,27 @@ def preflight_resend(recipient: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run one-shot provider and Resend deployment checks using environment variables only."
+        description="Run one-shot provider and email deployment checks using environment variables only."
     )
-    parser.add_argument("--preflight", action="store_true", help="check configuration without network calls")
-    parser.add_argument("--live", action="store_true", help="send synthetic model probes and one explicit test email")
-    parser.add_argument("--email-to", help="required recipient for the one-time Resend test email")
+    parser.add_argument(
+        "--preflight", action="store_true", help="check configuration without network calls"
+    )
+    parser.add_argument(
+        "--live", action="store_true", help="send synthetic model probes and one test email"
+    )
+    parser.add_argument(
+        "--email-provider",
+        choices=("http", "smtp"),
+        default=os.environ.get("EMAIL_PROVIDER", "http").lower(),
+        help="email transport for the one-time test",
+    )
+    parser.add_argument("--email-to", help="recipient; defaults to ADMIN_NOTIFY_EMAIL")
     args = parser.parse_args()
     if args.live == args.preflight:
         parser.error("choose exactly one of --preflight or --live")
-    if args.live and not args.email_to:
-        parser.error("--email-to is required with --live")
-    if args.live and os.environ.get("EMAIL_PROVIDER", "").lower() != "http":
-        parser.error("EMAIL_PROVIDER must be http for the configured Resend provider")
+    recipient = args.email_to or os.environ.get("ADMIN_NOTIFY_EMAIL", "")
+    if args.live and not recipient:
+        parser.error("--email-to or ADMIN_NOTIFY_EMAIL is required with --live")
     if args.live and os.environ.get("EMAIL_ENABLED", "").lower() not in {"true", "1", "yes", "on"}:
         parser.error("EMAIL_ENABLED must be enabled before live acceptance")
 
@@ -293,7 +360,11 @@ def main() -> int:
         return 2
     issues = preflight(providers)
     if args.live:
-        issues.extend(preflight_resend(args.email_to))
+        issues.extend(
+            preflight_resend(recipient)
+            if args.email_provider == "http"
+            else preflight_smtp(recipient)
+        )
     if issues:
         for issue in issues:
             print(f"FAIL preflight: {issue}")
@@ -326,17 +397,32 @@ def main() -> int:
         except RuntimeError:
             failed = True
 
-    email_result = send_resend_test(args.email_to)
+    email_result = (
+        send_resend_test(recipient) if args.email_provider == "http" else send_smtp_test(recipient)
+    )
     if email_result == "accepted":
-        print("PASS resend: provider accepted the one-time test message; check the recipient inbox")
+        print(
+            f"PASS {args.email_provider}: server accepted the one-time test message; check the recipient inbox"
+        )
     elif email_result.startswith("unknown:"):
-        print(f"UNKNOWN resend: {email_result[8:]}; check Resend Events before any retry")
+        event_source = (
+            "Resend Events"
+            if args.email_provider == "http"
+            else "the SMTP provider's delivery logs"
+        )
+        print(
+            f"UNKNOWN {args.email_provider}: {email_result[8:]}; check {event_source} before any retry"
+        )
         failed = True
     else:
-        print(f"FAIL resend: {email_result}; check configuration without sharing API keys")
+        print(
+            f"FAIL {args.email_provider}: {email_result}; check configuration without sharing credentials"
+        )
         failed = True
     print("INFO vision: not configured and not tested")
-    print("INFO application failover routing: static regression tests cover routing; live probe called each endpoint directly")
+    print(
+        "INFO application failover routing: static regression tests cover routing; live probe called each endpoint directly"
+    )
     return 1 if failed else 0
 
 

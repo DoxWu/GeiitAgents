@@ -3,7 +3,7 @@ import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
-import { NODE_LABELS, autoLayoutWorkflow, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
+import { NODE_LABELS, autoLayoutWorkflow, isWorkflowModelNode, maxWorkflowModelRequests, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { ToolArtifact } from './ToolArtifact';
 import { GenerationPreview } from './GenerationPreview';
@@ -43,10 +43,10 @@ export function Workflows() {
     return () => { mounted.current = false; window.removeEventListener('beforeunload', warn); };
   }, []);
   const chosen = profileId || store.profiles[0]?.id || (store.accountModel ? ACCOUNT_MODEL_ID : '');
-  const usesModel = draft.nodes.some(n => n.kind === 'generate_document');
-  const needsDefault = draft.nodes.some(n => n.kind === 'generate_document' && !n.profileId);
+  const usesModel = draft.nodes.some(isWorkflowModelNode);
+  const needsDefault = draft.nodes.some(n => isWorkflowModelNode(n) && !n.profileId);
   const routeId = (node: WorkflowNode) => node.profileId || chosen;
-  const routes = draft.nodes.filter(n => n.kind === 'generate_document').map(n => [n.id, routeId(n), store.profiles.find(p => p.id === routeId(n)), store.accountModel]);
+  const routes = draft.nodes.filter(isWorkflowModelNode).map(n => [n.id, routeId(n), store.profiles.find(p => p.id === routeId(n)), store.accountModel]);
   const cloud = routes.some(([, id, profile]) => id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes((profile as typeof store.profiles[number] | undefined)?.mode || ''));
   const signature = JSON.stringify([routes, store.accountModel]);
   useEffect(() => { setConsent(false); }, [signature]);
@@ -58,7 +58,7 @@ export function Workflows() {
   const run = pageRuns.find(t => t.id === selectedRun) ?? pageRuns[0];
   const taskNavigation = useTaskNavigation(run?.id);
   const runNeedsCloud = Boolean(run?.workflow?.definition.nodes.some(n => {
-    if (n.kind !== 'generate_document') return false;
+    if (!isWorkflowModelNode(n)) return false;
     const id = n.profileId || run.profileId;
     return id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(store.profiles.find(p => p.id === id)?.mode || '');
   }));
@@ -210,10 +210,14 @@ export function Workflows() {
       {node && <section className="grid min-w-0 gap-3 rounded border border-line p-4 sm:grid-cols-2" aria-label="步骤配置">
         <label className="work-label">步骤标题<input className="work-input" value={node.title} maxLength={80} onChange={e => patchNode(node.id, { title: e.target.value })} /></label>
         <button className="work-command justify-self-start self-end" onClick={() => { change({ ...draft, nodes: draft.nodes.filter(n => n.id !== node.id), edges: draft.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelected(''); }}>删除步骤及连线</button>
-        {node.kind === 'create_document' || node.kind === 'generate_document' ? <>
-          {node.kind === 'generate_document' && <label className="work-label sm:col-span-2">此步骤模型连接<select aria-label="此步骤模型连接" className="work-input" value={node.profileId || ''} onChange={e => patchNode(node.id, { profileId: e.target.value || undefined })}><option value="">使用工作流默认模型 · {store.profiles.find(p => p.id === chosen)?.name || (chosen === ACCOUNT_MODEL_ID ? '账号云端模型' : '未选择')}</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
-          <label className="work-label sm:col-span-2">{node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={node.kind === 'generate_document' ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={node.kind === 'generate_document' ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
-          <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{node.kind === 'generate_document' ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
+        {node.kind === 'create_document' || isWorkflowModelNode(node) ? <>
+          {isWorkflowModelNode(node) && <label className="work-label sm:col-span-2">此步骤模型连接<select aria-label="此步骤模型连接" className="work-input" value={node.profileId || ''} onChange={e => patchNode(node.id, { profileId: e.target.value || undefined })}><option value="">使用工作流默认模型 · {store.profiles.find(p => p.id === chosen)?.name || (chosen === ACCOUNT_MODEL_ID ? '账号云端模型' : '未选择')}</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
+          <label className="work-label sm:col-span-2">{isWorkflowModelNode(node) ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={isWorkflowModelNode(node) ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={isWorkflowModelNode(node) ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
+          <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{isWorkflowModelNode(node) ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
+          {node.kind === 'loop' && <>
+            <label className="work-label">最多迭代轮数<input aria-label="循环最大轮数" className="work-input" type="number" min={1} max={5} value={node.loop?.maxIterations ?? 3} onChange={e => patchNode(node.id, { loop: { maxIterations: Math.max(1, Math.min(5, Number(e.target.value) || 1)), stopWhen: node.loop?.stopWhen ?? '' } })} /></label>
+            <label className="work-label">提前停止标记<input aria-label="循环停止标记" className="work-input" maxLength={1000} value={node.loop?.stopWhen ?? ''} onChange={e => patchNode(node.id, { loop: { maxIterations: node.loop?.maxIterations ?? 3, stopWhen: e.target.value } })} /></label>
+          </>}
         </> : node.kind === 'condition' ? <>
           <label className="work-label">条件来源<select aria-label="条件来源" className="work-input" value={node.condition?.source || 'reference'} onChange={e => patchNode(node.id, { condition: { source: e.target.value as WorkflowConditionSource, operator: node.condition?.operator || 'contains', value: node.condition?.value || '' } })}><option value="reference">本次参考材料</option><option value="csv">本次 CSV</option><option value="previous">直接前置步骤结果</option></select></label>
           <label className="work-label">条件操作<select aria-label="条件操作" className="work-input" value={node.condition?.operator || 'contains'} onChange={e => patchNode(node.id, { condition: { source: node.condition?.source || 'reference', operator: e.target.value as WorkflowConditionOperator, value: node.condition?.value || '' } })}><option value="contains">包含</option><option value="not_contains">不包含</option><option value="equals">等于</option><option value="not_equals">不等于</option><option value="exists">有内容</option><option value="not_exists">为空</option><option value="gt">数字大于</option><option value="gte">数字大于等于</option><option value="lt">数字小于</option><option value="lte">数字小于等于</option></select></label>
@@ -241,7 +245,7 @@ export function Workflows() {
       <div className="flex flex-wrap items-center gap-2"><button type="button" className="work-command" onClick={() => inputFile.current?.click()}><FileUp size={16} />导入 CSV / XLSX</button><input ref={inputFile} hidden type="file" accept=".csv,.xlsx" aria-label="选择工作流 CSV 或 XLSX 文件" onChange={e => { void importInputFile(e.target.files?.[0]); e.target.value = ''; }} />{inputSheet && <span role="status" className="text-sm text-ink-secondary">工作表：{inputSheet}</span>}{inputError && <span role="alert" className="text-sm text-danger">{inputError}</span>}</div>
       <p className="text-xs text-ink-secondary">CSV 最多 50 行、12 列；输入随运行快照加密保存。节点不会读取其他文件。执行中可离开页签；锁库/关闭会中断，不自动重放。</p>
       {usesModel && <label className="work-label">工作流默认模型<select aria-label="工作流默认模型" className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setConsent(false); }}><option value="">选择模型</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
-      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果（最多 {draft.nodes.filter(n => n.kind === 'generate_document').length} 次模型请求，可能计费）</label>}
+      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果（最多 {maxWorkflowModelRequests(draft.nodes)} 次模型请求，可能计费）</label>}
       <button className="work-command bg-brand text-white" disabled={busy || dirty || !draft.revision || Boolean(store.storageError) || needsDefault && !chosen || Boolean(cloud && !consent) || runs.some(r => r.status === 'running' && r.workflow?.definition.id === draft.id)} onClick={() => void start()}>手动运行工作流</button>
     </section>
     <section aria-label="工作流触发器" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">触发器</h2>
@@ -251,7 +255,7 @@ export function Workflows() {
         <button className="work-command self-end" disabled={!draft.revision || busy} onClick={() => void addSchedule()}>添加触发器</button></div>
       <ul className="space-y-2">{(store.workflowSchedules ?? []).filter(item => item.workflowId === draft.id).map(item => {
         const itemCloud = draft.nodes.some(node => {
-          if (node.kind !== 'generate_document') return false;
+          if (!isWorkflowModelNode(node)) return false;
           const routeId = node.profileId || item.profileId;
           return routeId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(store.profiles.find(profile => profile.id === routeId)?.mode || '');
         });

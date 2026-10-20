@@ -141,6 +141,17 @@ it('allows a generating node to override the default connection and invalidates 
   await user.selectOptions(screen.getByLabelText('此步骤模型连接'), '');
   expect(run).toBeDisabled();
 });
+it('configures a bounded workflow loop and includes its request ceiling in cloud consent', async () => {
+  const d = { ...newWorkflow(), revision: 1, nodes: [newWorkflowNode('loop', 0)] };
+  d.nodes[0].profileId = 'relay';
+  store.setState({ workflows: [d], profiles: [{ id: 'relay', name: 'cloud', mode: 'relay', baseUrl: 'https://example.test/v1', model: 'fixture', hasKey: true }] });
+  const user = userEvent.setup(); render(<Workflows />); await user.selectOptions(screen.getByLabelText('已保存工作流'), d.id);
+  expect(screen.getByLabelText('循环最大轮数')).toHaveValue(3);
+  fireEvent.change(screen.getByLabelText('循环最大轮数'), { target: { value: '4' } });
+  await user.type(screen.getByLabelText('循环停止标记'), '[READY]');
+  await user.click(screen.getByRole('button', { name: '保存工作流' }));
+  expect(screen.getByText(/最多 4 次模型请求/)).toBeVisible();
+});
 it('does not mark unsaved edits saved when retrying unrelated storage failures', async () => {
   store.setState({ storageError: 'quota' });
   const user = userEvent.setup(); render(<Workflows />);

@@ -36,8 +36,8 @@ it('applies the selected local style without changing Markdown content', async (
   expect(meetingXml).toContain('w:pgSz w:w="11906" w:h="16838"');
   expect(businessStyles).toContain('w:color w:val="1F4E79"');
   expect(meetingStyles).toContain('w:color w:val="0F6B78"');
-  expect(business.converterVersion).toBe('markdown-docx/4:business:-,-,-,-,-');
-  expect(meeting.converterVersion).toBe('markdown-docx/4:meeting:-,-,-,-,-');
+  expect(business.converterVersion).toBe('markdown-docx/5:business:-,-,-,-,-,-,-,-');
+  expect(meeting.converterVersion).toBe('markdown-docx/5:meeting:-,-,-,-,-,-,-,-');
   expect(await businessZip.file('word/document.xml')!.async('string')).toContain('正文');
 });
 
@@ -53,7 +53,7 @@ it('applies bounded page and typography overrides to the DOCX package', async ()
   expect(styles).toContain('<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial"');
   expect(styles).toContain('<w:sz w:val="28"/>');
   expect(styles).toContain('<w:spacing w:after="140" w:line="360"');
-  expect(result.converterVersion).toBe('markdown-docx/4:meeting:Letter,Arial,14,1.5,0.75');
+  expect(result.converterVersion).toBe('markdown-docx/5:meeting:Letter,Arial,14,1.5,0.75,-,-,-');
 });
 
 it.each([
@@ -86,6 +86,21 @@ it('rejects unsupported page and typography values', async () => {
   await expect(markdownToDocx('# 标题', '样式', 'standard', { paperSize: 'Legal' as never })).rejects.toThrow('纸张');
   await expect(markdownToDocx('# 标题', '样式', 'standard', { fontSize: 999 as never })).rejects.toThrow('字号');
   await expect(markdownToDocx('# 标题', '样式', 'standard', { extra: true } as never)).rejects.toThrow('未知选项');
+});
+
+it('adds an updateable table of contents, page numbers, a header and explicit page breaks', async () => {
+  const result = await markdownToDocx('# Overview\n\nFirst page.\n\n<!-- pagebreak -->\n\n## Details\n\nSecond page.', 'Report', 'business', {
+    tableOfContents: true, pageNumbers: true, headerText: 'Operations report',
+  });
+  const zip = await JSZip.loadAsync(result.bytes);
+  const document = await zip.file('word/document.xml')!.async('string');
+  expect(document).toContain('TOC');
+  expect(document).toContain('w:pageBreakBefore');
+  expect(document).toContain('Overview');
+  expect(await zip.file('word/header1.xml')!.async('string')).toContain('Operations report');
+  expect(await zip.file('word/footer1.xml')!.async('string')).toContain('PAGE');
+  expect(await zip.file('word/settings.xml')!.async('string')).toContain('w:updateFields');
+  expect(result.warnings).toEqual([]);
 });
 
 it('keeps untrusted HTML, links, images and footnotes inert and explains fidelity limits', async () => {

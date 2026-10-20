@@ -19,14 +19,14 @@
     ImageProcessor.extract(ctx) 提取图片、OCR、生成描述，写入 ctx.images。
 """
 
-import os
 import logging
-import hashlib
-from typing import List, Optional
+import os
+import re
+import time
 
 from app.services.document_pipeline.context import (
-    PipelineContext,
     ExtractedImage,
+    PipelineContext,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class ImageProcessor:
             懒加载 OCR 引擎和多模态客户端管理器引用，避免启动时加载。
             多模态客户端由 ModelProviderManager 统一管理（含重试/熔断/降级）。
         """
-        self._tesseract_available: Optional[bool] = None
+        self._tesseract_available: bool | None = None
         self._manager = None
 
     # ============================================
@@ -115,23 +115,32 @@ class ImageProcessor:
 
             # 创建图片存储目录
             # 作用：提取的图片保存到磁盘，便于后续引用
-            image_dir = os.path.join(
-                os.path.dirname(ctx.file_path),
-                f"images_{ctx.document_id}"
-            )
+            image_dir = os.path.join(os.path.dirname(ctx.file_path), f"images_{ctx.document_id}")
             os.makedirs(image_dir, exist_ok=True)
 
             doc = fitz.open(ctx.file_path)
-            images: List[ExtractedImage] = []
+            images: list[ExtractedImage] = []
             image_id_counter = 0
+            image_budget = {"count": 0, "bytes": 0}
+            deadline = time.monotonic() + settings.PARSER_MAX_SECONDS
 
             try:
                 for page_num, page in enumerate(doc, start=1):
+                    if time.monotonic() > deadline:
+                        ctx.add_issue("图片 OCR 超过文档处理时间预算，剩余图片已跳过。")
+                        break
+                    page_image_refs = page.get_images(full=True)
                     page_images = self._extract_images_from_page(
-                        page, page_num, image_id_counter, image_dir, ctx
+                        page,
+                        page_num,
+                        image_id_counter,
+                        image_dir,
+                        ctx,
+                        image_budget=image_budget,
+                        deadline=deadline,
                     )
                     images.extend(page_images)
-                    image_id_counter += len(page_images)
+                    image_id_counter += len(page_image_refs)
             finally:
                 doc.close()
 
@@ -170,7 +179,10 @@ class ImageProcessor:
         start_id: int,
         image_dir: str,
         ctx: PipelineContext,
-    ) -> List[ExtractedImage]:
+        *,
+        image_budget: dict,
+        deadline: float,
+    ) -> list[ExtractedImage]:
         """
         从单页提取图片
 
@@ -201,9 +213,24 @@ class ImageProcessor:
         image_list = page.get_images(full=True)
 
         for idx, img_info in enumerate(image_list):
+            if time.monotonic() > deadline:
+                ctx.add_issue("图片 OCR 超过文档处理时间预算，剩余图片已跳过。")
+                break
+            if image_budget["count"] >= settings.PARSER_MAX_IMAGES:
+                ctx.add_issue("PDF 图片数量超过处理上限，剩余图片已跳过。")
+                break
+            image_budget["count"] += 1
             xref = img_info[0]
 
             try:
+                declared_width, declared_height = img_info[2], img_info[3]
+                if (
+                    declared_width <= 0
+                    or declared_height <= 0
+                    or declared_width * declared_height > settings.PARSER_MAX_IMAGE_PIXELS
+                ):
+                    ctx.add_issue("PDF 图片尺寸超过像素处理上限，已跳过。")
+                    continue
                 # 提取图片二进制
                 # 作用：doc.extract_image 返回 {"image": bytes, "ext": "png", ...}
                 doc = page.parent
@@ -214,16 +241,29 @@ class ImageProcessor:
 
                 if not image_bytes:
                     continue
+                if len(image_bytes) > settings.PARSER_MAX_IMAGE_BYTES:
+                    ctx.add_issue("PDF 单张图片超过字节大小上限，已跳过。")
+                    continue
+                if image_budget["bytes"] + len(image_bytes) > settings.PARSER_MAX_IMAGE_TOTAL_BYTES:
+                    ctx.add_issue("PDF 图片总字节数超过处理上限，剩余图片已跳过。")
+                    break
 
                 # 检查图片尺寸（避免过小图片）
                 # 作用：装饰性小图标无检索价值
                 width = base_image.get("width", 0)
                 height = base_image.get("height", 0)
+                if width <= 0 or height <= 0 or width * height > settings.PARSER_MAX_IMAGE_PIXELS:
+                    ctx.add_issue("PDF 图片尺寸超过像素处理上限，已跳过。")
+                    continue
                 if width * height < self._MIN_IMAGE_SIZE:
                     continue
 
+                image_budget["bytes"] += len(image_bytes)
+
                 # 保存图片到磁盘
-                image_filename = f"page{page_number}_img{idx}.{image_ext}"
+                if not re.fullmatch(r"[a-z0-9]{1,8}", image_ext.lower()):
+                    image_ext = "png"
+                image_filename = f"page{page_number}_img{idx}.{image_ext.lower()}"
                 image_path = os.path.join(image_dir, image_filename)
                 with open(image_path, "wb") as f:
                     f.write(image_bytes)
@@ -241,6 +281,10 @@ class ImageProcessor:
                 # 无任何文本信息则跳过
                 # 作用：纯装饰图无价值
                 if not ocr_text and not description:
+                    try:
+                        os.remove(image_path)
+                    except OSError:
+                        pass
                     continue
 
                 image = ExtractedImage(
@@ -254,9 +298,7 @@ class ImageProcessor:
                 images.append(image)
 
             except Exception as e:
-                logger.warning(
-                    f"页面 {page_number} 图片 {idx} 提取失败: {e}"
-                )
+                logger.warning(f"页面 {page_number} 图片 {idx} 提取失败: {e}")
                 continue
 
         return images
@@ -290,10 +332,16 @@ class ImageProcessor:
             import pytesseract
             from PIL import Image
 
-            image = Image.open(image_path)
             # OCR 识别
             # 作用：chi_sim+eng 支持中英文混合识别
-            text = pytesseract.image_to_string(image, lang=self._OCR_LANG)
+            from app.core.config import settings
+
+            with Image.open(image_path) as image:
+                if image.width * image.height > settings.PARSER_MAX_IMAGE_PIXELS:
+                    return ""
+                text = pytesseract.image_to_string(
+                    image, lang=self._OCR_LANG, timeout=settings.PARSER_OCR_TIMEOUT_SECONDS
+                )
 
             # 清理
             text = " ".join(text.split())
@@ -319,6 +367,7 @@ class ImageProcessor:
 
         try:
             import pytesseract
+
             # 尝试调用 tesseract 命令
             pytesseract.get_tesseract_version()
             self._tesseract_available = True
@@ -379,6 +428,7 @@ class ImageProcessor:
         """
         if self._manager is None:
             from app.core.model_provider import get_model_manager
+
             self._manager = get_model_manager()
 
         try:

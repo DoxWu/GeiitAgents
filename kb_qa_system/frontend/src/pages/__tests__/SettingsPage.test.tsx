@@ -130,6 +130,7 @@ function renderPage() {
 describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockAuthStore.user = {
       id: 1,
       username: "testuser",
@@ -143,6 +144,16 @@ describe("SettingsPage", () => {
   it("渲染页面标题", () => {
     renderPage();
     expect(screen.getByText("设置")).toBeInTheDocument();
+  });
+
+  it("重排默认保持现状，选择后在重新打开设置时保留", async () => {
+    const user = userEvent.setup();
+    const view = renderPage();
+    expect(screen.getByRole('combobox', { name: '重排方案' })).toHaveValue('current');
+    await user.selectOptions(screen.getByRole('combobox', { name: '重排方案' }), 'qwen3.7-text-rerank');
+    view.unmount();
+    renderPage();
+    expect(screen.getByRole('combobox', { name: '重排方案' })).toHaveValue('qwen3.7-text-rerank');
   });
 
   it("显示用户名", () => {

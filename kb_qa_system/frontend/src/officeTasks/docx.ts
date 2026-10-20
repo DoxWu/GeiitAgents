@@ -1,11 +1,11 @@
-import { AlignmentType, BorderStyle, Document, HeadingLevel, LevelFormat, Packer, Paragraph, Table, TableCell, TableLayoutType, TableRow, TextRun, WidthType, type IRunOptions } from 'docx';
+import { AlignmentType, BorderStyle, Document, Footer, HeadingLevel, Header, LevelFormat, PageNumber, Packer, Paragraph, Table, TableCell, TableLayoutType, TableOfContents, TableRow, TextRun, WidthType, type IRunOptions } from 'docx';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import type { Root, RootContent, PhrasingContent, List, ListItem } from 'mdast';
 import { isDocxStyle, validateDocxFormat, type DocxFormatOptions, type DocxStyle } from './docxStyles';
 
-export const DOCX_CONVERTER_VERSION = 'markdown-docx/4';
+export const DOCX_CONVERTER_VERSION = 'markdown-docx/5';
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 export interface DocxResult { bytes: ArrayBuffer; warnings: string[]; converterVersion: string }
 
@@ -74,7 +74,9 @@ export async function markdownToDocx(content: string, title: string, style: Docx
         case 'blockquote': warnings.add('引用内容按普通段落保留。'); return blocks(node.children);
         case 'code': return node.value.split('\n').map(line => new Paragraph({ children: [text(line || ' ', { font: 'Consolas', size: 20 })], spacing: { after: 0, line: 260 }, shading: { fill: 'F2F2F2' } }));
         case 'thematicBreak': return [new Paragraph({ children: [text('———')], spacing: { after: 160 } })];
-        case 'html': warnings.add('HTML 以原始文字保留，不执行或渲染。'); return [new Paragraph({ children: [text(node.value)] })];
+        case 'html':
+          if (/^<!--\s*pagebreak\s*-->$/i.test(node.value.trim())) return [new Paragraph({ pageBreakBefore: true, children: [] })];
+          warnings.add('HTML 以原始文字保留，不执行或渲染。'); return [new Paragraph({ children: [text(node.value)] })];
         case 'definition': return [];
         case 'footnoteDefinition': warnings.add('脚注以编号和正文段落保留。'); return [new Paragraph({ children: [text(`[${node.identifier}]`)] }), ...blocks(node.children)];
         case 'table': {
@@ -96,13 +98,22 @@ export async function markdownToDocx(content: string, title: string, style: Docx
     });
   }
   const children = blocks(root.children);
+  if (options.tableOfContents) children.splice(Math.min(1, children.length), 0,
+    new Paragraph({ children: [text('目录', { bold: true, size: 32 })], spacing: { after: 160 }, keepNext: true }),
+    new TableOfContents('TOC', { hyperlink: true, headingStyleRange: '1-3' }),
+    new Paragraph({ pageBreakBefore: true, children: [] }),
+  );
   const headings = ['heading1', 'heading2', 'heading3', 'heading4', 'heading5', 'heading6'];
   const font = options.fontFamily ?? 'Calibri';
   const styles = Object.fromEntries(headings.map((key, i) => [key, { run: { color: theme.accent, bold: true, size: [32, 28, 26, 24, 23, 22][i] }, paragraph: { spacing: { before: 240, after: 120 } } }]));
-  const doc = new Document({ creator: 'GeiIt Agents', title, description: `${DOCX_CONVERTER_VERSION}:${style}`,
+  const header = options.headerText?.trim() ? new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [text(options.headerText.trim(), { color: '666666', size: 18 })] })] }) : undefined;
+  const footer = options.pageNumbers ? new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [text('第 '), new TextRun({ children: [PageNumber.CURRENT] }), text(' 页')] })] }) : undefined;
+  const doc = new Document({ creator: 'GeiIt Agents', title, description: `${DOCX_CONVERTER_VERSION}:${style}`, features: { updateFields: true },
     styles: { default: { document: { run: { font: { ascii: font, hAnsi: font, eastAsia: options.fontFamily ?? 'Microsoft YaHei' }, size: (options.fontSize ?? 11) * 2, color: '000000' }, paragraph: { spacing: { after: 140, line: Math.round((options.lineSpacing ?? 1.25) * 240) } } }, title: { run: { color: theme.accent, bold: true, size: 40 }, paragraph: { spacing: { after: 240, ...(style === 'meeting' ? { alignment: AlignmentType.CENTER } : {}) } } }, ...styles } },
-    numbering: { config: numbering }, sections: [{ properties: { page: { size: { width: page.width, height: page.height }, margin } }, children }] });
+    numbering: { config: numbering }, sections: [{ headers: header ? { default: header } : undefined, footers: footer ? { default: footer } : undefined,
+      properties: { page: { size: { width: page.width, height: page.height }, margin } }, children }] });
   const buffer = await Packer.toArrayBuffer(doc);
-  const formatVersion = [options.paperSize, options.fontFamily, options.fontSize, options.lineSpacing, options.marginInches].map(value => value ?? '-').join(',');
+  const formatVersion = [options.paperSize, options.fontFamily, options.fontSize, options.lineSpacing, options.marginInches,
+    options.tableOfContents, options.pageNumbers, options.headerText].map(value => value ?? '-').join(',');
   return { bytes: buffer, warnings: [...warnings], converterVersion: `${DOCX_CONVERTER_VERSION}:${style}:${formatVersion}` };
 }

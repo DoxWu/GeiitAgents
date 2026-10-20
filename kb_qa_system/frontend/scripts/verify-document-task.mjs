@@ -156,6 +156,7 @@ try {
   await page.getByRole('button', { name: '导出 PPTX', exact: true }).click();
   const pptxDownload = await pptxEvent;
   expect(pptxDownload.suggestedFilename()).toMatch(/-v2\.pptx$/);
+  await pptxDownload.saveAs(path.join(output, 'revision-v2.pptx'));
   const pptxZip = await JSZip.loadAsync(await readFile(await pptxDownload.path()));
   const slideFiles = Object.keys(pptxZip.files).filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name));
   const presentationText = (await Promise.all(slideFiles.map(async name =>
@@ -166,6 +167,7 @@ try {
   await page.getByRole('button', { name: '导出 XLSX', exact: true }).click();
   const xlsxDownload = await xlsxEvent;
   expect(xlsxDownload.suggestedFilename()).toMatch(/-v2\.xlsx$/);
+  await xlsxDownload.saveAs(path.join(output, 'revision-v2.xlsx'));
   const xlsxZip = await JSZip.loadAsync(await readFile(await xlsxDownload.path()));
   const sheet = await xlsxZip.file('xl/worksheets/sheet1.xml').async('string');
   expect(sheet).toContain('=SUM(1,2)'); expect(sheet).toContain('t="inlineStr"'); expect(sheet).not.toMatch(/<f(?:\s|>)/);
@@ -173,6 +175,7 @@ try {
   await page.getByRole('button', { name: '导出 XLS', exact: true }).click();
   const xlsDownload = await xlsEvent;
   expect(xlsDownload.suggestedFilename()).toMatch(/-v2\.xls$/);
+  await xlsDownload.saveAs(path.join(output, 'revision-v2.xls'));
   const xlsBytes = new Uint8Array(await readFile(await xlsDownload.path()));
   expect(Array.from(xlsBytes.slice(0, 8))).toEqual([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
   const legacyWorkbook = LegacyXLS.read(xlsBytes, { type: 'array' });

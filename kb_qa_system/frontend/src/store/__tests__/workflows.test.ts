@@ -161,6 +161,31 @@ it('resumes a failed workflow from saved checkpoints without rerunning completed
   await store.getState().removeTask(failed.id);
   expect((await importVaultBackup((await store.getState().exportWorkbenchBackup('5678', false)).file, '5678')).data.taskRuns).toEqual([]);
 });
+it('resumes a loop from encrypted successful iteration checkpoints without replaying them', async () => {
+  const loop = newWorkflowNode('loop', 0); loop.loop = { maxIterations: 3, stopWhen: '[READY]' };
+  const d = await store.getState().saveWorkflow({ ...newWorkflow(), nodes: [loop] });
+  await store.getState().saveProfile(profile, 'fixture-key');
+  vi.mocked(completeModel).mockImplementationOnce(async (_p, _k, _m, _s, _chunk, finish) => { finish?.('stop'); return 'first draft'; })
+    .mockRejectedValueOnce(new Error('iteration unavailable'));
+  await expect(store.getState().startWorkflow(d.id, d.revision, input, profile.id, false)).rejects.toThrow('iteration unavailable');
+  const failed = store.getState().taskRuns[0];
+  const succeeded = store.getState().toolRuns.find(tool => tool.taskId === failed.id && tool.tool === 'workflow.loop-iteration' && tool.status === 'succeeded');
+  expect(succeeded?.result).toBe('first draft');
+  const backup = await store.getState().exportWorkbenchBackup('5678', false);
+  expect((await importVaultBackup(backup.file, '5678')).data.toolRuns?.find(tool => tool.id === succeeded?.id)?.result).toBe('first draft');
+
+  vi.mocked(completeModel).mockImplementation(async (_p, _k, messages, _s, _chunk, finish) => {
+    expect(messages[1].content).toContain('first draft'); finish?.('stop'); return 'final [READY]';
+  });
+  const resumedId = await store.getState().resumeWorkflow(failed.id, undefined, false);
+  const resumed = store.getState().taskRuns.find(task => task.id === resumedId)!;
+  expect(resumed.status).toBe('succeeded');
+  expect(resumed.resumedFromTaskId).toBe(failed.id);
+  expect(vi.mocked(completeModel)).toHaveBeenCalledTimes(3);
+  expect(store.getState().toolRuns.filter(tool => tool.taskId === resumedId && tool.tool === 'workflow.loop-iteration' && tool.status === 'succeeded')).toHaveLength(2);
+  expect(resumed.toolRunIds.map(id => store.getState().toolRuns.find(tool => tool.id === id)?.warnings ?? []).flat())
+    .toContain('已恢复成功循环轮次，本次未重新执行。');
+});
 it('retries a failed continuation after reload using the original snapshot and cloned artifacts', async () => {
   const a = newWorkflowNode('generate_document', 0), b = newWorkflowNode('generate_document', 1);
   const d = await store.getState().saveWorkflow({ ...newWorkflow(), nodes: [a, b], edges: [{ from: a.id, to: b.id }] });

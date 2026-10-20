@@ -28,6 +28,7 @@ export interface SourceItem {
 
 /** 提问请求（对齐后端 QuestionRequest Schema） */
 export interface QuestionRequest {
+  rerank_mode?: import('@/services/rerankPreference').RerankMode;
   /** 问题内容（1-2000 字符） */
   question: string;
   /** 会话ID，不填则创建新会话 */
@@ -40,6 +41,7 @@ export interface QuestionRequest {
 
 /** 重新生成请求（对齐后端 RegenerateRequest Schema） */
 export interface RegenerateRequest {
+  rerank_mode?: import('@/services/rerankPreference').RerankMode;
   /** 会话ID（必填，正整数） */
   conversation_id: number;
   /** 要重新生成的 AI 消息ID（可选，不填则默认重新生成最后一条 AI 消息） */

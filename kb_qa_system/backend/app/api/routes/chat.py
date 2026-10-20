@@ -214,6 +214,7 @@ def ask_question(
             user_type=getattr(current_user, "user_type", "regular"),  # 任务5：透传用户类型，guest 仅检索公共库
             summary=effective_summary,
             intent_switched=intent_result.switched,
+            rerank_mode=question_data.rerank_mode,
         )
 
         # 任务5：guest 用户提问计数 +1（仅在 LLM 调用成功后计数，失败不计数）
@@ -472,6 +473,7 @@ async def ask_question_stream(
     # 任务5：捕获用户类型，供 event_stream 闭包内 guest 计数使用
     user_type_val = getattr(current_user, "user_type", "regular")
     question_text = question_data.question
+    rerank_mode = question_data.rerank_mode
 
     async def event_stream():
         """
@@ -516,6 +518,7 @@ async def ask_question_stream(
                 user_type=user_type_val,  # 任务5：透传用户类型，guest 仅检索公共库
                 summary=effective_summary,
                 intent_switched=intent_result.switched,
+                rerank_mode=rerank_mode,
             ):
                 # 转为 SSE 格式
                 # 格式：data: {json}\n\n
@@ -823,6 +826,7 @@ async def regenerate_answer_stream(
     user_id_val = current_user.id
     user_type_val = getattr(current_user, "user_type", "regular")
     question_text = user_message.content
+    rerank_mode = request_data.rerank_mode
     parent_msg_id = target_msg.id  # 原消息 ID（已被删除，但 ID 值仍可用于追溯）
 
     async def event_stream():
@@ -852,6 +856,7 @@ async def regenerate_answer_stream(
                 user_type=user_type_val,
                 summary=effective_summary,
                 intent_switched=intent_result.switched,
+                rerank_mode=rerank_mode,
             ):
                 sse_data = f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 yield sse_data

@@ -127,6 +127,40 @@ it('does not impose the model JSON context limit on local-only nodes', async () 
   const d = { ...newWorkflow(), nodes: [node] };
   await expect(runWorkflow('task', d, { reference: 'a'.repeat(50000), csv }, new AbortController().signal, vi.fn(), async () => {})).resolves.toContain('1 个步骤');
 });
+
+it('runs bounded model iterations until a stop marker and stores each iteration checkpoint', async () => {
+  const loop = newWorkflowNode('loop', 0); loop.loop = { maxIterations: 5, stopWhen: '[READY]' };
+  const definition = { ...newWorkflow(), nodes: [loop] }, events: ToolCheckpoint[] = [];
+  const model = vi.fn().mockResolvedValueOnce({ content: 'draft', model: 'fixture', finishReason: 'stop' })
+    .mockResolvedValueOnce({ content: 'final [READY]', model: 'fixture', finishReason: 'stop' });
+  await runWorkflow('task', definition, input, new AbortController().signal, model, async event => { events.push(event); });
+  expect(model).toHaveBeenCalledTimes(2);
+  expect(events.filter(event => event.step.tool === 'workflow.loop-iteration').map(event => event.step.status)).toEqual(['running', 'succeeded', 'running', 'succeeded']);
+  expect(events.find(event => event.artifact)?.artifact?.content).toContain('final [READY]');
+  expect(model.mock.calls[1][0].sourceContent).toContain('draft');
+});
+
+it('resumes a bounded loop from saved iteration results without replaying successful requests', async () => {
+  const loop = newWorkflowNode('loop', 0); loop.loop = { maxIterations: 3, stopWhen: '' };
+  const definition = { ...newWorkflow(), nodes: [loop] }, model = vi.fn().mockResolvedValue({ content: 'continued', model: 'fixture', finishReason: 'stop' });
+  const checkpoint = vi.fn();
+  await runWorkflow('task', definition, input, new AbortController().signal, model, checkpoint, {
+    completedResults: new Map([[`workflow-loop:${loop.id}:1`, 'saved iteration']]),
+  });
+  expect(model).toHaveBeenCalledTimes(2);
+  expect(model.mock.calls[0][0].sourceContent).toContain('saved iteration');
+  expect(checkpoint.mock.calls.filter(([event]) => event.step.tool === 'workflow.loop-iteration' && event.step.status === 'succeeded')).toHaveLength(2);
+});
+
+it('limits loop iterations and total model request budgets before running', () => {
+  const loop = newWorkflowNode('loop', 0); loop.loop = { maxIterations: 6, stopWhen: '' };
+  expect(() => validateWorkflow({ ...newWorkflow(), nodes: [loop] })).toThrow();
+  loop.loop.maxIterations = 5;
+  const nodes = Array.from({ length: 6 }, (_, index) => { const node = newWorkflowNode('loop', index); node.loop = { maxIterations: 5, stopWhen: '' }; return node; });
+  expect(validateWorkflow({ ...newWorkflow(), nodes }).nodes).toHaveLength(6);
+  nodes.push(newWorkflowNode('generate_document', 6));
+  expect(() => validateWorkflow({ ...newWorkflow(), nodes })).toThrow('6 个模型步骤');
+});
 it('passes only direct predecessor outputs and opted-in inputs into model source data', async () => {
   const parent = newWorkflowNode('create_document', 0), unrelated = newWorkflowNode('create_document', 1), generated = newWorkflowNode('generate_document', 2);
   parent.includeInputs = false; parent.text = 'SELECTED'; unrelated.text = 'NOT_SELECTED'; generated.includeInputs = false;

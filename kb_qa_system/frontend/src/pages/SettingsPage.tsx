@@ -28,6 +28,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useToastStore } from "@/store/toastStore";
 import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
 import { exportUserData } from "@/api/auth";
+import { getRerankMode, setRerankMode, type RerankMode } from '@/services/rerankPreference';
 
 /** 格式化日期显示 */
 function formatDate(isoString: string): string {
@@ -50,6 +51,7 @@ export default function SettingsPage() {
   const { success, error } = useToastStore();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [, refreshRerank] = useState(0);
 
   /** 返回上一页 */
   const handleBack = () => {
@@ -129,6 +131,19 @@ export default function SettingsPage() {
 
       {/* 内容区 */}
       <main className="mx-auto max-w-3xl space-y-6 px-4 py-8">
+        <section className="rounded-lg border border-line bg-surface p-5">
+          <h2 className="mb-4 text-sm font-semibold text-ink">云端知识库检索</h2>
+          <label className="grid gap-2 text-sm">重排方案
+            <select className="work-input" value={getRerankMode(user.id)} onChange={event => {
+              setRerankMode(user.id, event.target.value as RerankMode);
+              refreshRerank(value => value + 1);
+            }}>
+              <option value="current">保持现状（默认）</option>
+              <option value="qwen3.7-text-rerank">qwen3.7-text-rerank（主模型 API）</option>
+            </select>
+          </label>
+          <p className="mt-3 text-xs text-ink-secondary">仅保存在本机当前账号与服务器下，对后续云端知识库问答及重新生成生效。默认沿用服务器现有方案；选择 Qwen 后复用阿里云主模型 API 配置，候选片段会发给该服务，可能产生额外费用。调用失败或超时则使用原检索顺序。本地知识库继续使用独立配置。</p>
+        </section>
         {/* 快捷导航 */}
         <section className="rounded-lg border border-line bg-surface p-5">
           <h2 className="mb-4 text-sm font-semibold text-ink">快捷功能</h2>

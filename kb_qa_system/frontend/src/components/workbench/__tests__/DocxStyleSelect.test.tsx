@@ -16,4 +16,8 @@ it('offers named local DOCX presets and reports the selected style', () => {
   expect(onFormatChange).toHaveBeenCalledWith({ paperSize: 'A4' });
   fireEvent.change(screen.getByRole('combobox', { name: 'Word 字号' }), { target: { value: '14' } });
   expect(onFormatChange).toHaveBeenLastCalledWith({ fontSize: 14 });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Word 自动目录' }));
+  expect(onFormatChange).toHaveBeenLastCalledWith({ tableOfContents: true });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Word 页眉文字' }), { target: { value: '工作报告' } });
+  expect(onFormatChange).toHaveBeenLastCalledWith({ headerText: '工作报告' });
 });

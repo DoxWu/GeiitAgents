@@ -9,6 +9,7 @@
 
 import { apiClient, type StreamCallbacks } from "./client";
 import { API_PATHS } from "@/utils/constants";
+import { rerankRequestPreference } from '@/services/rerankPreference';
 import type {
   QuestionRequest,
   RegenerateRequest,
@@ -26,7 +27,7 @@ import type {
  * @returns 回答响应
  */
 export async function ask(data: QuestionRequest): Promise<AnswerResponse> {
-  return apiClient.post<AnswerResponse>(API_PATHS.CHAT_ASK, data);
+  return apiClient.post<AnswerResponse>(API_PATHS.CHAT_ASK, { ...rerankRequestPreference(), ...data });
 }
 
 /**
@@ -48,7 +49,7 @@ export async function askStream(
 ): Promise<void> {
   return apiClient.streamPost(
     API_PATHS.CHAT_ASK_STREAM,
-    data,
+    { ...rerankRequestPreference(), ...data },
     callbacks,
     signal,
   );
@@ -73,7 +74,7 @@ export async function regenerateStream(
 ): Promise<void> {
   return apiClient.streamPost(
     API_PATHS.CHAT_REGENERATE_STREAM,
-    data,
+    { ...rerankRequestPreference(), ...data },
     callbacks,
     signal,
   );

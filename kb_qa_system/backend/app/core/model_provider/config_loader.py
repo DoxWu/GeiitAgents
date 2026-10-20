@@ -19,8 +19,8 @@
 import logging
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Optional
 
 from app.core.model_provider.schemas import (
     HealthCheckConfig,
@@ -43,7 +43,9 @@ _DEFAULT_CONFIG_PATH = Path(__file__).parent / "providers.yaml"
 _PLACEHOLDER_PATTERN = re.compile(r"\$\{([^${}:]+)(?::([^${}]*))?\}")
 
 
-def _resolve_env_placeholders(text: str, _depth: int = 0) -> str:
+def _resolve_env_placeholders(
+    text: str, _depth: int = 0, *, environment: Mapping[str, str] | None = None
+) -> str:
     """
     解析 ${VAR} 和 ${VAR:default} 占位符为环境变量值
 
@@ -81,7 +83,7 @@ def _resolve_env_placeholders(text: str, _depth: int = 0) -> str:
         default_value = match.group(2)  # 可能为 None
 
         # 优先取环境变量
-        env_value = os.environ.get(var_name)
+        env_value = (os.environ if environment is None else environment).get(var_name)
         if env_value is not None:
             return env_value
 
@@ -141,7 +143,7 @@ class ConfigLoader:
     """
 
     @staticmethod
-    def load(config_path: Optional[str] = None) -> ModelProviderConfig:
+    def load(config_path: str | None = None) -> ModelProviderConfig:
         """
         加载配置文件
 
@@ -159,7 +161,14 @@ class ConfigLoader:
 
         try:
             raw_text = path.read_text(encoding="utf-8")
-            resolved_text = _resolve_env_placeholders(raw_text)
+            # Match Settings' .env location and precedence without mutating process env.
+            from dotenv import dotenv_values
+
+            environment = {
+                key: value for key, value in dotenv_values(".env").items() if value is not None
+            }
+            environment.update(os.environ)
+            resolved_text = _resolve_env_placeholders(raw_text, environment=environment)
 
             # 延迟导入 PyYAML，避免未安装时影响整个模块加载
             import yaml

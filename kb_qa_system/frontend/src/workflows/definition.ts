@@ -1,4 +1,4 @@
-export type WorkflowNodeKind = 'inspect_csv' | 'render_chart' | 'create_document' | 'generate_document' | 'condition';
+export type WorkflowNodeKind = 'inspect_csv' | 'render_chart' | 'create_document' | 'generate_document' | 'condition' | 'loop';
 export type WorkflowConditionSource = 'reference' | 'csv' | 'previous';
 export type WorkflowConditionOperator = 'contains' | 'not_contains' | 'equals' | 'not_equals' | 'exists' | 'not_exists' | 'gt' | 'gte' | 'lt' | 'lte';
 export interface WorkflowCondition {
@@ -6,11 +6,12 @@ export interface WorkflowCondition {
   operator: WorkflowConditionOperator;
   value: string;
 }
+export interface WorkflowLoop { maxIterations: number; stopWhen: string }
 export interface WorkflowNode {
   id: string; kind: WorkflowNodeKind; title: string; x: number; y: number;
   text: string; includeInputs: boolean; profileId?: string;
   categoryColumn: number; valueColumns: number[]; chartType: 'bar' | 'horizontal_bar' | 'line' | 'pie' | 'scatter'; unit: string;
-  condition?: WorkflowCondition;
+  condition?: WorkflowCondition; loop?: WorkflowLoop;
 }
 export interface WorkflowDefinition {
   id: string; name: string; revision: number; updatedAt: string;
@@ -18,12 +19,18 @@ export interface WorkflowDefinition {
 }
 export interface WorkflowInput { reference: string; csv: string }
 export const NODE_LABELS: Record<WorkflowNodeKind, string> = {
-  inspect_csv: '检查 CSV', render_chart: '生成图表', create_document: '整理 Markdown', generate_document: '模型生成文档', condition: '条件分支',
+  inspect_csv: '检查 CSV', render_chart: '生成图表', create_document: '整理 Markdown', generate_document: '模型生成文档', condition: '条件分支', loop: '有界循环',
 };
 export function newWorkflowNode(kind: WorkflowNodeKind, index: number): WorkflowNode {
   return { id: crypto.randomUUID(), kind, title: NODE_LABELS[kind], x: 24 + (index % 3) * 250, y: 24 + Math.floor(index / 3) * 150,
-    text: kind === 'generate_document' ? '根据参考材料与前置步骤结果整理报告，标注待确认事项。' : '# 工作记录', includeInputs: true,
-    categoryColumn: 0, valueColumns: [1], chartType: 'bar', unit: '', ...(kind === 'condition' ? { condition: { source: 'reference' as const, operator: 'contains' as const, value: '' } } : {}) };
+    text: ['generate_document', 'loop'].includes(kind) ? '根据参考材料与前置步骤结果整理报告，标注待确认事项。' : '# 工作记录', includeInputs: true,
+    categoryColumn: 0, valueColumns: [1], chartType: 'bar', unit: '',
+    ...(kind === 'condition' ? { condition: { source: 'reference' as const, operator: 'contains' as const, value: '' } } : {}),
+    ...(kind === 'loop' ? { loop: { maxIterations: 3, stopWhen: '' } } : {}) };
+}
+export function isWorkflowModelNode(node: Pick<WorkflowNode, 'kind'>): boolean { return node.kind === 'generate_document' || node.kind === 'loop'; }
+export function maxWorkflowModelRequests(nodes: WorkflowNode[]): number {
+  return nodes.reduce((sum, node) => sum + (node.kind === 'loop' ? node.loop?.maxIterations ?? 1 : node.kind === 'generate_document' ? 1 : 0), 0);
 }
 export function newWorkflow(): WorkflowDefinition {
   return { id: crypto.randomUUID(), name: '新工作流', revision: 0, updatedAt: new Date().toISOString(), nodes: [], edges: [] };
@@ -46,17 +53,17 @@ export function validateWorkflow(value: unknown, allowEmpty = false): WorkflowDe
   if (!Array.isArray(d.nodes) || (!allowEmpty && !d.nodes.length) || d.nodes.length > 12) fail('工作流需要 1–12 个步骤。');
   if (!Array.isArray(d.edges) || d.edges.length > 66) fail();
   for (const value of d.nodes) {
-    const n = record(value, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit', 'condition']);
-    text(n.id, 200, 1); text(n.title, 80, allowEmpty ? 0 : 1); text(n.text, n.kind === 'generate_document' ? 10000 : 50000);
+    const n = record(value, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit', 'condition', 'loop']);
+    text(n.id, 200, 1); text(n.title, 80, allowEmpty ? 0 : 1); text(n.text, isWorkflowModelNode({ kind: n.kind as WorkflowNodeKind }) ? 10000 : 50000);
     text(n.unit, 20); integer(n.x, 0, 2000); integer(n.y, 0, 2000); integer(n.categoryColumn, 0, 11);
     if (typeof n.kind !== 'string' || !Object.prototype.hasOwnProperty.call(NODE_LABELS, n.kind) || typeof n.includeInputs !== 'boolean'
       || !['bar', 'horizontal_bar', 'line', 'pie', 'scatter'].includes(String(n.chartType)) || !Array.isArray(n.valueColumns) || !n.valueColumns.length || n.valueColumns.length > 6
       || n.chartType === 'pie' && n.valueColumns.length !== 1) fail();
     n.valueColumns.forEach(v => integer(v, 0, 11));
     if (new Set(n.valueColumns).size !== n.valueColumns.length || n.valueColumns.includes(n.categoryColumn)) fail('数值列不能重复或与分类列相同。');
-    if (!allowEmpty && n.kind === 'generate_document' && !n.text.trim()) fail('模型步骤需要生成要求。');
+    if (!allowEmpty && isWorkflowModelNode({ kind: n.kind as WorkflowNodeKind }) && !n.text.trim()) fail('模型步骤需要生成要求。');
     if (n.profileId !== undefined) {
-      if (n.kind !== 'generate_document') fail('只有模型步骤可以指定模型连接。');
+      if (!isWorkflowModelNode({ kind: n.kind as WorkflowNodeKind })) fail('只有模型步骤可以指定模型连接。');
       text(n.profileId, 200, 1);
     }
     if (n.kind === 'condition') {
@@ -65,6 +72,10 @@ export function validateWorkflow(value: unknown, allowEmpty = false): WorkflowDe
         || !['contains', 'not_contains', 'equals', 'not_equals', 'exists', 'not_exists', 'gt', 'gte', 'lt', 'lte'].includes(String(condition.operator))) fail();
       text(condition.value, 1000);
     } else if (n.condition !== undefined) fail('条件只能用于条件步骤。');
+    if (n.kind === 'loop') {
+      const loop = record(n.loop, ['maxIterations', 'stopWhen']);
+      integer(loop.maxIterations, 1, 5); text(loop.stopWhen, 1000);
+    } else if (n.loop !== undefined) fail('有界循环参数只能用于循环步骤。');
     if ([...n.title + n.unit].some(c => c.charCodeAt(0) < 32)) fail('步骤标题与单位不能包含控制字符。');
   }
   const definition = value as WorkflowDefinition;
@@ -85,7 +96,8 @@ export function validateWorkflow(value: unknown, allowEmpty = false): WorkflowDe
     if (!ids.has(e.from) || !ids.has(e.to) || e.from === e.to || pairs.has(pair)) fail('连线包含缺失步骤、自连接或重复连接。');
     pairs.add(pair);
   }
-  if (definition.nodes.filter(n => n.kind === 'generate_document').length > 6) fail('每个工作流最多 6 个模型步骤。');
+  if (definition.nodes.filter(n => n.kind === 'generate_document' || n.kind === 'loop').length > 6) fail('每个工作流最多 6 个模型步骤。');
+  if (maxWorkflowModelRequests(definition.nodes) > 30) fail('每个工作流最多发起 30 次模型请求。');
   workflowOrder(definition);
   return JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
 }

@@ -12,6 +12,9 @@ export function DocxStyleSelect({ value, onChange, format, onFormatChange, disab
       <label className="work-label">字号<select aria-label="Word 字号" className="work-input" value={format.fontSize ?? ''} disabled={disabled} onChange={event => patch('fontSize', event.target.value)}><option value="">跟随样式</option>{DOCX_FONT_SIZES.map(value => <option key={value} value={value}>{value} pt</option>)}</select></label>
       <label className="work-label">行距<select aria-label="Word 行距" className="work-input" value={format.lineSpacing ?? ''} disabled={disabled} onChange={event => patch('lineSpacing', event.target.value)}><option value="">跟随样式</option>{DOCX_LINE_SPACINGS.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       <label className="work-label col-span-2">页边距<select aria-label="Word 页边距" className="work-input" value={format.marginInches ?? ''} disabled={disabled} onChange={event => patch('marginInches', event.target.value)}><option value="">跟随样式</option>{DOCX_MARGINS.map(value => <option key={value} value={value}>{value} 英寸</option>)}</select></label>
+      <label className="col-span-2 flex items-center gap-2"><input aria-label="Word 自动目录" type="checkbox" checked={format.tableOfContents ?? false} disabled={disabled} onChange={event => onFormatChange({ ...format, tableOfContents: event.target.checked })} />自动目录（在 Word 中更新域）</label>
+      <label className="col-span-2 flex items-center gap-2"><input aria-label="Word 页码" type="checkbox" checked={format.pageNumbers ?? false} disabled={disabled} onChange={event => onFormatChange({ ...format, pageNumbers: event.target.checked })} />页脚页码</label>
+      <label className="work-label col-span-2">页眉<input aria-label="Word 页眉文字" className="work-input" maxLength={120} value={format.headerText ?? ''} disabled={disabled} onChange={event => onFormatChange({ ...format, headerText: event.target.value || undefined })} /></label>
     </div></details>
   </div>;
 }

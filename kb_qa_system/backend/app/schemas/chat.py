@@ -6,7 +6,7 @@
 """
 
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
@@ -29,6 +29,7 @@ class QuestionRequest(BaseModel):
             "idempotency_key": "req-abc-123"
         }
     """
+    rerank_mode: Literal["current", "qwen3.7-text-rerank"] = "current"
     question: str = Field(
         ...,
         min_length=1,
@@ -128,6 +129,7 @@ class RegenerateRequest(BaseModel):
             "idempotency_key": "req-abc-123"
         }
     """
+    rerank_mode: Literal["current", "qwen3.7-text-rerank"] = "current"
     # L-5 修复：conversation_id 添加 ge=1 正整数校验
     conversation_id: int = Field(
         ...,

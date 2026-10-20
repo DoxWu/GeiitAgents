@@ -12,10 +12,13 @@ try {
   $word.DisplayAlerts = 0
   $word.AutomationSecurity = 3
   $document = $word.Documents.Open($InputDocx, $false, $true, $false)
+  [void]$document.Fields.Update()
+  foreach ($toc in $document.TablesOfContents) { $toc.Update() }
   $document.Repaginate()
   $pages = $document.ComputeStatistics(2)
   $paragraphs = $document.Paragraphs.Count
   $tables = $document.Tables.Count
+  $tableOfContents = $document.TablesOfContents.Count
   $document.ExportAsFixedFormat($OutputPdf, 17)
   $document.Close($false)
   [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($document)
@@ -23,7 +26,7 @@ try {
   $word.Quit()
   [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($word)
   $word = $null
-  [pscustomobject]@{ pages = $pages; paragraphs = $paragraphs; tables = $tables; pdfBytes = (Get-Item -LiteralPath $OutputPdf).Length } | ConvertTo-Json -Compress
+  [pscustomobject]@{ pages = $pages; paragraphs = $paragraphs; tables = $tables; tableOfContents = $tableOfContents; pdfBytes = (Get-Item -LiteralPath $OutputPdf).Length } | ConvertTo-Json -Compress
 } finally {
   if ($document) { try { $document.Close($false) } catch {}; [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($document) }
   if ($word) { try { $word.Quit() } catch {}; [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) }

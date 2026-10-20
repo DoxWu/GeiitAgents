@@ -21,6 +21,7 @@ const markdown = `# Quarterly Operations Review\n\nThis synthetic report checks 
 const fixtures = [
   { name: 'quarterly-operations-review', title: 'Quarterly Operations Review', markdown, font: 'Arial', margin: '0.75', tables: 8 },
   { name: 'chinese-long-table', title: '长文档回归样例', markdown: docxRegressionFixture(), font: 'Microsoft YaHei', margin: '1.5', tables: 1 },
+  { name: 'enhanced-layout', title: '排版增强验收', markdown: '# 排版增强验收\n\n## 项目概要\n\n这份合成报告验证页眉、页脚页码和可更新目录。\n\n## 验收明细\n\n| 项目 | 状态 |\n| --- | --- |\n| 合成任务 | 完成 |\n\n<!-- pagebreak -->\n\n## 后续计划\n\n手动分页后内容完整保留。', font: 'Microsoft YaHei', margin: '0.75', tables: 1, enhanced: true },
 ];
 const results = [];
 const user = { id: 902, username: 'pagination-fixture', email: 'pagination@example.test', is_active: true, is_superuser: false, user_type: 'regular', created_at: '' };
@@ -69,6 +70,9 @@ try {
   await page.getByLabel('Word 字号').selectOption('11');
   await page.getByLabel('Word 行距').selectOption('1.15');
   await page.getByLabel('Word 页边距').selectOption(fixture.margin);
+  await page.getByLabel('Word 自动目录').setChecked(Boolean(fixture.enhanced));
+  await page.getByLabel('Word 页码').setChecked(Boolean(fixture.enhanced));
+  await page.getByLabel('Word 页眉文字').fill(fixture.enhanced ? '合成项目 · 排版验收' : '');
   const pending = page.waitForEvent('download', { timeout: 40000 });
   await page.getByRole('button', { name: '导出 DOCX', exact: true }).click();
   const download = await pending, docxPath = path.join(fixtureOutput, `${fixture.name}.docx`);
@@ -77,7 +81,7 @@ try {
   const word = await run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/render-docx-with-word.ps1'), '-InputDocx', docxPath, '-OutputPdf', pdfPath], { encoding: 'utf8', windowsHide: true, timeout: 180000 });
   const metrics = JSON.parse(word.stdout.trim().split(/\r?\n/).at(-1));
   const pdf = await getDocument({ data: new Uint8Array(await readFile(pdfPath)), useSystemFonts: true }).promise;
-  expect(pdf.numPages).toBe(metrics.pages); expect(metrics.pages).toBeGreaterThanOrEqual(5); expect(metrics.paragraphs).toBeGreaterThan(100); expect(metrics.tables).toBe(fixture.tables);
+  expect(pdf.numPages).toBe(metrics.pages); expect(metrics.pages).toBeGreaterThanOrEqual(fixture.enhanced ? 3 : 5); expect(metrics.paragraphs).toBeGreaterThan(fixture.enhanced ? 10 : 100); expect(metrics.tables).toBe(fixture.tables);
   const renderedPages = [], pageTexts = [], tablePages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const pageProxy = await pdf.getPage(pageNumber), viewport = pageProxy.getViewport({ scale: 1.45 });
@@ -113,11 +117,17 @@ try {
   if (index === 0) {
     for (let record = 1; record <= 48; record++) expect(extracted).toContain(`Record ${record} documents`);
     expect(extracted).toContain('Final Checks');
-  } else {
+  } else if (index === 1) {
     for (let record = 1; record <= 18; record++) expect(extracted).toContain(`段落-${record}：`);
     for (let row = 1; row <= 120; row++) expect(extracted).toContain(`行-${row}`);
     for (let line = 1; line <= 80; line++) expect(extracted).toContain(`line_${line}:`);
     expect(extracted).toContain('结束标记：全文应完整保留。'); expect(tablePages.length).toBeGreaterThan(1);
+  } else {
+    expect(extracted.replace(/\s+/g, '')).toContain('合成项目·排版验收');
+    expect(extracted).toContain('后续计划');
+    expect(extracted).toContain('手动分页后内容完整保留。');
+    expect(metrics.tableOfContents).toBe(1);
+    for (const text of pageTexts) expect(text).toMatch(/第\s*\d+\s*页/);
   }
   const encrypted = await readVaultCiphertext(page);
   expect(JSON.parse(encrypted).ciphertext).toBeTruthy(); expect(encrypted).not.toContain(fixture.markdown); expect(errors).toEqual([]);
