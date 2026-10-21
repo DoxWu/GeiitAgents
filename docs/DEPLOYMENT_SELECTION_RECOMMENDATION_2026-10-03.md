@@ -44,7 +44,7 @@
 Railway 可以启动当前后端和前端镜像，但当前代码仍有三个部署耦合：
 
 1. 文档上传和异步解析依赖共享的 `/app/uploads`；API 和独立 Worker 服务没有共享本地文件系统。
-2. Celery beat 需要独立的常驻进程；把 API、Worker、beat 拆分后还要重新确认重复调度和文件可见性。
+2. `ROLE=api+worker` 会把 Beat 作为受监管子进程启动；Railway 必须保持单副本，并将 Beat schedule 文件放在持久卷中，不能单独扩容或并行启动第二个 Beat。
 3. Railway PostgreSQL 是否可用 `pgvector` 不能只看变量注入，必须在目标实例执行扩展检查并验证迁移。
 
 如果必须使用 Railway，首发应将后端设为一个 `ROLE=api+worker` 服务，保持单副本，并把前端通过 `BACKEND_URL` 反代到后端；等上传文件迁移到对象存储或确认 RWX 后，再考虑拆分 Worker。

@@ -109,11 +109,11 @@ supervise_api_worker() {
     wait -n "$WORKER_PID" "$BEAT_PID" "$API_PID"
     CHILD_STATUS=$?
     set -e
-    echo "A required worker/scheduler process exited; stopping the API container."
+    echo "A required worker/scheduler process exited with status ${CHILD_STATUS}; stopping the API container."
     kill -TERM "$API_PID" 2>/dev/null || true
     wait "$API_PID" 2>/dev/null || true
     stop_api_worker_children
-    return "$CHILD_STATUS"
+    return 1
 }
 
 # --------------------------------------------

@@ -55,7 +55,7 @@ docker-compose build          # 重新构建镜像
 
 ## 二、Railway 生产部署
 
-Railway 部署后端 API、Celery Worker 两个服务，外加 Railway 提供的 PostgreSQL 和 Redis 插件。
+Railway 首发使用一个单副本 `ROLE=api+worker` 后端服务，同时运行 API、Celery Worker 和 Beat，外加 Railway 提供的 PostgreSQL 和 Redis 插件。不要拆分 Worker 或扩为多副本，除非上传文件已迁移到共享存储且 Beat 保持唯一。
 
 ### 1. 创建 Railway 项目并添加插件
 
@@ -76,29 +76,30 @@ Railway 部署后端 API、Celery Worker 两个服务，外加 Railway 提供的
 2. **Settings → Root Directory** 设为 `kb_qa_system/backend`（railway.json 所在目录）。
 3. Railway 会自动识别 `railway.json`，用 Dockerfile 构建并启动。
 4. 在 **Variables** 中配置环境变量（见下表），关键变量：
-   - `ROLE=api`
+   - `ROLE=api+worker`
    - `ENVIRONMENT=production`
    - `DEBUG=False`
    - `SECRET_KEY=<随机长字符串>`
-   - `OPENAI_API_KEY=<你的 Key>`
+   - `ALIYUN_API_KEY`、`ALIYUN_API_BASE`、`ALIYUN_LLM_MODEL`
+   - `ALIYUN_EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`
+   - `DEEPSEEK_API_KEY`、`DEEPSEEK_API_BASE`、`DEEPSEEK_LLM_MODEL`、`DEEPSEEK_LLM_ENABLED=true`
    - `DATABASE_URL` → 引用 PostgreSQL 插件变量 `${{Postgres.DATABASE_URL}}`
    - `REDIS_URL` → 引用 Redis 插件变量 `${{Redis.REDIS_URL}}`
    - `CELERY_BROKER_URL` → `${{Redis.REDIS_URL}}`
    - `CELERY_RESULT_BACKEND` → `${{Redis.REDIS_URL}}`
-5. **Settings → Networking → Generate Domain** 生成公网域名。
-6. 部署完成后访问 `https://<你的域名>/health` 验证。
+   - `UPLOAD_DIR=/app/data/uploads`
+   - `CELERY_BEAT_SCHEDULE_FILE=/app/data/celerybeat-schedule`
+   - `MIGRATE_ON_STARTUP=false`
+   - `DB_RECOVERY_ENABLED=false`
+5. 在后端服务 **Settings → Volumes** 添加持久卷并挂载到 `/app/data`；将副本数保持为 1。
+6. **Settings → Networking → Generate Domain** 生成公网域名。
+7. 部署完成后访问 `https://<你的域名>/ready` 验证 API、数据库和 Redis。
 
-> 启动时 `entrypoint.sh` 会自动执行 `alembic upgrade head` 完成数据库迁移。
+> `railway.json` 的 release phase 执行数据库迁移；应用启动时校验 schema。入口脚本在同一服务中启动并监管 API、Worker 和 Beat，任一子进程退出都会使容器失败并按 Railway 重启策略恢复。
 
-### 3. 部署 Celery Worker 服务
+### 3. Worker 与定时任务
 
-1. 在同一 Railway 项目中 **New Service → GitHub Repo**，选择同一仓库。
-2. **Root Directory** 同样设为 `kb_qa_system/backend`。
-3. **Variables** 中配置：
-   - `ROLE=worker`
-   - 与 API 相同的 `DATABASE_URL`、`REDIS_URL`、`CELERY_BROKER_URL`、`OPENAI_API_KEY` 等
-   - `CELERY_WORKER_CONCURRENCY=2`
-4. Worker 不需要暴露端口，不需要 Generate Domain。
+`ROLE=api+worker` 已启动 Celery Worker 与 Beat，不要另建 `ROLE=worker` 或 `ROLE=beat` 服务，否则会失去本地上传文件共享，或产生重复定时任务。检查同一后端服务日志中的 Worker `ready` 和 Beat scheduler 启动消息；确认 `/app/data/celerybeat-schedule` 在重启后仍存在。
 
 ### 4. 环境变量完整清单
 
@@ -131,8 +132,10 @@ Railway 部署后端 API、Celery Worker 两个服务，外加 Railway 提供的
 
 | ROLE | 说明 | 启动命令 |
 | --- | --- | --- |
-| `api` | FastAPI 服务（含自动迁移） | `alembic upgrade head && uvicorn app.main:app` |
+| `api` | FastAPI 服务；迁移由启动配置或 Railway release phase 控制 | `/app/entrypoint.sh` |
+| `api+worker` | FastAPI、Celery Worker、Beat（受监管；单副本） | `/app/entrypoint.sh` |
 | `worker` | Celery Worker（异步任务） | `celery -A app.core.celery_app worker` |
+| `beat` | Celery 定时调度器（仅在已有唯一实例及持久卷时单独使用） | `celery -A app.core.celery_app beat` |
 | `flower` | Flower 监控（可选） | `celery -A app.core.celery_app flower` |
 
 ---

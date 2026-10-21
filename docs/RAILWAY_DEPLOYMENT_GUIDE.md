@@ -3,7 +3,7 @@
 > 本指南将带你从零开始，将 GeiIt 企业知识库完整部署到 Railway 平台。
 >
 > **预计部署时间**：30–60 分钟
-> **部署架构**：前端（nginx） + 后端 API（FastAPI） + Worker（Celery） + PostgreSQL(pgvector) + Redis
+> **部署架构**：前端（nginx） + 单副本后端（FastAPI、Celery Worker、Beat） + PostgreSQL(pgvector) + Redis
 
 ---
 
@@ -15,7 +15,7 @@
 4. [第 2 步：添加 PostgreSQL 数据库](#第-2-步添加-postgresql-数据库)
 5. [第 3 步：添加 Redis 缓存](#第-3-步添加-redis-缓存)
 6. [第 4 步：部署后端 API 服务](#第-4-步部署后端-api-服务)
-7. [第 5 步：部署 Celery Worker 服务](#第-5-步部署-celery-worker-服务)
+7. [第 5 步：启用 Worker 与 Beat](#第-5-步启用-worker-与-beat)
 8. [第 6 步：部署前端服务](#第-6-步部署前端服务)
 9. [第 7 步：验证部署](#第-7-步验证部署)
 10. [第 8 步：配置自定义域名（可选）](#第-8-步配置自定义域名可选)
@@ -59,8 +59,7 @@
 | 服务 | 镜像 | 端口 | 作用 |
 |------|------|------|------|
 | 前端 | nginx:1.25-alpine | 80 | 静态资源 + SPA 路由 |
-| 后端 API | python:3.11-slim | 8000 | FastAPI REST API |
-| Worker | python:3.11-slim | — | Celery 异步任务（文档解析/向量化） |
+| 后端（单副本） | python:3.11-slim | 8000 | FastAPI、Celery Worker 与 Beat；同一受监管进程组 |
 | PostgreSQL | Railway 插件 | 5432 | 主数据库 + pgvector 向量存储 |
 | Redis | Railway 插件 | 6379 | 缓存 + 限流 + 任务队列 + Token 黑名单 |
 
@@ -201,14 +200,23 @@ Redis 用于：缓存、限流、Token 黑名单、Celery 任务队列。
 | `ENVIRONMENT` | `production` | 生产环境标识 |
 | `DEBUG` | `False` | 关闭调试模式 |
 | `SECRET_KEY` | （第 2.3 步生成的密钥） | JWT 签名密钥（≥32 字符） |
-| `OPENAI_API_KEY` | `sk-your-key` | LLM API Key |
-| `OPENAI_API_BASE` | `https://api.openai.com/v1` | LLM API 地址（智谱用 `https://open.bigmodel.cn/api/paas/v4`） |
-| `LLM_MODEL_NAME` | `gpt-3.5-turbo` | 主模型名称（智谱用 `glm-4`） |
-| `EMBEDDING_MODEL_NAME` | `text-embedding-ada-002` | Embedding 模型（智谱用 `embedding-2`） |
+| `ALIYUN_API_KEY` | 由部署密钥管理器注入 | 阿里云主 LLM 与 Embedding 凭据 |
+| `ALIYUN_API_BASE` | 按账号地域/工作空间填写 | 阿里云 OpenAI 兼容端点 |
+| `ALIYUN_LLM_MODEL` | 由部署者选择 | 阿里云主模型 ID |
+| `ALIYUN_EMBEDDING_MODEL` | 由部署者选择 | 阿里云向量模型 ID |
+| `EMBEDDING_DIMENSION` | 与模型和数据库列一致 | 向量输出维度；更改前应计划旧向量迁移 |
+| `EMBEDDING_SUPPORTS_DIMENSIONS` | `false` | 仅端点支持 `dimensions` 参数时启用 |
+| `DEEPSEEK_API_KEY` | 由部署密钥管理器注入 | DeepSeek 文本备用模型凭据 |
+| `DEEPSEEK_API_BASE` | `https://api.deepseek.com/v1` | DeepSeek OpenAI 兼容端点 |
+| `DEEPSEEK_LLM_MODEL` | 由部署者选择 | DeepSeek 文本备用模型 ID |
+| `DEEPSEEK_LLM_ENABLED` | `true` | 启用备用 LLM；不用于 Embedding |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | 引用 PostgreSQL 服务的变量 |
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` | 引用 Redis 服务的变量 |
 | `CELERY_BROKER_URL` | `${{Redis.REDIS_URL}}` | Celery 消息队列（复用 Redis） |
 | `CELERY_RESULT_BACKEND` | `${{Redis.REDIS_URL}}` | Celery 结果存储（复用 Redis） |
+| `ROLE` | `api+worker` | 在一个服务中启动 API、异步 Worker 和定时 Beat |
+| `UPLOAD_DIR` | `/app/data/uploads` | 上传文件持久目录；需位于 Railway Volume 内 |
+| `CELERY_BEAT_SCHEDULE_FILE` | `/app/data/celerybeat-schedule` | Beat 调度状态文件；需位于持久卷内 |
 | `CORS_ORIGINS` | `["https://你的前端域名.up.railway.app"]` | 允许的前端域名（**先填占位，第 6 步获取前端域名后更新**） |
 | `MIGRATE_ON_STARTUP` | `false` | Railway 由 `releaseCommand` 执行迁移；API 启动阶段只校验 schema，不重复执行迁移 |
 | `DB_RECOVERY_ENABLED` | `false` | Railway 使用 release phase 完成迁移；关闭常驻运行时恢复循环，避免多个服务实例重复承担恢复职责 |
@@ -244,9 +252,9 @@ Redis 用于：缓存、限流、Token 黑名单、Celery 任务队列。
 }
 ```
 
-- **启动命令**：`entrypoint.sh` 根据 `ROLE` 环境变量启动不同服务（api/worker/flower）
+- **启动命令**：首发后端设置 `ROLE=api+worker`，由入口脚本在同一容器内启动并监管 API、Worker 和 Beat
 - **发布命令**：`releaseCommand` 在部署前执行 `alembic upgrade head`（数据库迁移），Railway 会确保迁移成功后才启动新版本
-- **健康检查**：Railway 按配置访问 `/ready`；排障时可访问 `/health` 查看同一组依赖状态
+- **健康检查**：Railway 按配置访问 API 的 `/ready`；若 Worker 或 Beat 子进程退出，入口脚本会停止 API 容器并由 `ON_FAILURE` 重启
 - **重启策略**：失败时自动重启（最多 5 次）
 
 > ✅ **D9-01 已实施**：`railway.json` 已配置 `releaseCommand: "alembic upgrade head"`，Railway 在部署前自动执行迁移。API 启动仍会校验 schema；设置 `MIGRATE_ON_STARTUP=false` 后不会再次执行迁移，设置 `DB_RECOVERY_ENABLED=false` 后不会启动常驻恢复循环。
@@ -301,6 +309,7 @@ Resend 默认提供 `onboarding@resend.dev` 发件地址，但**仅可发送到�
 | 变量名 | 值 | 说明 |
 |--------|-----|------|
 | `EMAIL_ENABLED` | `True` | 启用邮件发送 |
+| `EMAIL_PROVIDER` | `smtp` | 明确选择 SMTP 通道；HTTP API 需配置 `http` |
 | `SMTP_HOST` | `smtp.resend.com` | Resend SMTP 地址 |
 | `SMTP_PORT` | `465` | SSL 端口 |
 | `SMTP_USER` | `resend` | 固定值 |
@@ -315,13 +324,13 @@ Resend 默认提供 `onboarding@resend.dev` 发件地址，但**仅可发送到�
 
 > ⚠️ **EMAIL_FROM 格式要求**：必须为 `显示名 <邮箱地址>` 格式，邮箱域名必须与 Resend 已验证的域名一致。开发阶段可用 `GeiIt企业知识库 <onboarding@resend.dev>`，但只能发到 Resend 注册邮箱。
 
-**4.5.4 Worker 服务也需配置邮件变量**
+**4.5.4 API、Worker 与 Beat 共用后端服务变量**
 
-Celery Worker 负责异步发送邮件，因此 **Worker 服务的环境变量也必须包含上述所有邮件相关变量**（与 API 服务保持一致）。
+API 和 Worker 在同一个 `api+worker` 服务中，邮件环境变量只在该服务配置一次。Beat 只负责投递定时任务，不直接发送邮件。
 
 **4.5.5 验证邮件发送**
 
-1. 确保后端 API 和 Worker 服务都已部署且环境变量已配置
+1. 确保合并后端服务与前端都已部署且邮件环境变量已配置
 2. 访问前端注册页面，提交一个注册申请
 3. 检查 `ADMIN_NOTIFY_EMAIL` 指向的管理员邮箱，应收到"新注册申请通知"邮件
 4. 查看后端日志，确认出现 `邮件任务已提交` 日志且无 SMTP 错误
@@ -472,67 +481,28 @@ GeiIt 企业知识库采用**注册审批制**：用户提交申请 → 管理�
 
 ---
 
-### 第 5 步：部署 Celery Worker 服务
+### 第 5 步：启用 Worker 与 Beat
 
-Worker 负责异步处理文档（解析、分块、向量化），是文档上传功能的核心依赖。
+首发不要创建独立 Worker 服务。当前上传处理依赖 API 与 Worker 共享本地文件；`ROLE=api+worker` 会在同一容器启动 FastAPI、Celery Worker 和 Beat，并监督三个进程。每个副本都会启动 Beat，因此后端必须保持 **1 个副本**，关闭自动水平扩容。
 
-#### 5.1 创建 Worker 服务
+#### 5.1 配置持久卷
 
-1. 在 Railway 项目页面，点击 **New → GitHub Repository**
-2. 选择同一代码仓库
-3. **设置根目录**为 `kb_qa_system/backend`（与 API 服务相同）
-4. 这个服务也使用同一个 Dockerfile，但通过 `ROLE` 环境变量切换启动角色
+在后端服务的 **Settings → Volumes** 添加持久卷，挂载路径设为 `/app/data`。环境变量使用：
 
-#### 5.2 配置 Worker 环境变量
+```env
+ROLE=api+worker
+UPLOAD_DIR=/app/data/uploads
+CELERY_BEAT_SCHEDULE_FILE=/app/data/celerybeat-schedule
+```
 
-Worker 服务需要与 API 服务**完全相同的基础环境变量**（除了 Worker 不需要 `CORS_ORIGINS`）。
+这让上传文件、派生文件和 Beat 调度状态位于同一持久卷；不要把同一卷挂到多个副本并启动多个 Beat。入口脚本会为挂载目录修正运行权限。目标平台的卷配额、备份和恢复仍需单独确认。
 
-最快的方式：在 Railway 中，你可以逐个添加，或使用 **Raw Editor** 批量粘贴。
+#### 5.2 验证进程与调度
 
-**必须配置的变量**：
-
-| 变量名 | 值 |
-|--------|-----|
-| `ENVIRONMENT` | `production` |
-| `DEBUG` | `False` |
-| `SECRET_KEY` | （与 API 服务相同的值） |
-| `OPENAI_API_KEY` | （与 API 服务相同的值） |
-| `OPENAI_API_BASE` | （与 API 服务相同的值） |
-| `LLM_MODEL_NAME` | （与 API 服务相同的值） |
-| `EMBEDDING_MODEL_NAME` | （与 API 服务相同的值） |
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-| `REDIS_URL` | `${{Redis.REDIS_URL}}` |
-| `CELERY_BROKER_URL` | `${{Redis.REDIS_URL}}` |
-| `CELERY_RESULT_BACKEND` | `${{Redis.REDIS_URL}}` |
-| `ROLE` | `worker` |
-
-> ⚠️ **关键**：`ROLE=worker` 会让 `entrypoint.sh` 启动 Celery Worker 而非 FastAPI。
-
-**可选变量**：
-
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `CELERY_WORKER_CONCURRENCY` | `2` | Worker 并发数 |
-| `CELERY_MAX_TASKS_PER_CHILD` | `100` | 每个 Worker 进程处理最大任务数后重启（防内存泄漏） |
-
-#### 5.3 修改 Worker 的健康检查
-
-Worker 服务没有 HTTP 端点，需要修改健康检查方式：
-
-1. 进入 Worker 服务的 **Settings** 标签页
-2. 找到 **Healthcheck**，将其设为空或禁用（Railway 对非 HTTP 服务会使用进程存活检查）
-3. 或者设置自定义健康检查命令：
-   - **Healthcheck Path**：留空
-   - Railway 会通过检查进程是否存活来判断健康状态
-
-#### 5.4 部署并验证
-
-1. 部署完成后，查看日志，确认出现：
-   ```
-   🔧 启动 Celery Worker...
-   celery@... ready.
-   ```
-2. Worker 会连接 Redis 和 PostgreSQL，等待处理文档任务
+1. 后端日志应显示 API、Celery Worker 和 Beat 均已启动；Worker 日志出现 `celery@... ready.`，Beat 日志显示调度器启动。
+2. `/ready` 检查 API、数据库和 Redis；Worker 或 Beat 异常退出时入口脚本会关闭其余进程，容器以失败状态退出并由 Railway 重启。
+3. 确认后端副本数为 1，且重启/重新部署后 `/app/data/celerybeat-schedule` 仍存在。
+4. 在受控测试环境验证一条到期提醒被认领、过期数据清理任务按计划入队；不要用生产用户数据做测试。
 
 ---
 
@@ -690,6 +660,7 @@ CORS_ORIGINS=["https://你的前端域名.up.railway.app"]
 
 # ===== 邮件 SMTP（Resend）=====
 EMAIL_ENABLED=True
+EMAIL_PROVIDER=smtp
 SMTP_HOST=smtp.resend.com
 SMTP_PORT=465
 SMTP_USER=resend
@@ -703,13 +674,17 @@ FRONTEND_BASE_URL=https://你的前端域名.up.railway.app
 PASSWORD_TOKEN_EXPIRE_HOURS=24
 
 # ===== LLM 配置 =====
-OPENAI_API_KEY=<你的API密钥>
-OPENAI_API_BASE=https://api.openai.com/v1
-LLM_MODEL_NAME=gpt-3.5-turbo
-LLM_FALLBACK_MODEL_NAME=gpt-3.5-turbo
-EMBEDDING_MODEL_NAME=text-embedding-ada-002
-EMBEDDING_DIMENSION=1536
-VISION_MODEL_NAME=gpt-4o-mini
+ALIYUN_API_KEY=<由密钥管理器注入>
+ALIYUN_API_BASE=<按阿里云地域和工作空间填写>
+ALIYUN_LLM_MODEL=<已授权的阿里云主模型ID>
+ALIYUN_EMBEDDING_MODEL=<已授权的阿里云向量模型ID>
+EMBEDDING_DIMENSION=<与模型输出及现有数据库 vector 列一致>
+EMBEDDING_SUPPORTS_DIMENSIONS=False
+DEEPSEEK_API_KEY=<由密钥管理器注入>
+DEEPSEEK_API_BASE=https://api.deepseek.com/v1
+DEEPSEEK_LLM_MODEL=<已授权的DeepSeek备用模型ID>
+DEEPSEEK_LLM_ENABLED=True
+ALIYUN_VISION_ENABLED=False
 
 # ===== LLM 容错 =====
 LLM_MAX_RETRIES=3
@@ -768,108 +743,19 @@ UVICORN_WORKERS=1
 REQUEST_LOG_SAMPLE_RATE=1.0
 ```
 
-### Celery Worker 服务
+### Railway 后端服务（API、Worker、Beat）
+
+在同一个后端服务中使用下列部署专用值；模型、邮件和安全变量按前面的当前环境变量表及部署者选择配置：
 
 ```env
-# ===== 角色标识（关键！）=====
-ROLE=worker
-
-# ===== 应用配置 =====
-ENVIRONMENT=production
-DEBUG=False
-# Worker 角色不执行数据库迁移（entrypoint.sh 仅在 ROLE=api 时迁移）
-# Worker 不执行数据库迁移；与 API 保持相同的 release phase 配置
+ROLE=api+worker
+UPLOAD_DIR=/app/data/uploads
+CELERY_BEAT_SCHEDULE_FILE=/app/data/celerybeat-schedule
 MIGRATE_ON_STARTUP=false
 DB_RECOVERY_ENABLED=false
-
-# ===== 数据库 =====
-DATABASE_URL=${{Postgres.DATABASE_URL}}
-
-# ===== Redis =====
-REDIS_URL=${{Redis.REDIS_URL}}
-
-# ===== Celery =====
-CELERY_BROKER_URL=${{Redis.REDIS_URL}}
-CELERY_RESULT_BACKEND=${{Redis.REDIS_URL}}
-CELERY_WORKER_CONCURRENCY=2
-CELERY_MAX_TASKS_PER_CHILD=100
-CELERY_TASK_TIMEOUT=600
-CELERY_TASK_MAX_RETRIES=3
-
-# ===== JWT =====
-SECRET_KEY=<与API服务相同的密钥>
-
-# ===== 邮件 SMTP（Resend）— Worker 发送邮件任务必需 =====
-EMAIL_ENABLED=True
-SMTP_HOST=smtp.resend.com
-SMTP_PORT=465
-SMTP_USER=resend
-SMTP_PASSWORD=re_your_resend_api_key
-SMTP_USE_TLS=True
-SMTP_START_TLS=False
-SMTP_TIMEOUT=30
-EMAIL_FROM=GeiIt企业知识库 <noreply@yourdomain.com>
-ADMIN_NOTIFY_EMAIL=admin@yourcompany.com
-FRONTEND_BASE_URL=https://你的前端域名.up.railway.app
-PASSWORD_TOKEN_EXPIRE_HOURS=24
-
-# ===== LLM 配置 =====
-OPENAI_API_KEY=<与API服务相同的密钥>
-OPENAI_API_BASE=https://api.openai.com/v1
-LLM_MODEL_NAME=gpt-3.5-turbo
-LLM_FALLBACK_MODEL_NAME=gpt-3.5-turbo
-EMBEDDING_MODEL_NAME=text-embedding-ada-002
-EMBEDDING_DIMENSION=1536
-VISION_MODEL_NAME=gpt-4o-mini
-
-# ===== LLM 容错 =====
-LLM_MAX_RETRIES=3
-LLM_TIMEOUT=30
-LLM_STREAM_FIRST_TOKEN_TIMEOUT=5
-CIRCUIT_BREAKER_THRESHOLD=5
-CIRCUIT_BREAKER_RECOVERY_TIME=60
-
-# ===== 多 API 降级配置（可选，推荐生产环境启用）=====
-# 作用：主 API 不可用时自动切换备用提供者，避免单点故障
-# 降级链路：primary → fallback → local_fallback
-# 配置文件：app/core/model_provider/providers.yaml
-# 优先级：环境变量 > .env > YAML 默认值 > YAML 字面值
-LLM_FALLBACK_API_KEY=
-LLM_FALLBACK_API_BASE=
-LLM_FALLBACK_ENABLED=true
-LOCAL_LLM_ENABLED=false
-LOCAL_LLM_MODEL=qwen2.5:7b
-LOCAL_LLM_BASE=http://localhost:11434/v1
-# Embedding 降级（cloud_fallback 提供者，复用 LLM_FALLBACK 配置）
-EMBEDDING_FALLBACK_API_KEY=
-EMBEDDING_FALLBACK_API_BASE=
-EMBEDDING_FALLBACK_MODEL_NAME=
-LOCAL_EMBEDDING_ENABLED=false
-
-# ===== 向量检索 =====
-SEARCH_TOP_K=4
-SIMILARITY_THRESHOLD=0.5
-ENABLE_HYBRID_SEARCH=True
-KEYWORD_SEARCH_WEIGHT=0.3
-
-# ===== 文档处理 =====
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
-DOCUMENT_QUALITY_THRESHOLD=60.0
-ENABLE_OCR=True
-ENABLE_VISION=True
-ENABLE_TABLE_EXTRACTION=True
-
-# ===== RAG 优化 =====
-ENABLE_INTENT_DETECTION=True
-ENABLE_CONFLICT_DETECTION=True
-ENABLE_LATEX_PROTECTION=True
-CONVERSATION_HISTORY_LIMIT=5
-CONVERSATION_HISTORY_MAX_TOKENS=2000
-ENABLE_HISTORY_SUMMARY=True
-SUMMARY_EVERY_N_TURNS=5
-
 ```
+
+将一个 Railway Volume 挂载到 `/app/data`，并将服务保持为单副本。不要给每个副本各挂独立磁盘后扩容，因为那会使上传文件不可见且启动多个 Beat。
 
 ### 前端服务
 
@@ -997,24 +883,27 @@ git push origin main
 - [ ] Redis 服务已创建，持久化已启用
 - [ ] 后端 API 服务已部署，`/ready` 返回就绪状态（`/health` 可返回 healthy）
 - [ ] **超级管理员账号已创建**（`python -m scripts.create_superuser`）
-- [ ] Celery Worker 服务已部署，日志显示 ready
+- [ ] 后端为单副本 `ROLE=api+worker`，日志显示 API、Worker ready 和 Beat scheduler 启动
+- [ ] `/app/data` Railway Volume 在重启后保留上传文件和 Beat schedule 文件
 - [ ] 前端服务已部署，可正常访问
-- [ ] **邮件服务（Resend）API Key 已配置**，发件域名已验证
+- [ ] 邮件通道已明确选择并配置，发件域名已验证
 - [ ] **`ADMIN_NOTIFY_EMAIL` 已设置**（接收注册申请通知）
 
 ### 环境变量
 - [ ] `SECRET_KEY` 已设置（≥32 字符，非弱默认值）
-- [ ] `OPENAI_API_KEY` 已设置且有效
+- [ ] `ALIYUN_API_KEY` 与 `DEEPSEEK_API_KEY` 已由密钥管理器注入
+- [ ] 阿里云主 LLM、Embedding 与 DeepSeek 备用模型 ID 已按实际账号确认
+- [ ] `EMBEDDING_DIMENSION` 与模型输出和 PostgreSQL 向量列一致
 - [ ] `DATABASE_URL` 引用 PostgreSQL 服务变量
 - [ ] `REDIS_URL` 引用 Redis 服务变量
 - [ ] `CELERY_BROKER_URL` 和 `CELERY_RESULT_BACKEND` 已设置
 - [ ] `CORS_ORIGINS` 包含前端域名（非通配符 `*`）
 - [ ] `ENVIRONMENT=production`，`DEBUG=False`
-- [ ] Worker 服务的 `ROLE=worker`
-- [ ] **`EMAIL_ENABLED=True`**，`SMTP_PASSWORD` 已设置（Resend API Key）
+- [ ] 后端服务的 `ROLE=api+worker`，副本数为 1
+- [ ] **`EMAIL_ENABLED=True`、`EMAIL_PROVIDER=smtp`**，SMTP 凭据已设置
 - [ ] **`FRONTEND_BASE_URL` 指向前端域名**（用于密码设置链接拼接）
 - [ ] **`PROMETHEUS_AUTH_ENABLED=True`**（生产环境强制开启 /metrics 认证）
-- [ ] Worker 服务也配置了邮件相关变量（与 API 服务一致）
+- [ ] API/Worker 使用同一服务环境变量，邮件配置已加入该服务
 
 ### 功能验证
 - [ ] 注册新账号成功
@@ -1135,10 +1024,11 @@ MODEL_EAGER_HEALTH_CHECK=False
 
 **排查**：
 1. 检查 `SECRET_KEY` 是否已设置且 ≥32 字符
-2. 检查 `OPENAI_API_KEY` 是否非空
-3. 检查 `DATABASE_URL` 是否以 `postgresql` 开头（不能是 sqlite）
-4. 检查 `CORS_ORIGINS` 是否不含通配符 `*`
-5. 检查 `DEBUG` 是否为 `False`
+2. 检查 `ALIYUN_API_KEY`、`ALIYUN_API_BASE` 与主模型 ID 是否有效
+3. 检查 `DEEPSEEK_API_KEY`、备用模型 ID 与 `DEEPSEEK_LLM_ENABLED` 是否匹配
+4. 检查 `DATABASE_URL` 是否以 `postgresql` 开头（不能是 sqlite）
+5. 检查 `CORS_ORIGINS` 是否不含通配符 `*`
+6. 检查 `DEBUG` 是否为 `False`
 
 ### Q3：前端访问后端 API 报 CORS 错误
 
@@ -1155,11 +1045,11 @@ MODEL_EAGER_HEALTH_CHECK=False
 **症状**：文档状态卡在 processing，未变为 completed
 
 **排查**：
-1. 检查 Worker 服务是否正常运行（日志中是否有 `celery@... ready`）
-2. 检查 Worker 的 `CELERY_BROKER_URL` 是否正确指向 Redis
-3. 检查 Worker 的 `DATABASE_URL` 是否与 API 服务一致
-4. 检查 Worker 日志是否有异常（如 LLM API Key 无效、Embedding 失败）
-5. 确认 Worker 的 `OPENAI_API_KEY` 和 `EMBEDDING_MODEL_NAME` 配置正确
+1. 检查后端服务是否正常运行（日志中是否有 `celery@... ready`）
+2. 检查后端的 `CELERY_BROKER_URL` 是否正确指向 Redis
+3. 检查 `DATABASE_URL` 与 API 配置是否一致
+4. 检查 Worker 日志是否有异常（如模型 Key 无效、Embedding 失败）
+5. 确认与项目当前 provider 配置对应的模型变量正确
 
 ### Q5：数据库迁移失败
 
@@ -1178,7 +1068,7 @@ MODEL_EAGER_HEALTH_CHECK=False
 **排查**：
 1. 降低 `CELERY_WORKER_CONCURRENCY`（如从 2 降到 1）
 2. 降低 `CELERY_MAX_TASKS_PER_CHILD`（让 Worker 更频繁重启释放内存）
-3. 在 Railway 中升级 Worker 服务的资源限制（RAM）
+3. 在 Railway 中升级合并后端服务的资源限制（RAM）
 4. 关闭 `ENABLE_OCR`（OCR 是内存密集型操作）
 
 ### Q7：前端构建时 `VITE_API_BASE_URL` 不生效
@@ -1242,7 +1132,7 @@ UPDATE users SET is_superuser = true WHERE username = 'your_username';
 1. 检查 `EMAIL_ENABLED` 是否为 `True`（为 `False` 则跳过邮件发送）
 2. 检查 `ADMIN_NOTIFY_EMAIL` 是否配置为正确的管理员邮箱
 3. 检查 `SMTP_PASSWORD`（Resend API Key）是否有效
-4. 检查 Worker 服务是否正常运行（邮件由 Celery Worker 异步发送）
+4. 检查合并后端服务中的 Celery Worker 是否正常运行（邮件由该 Worker 异步发送）
 5. 查看 Worker 日志是否有 SMTP 错误（如认证失败、连接超时）
 6. 确认 Resend 发件域名是否已验证（未验证域名只能发到 Resend 注册邮箱）
 7. 检查 Resend Dashboard → Logs 是否有发送记录和错误详情
@@ -1276,7 +1166,7 @@ UPDATE users SET is_superuser = true WHERE username = 'your_username';
 
 **排查**：
 1. 确认 `railway.json` 已配置 `releaseCommand: "alembic upgrade head"`（Railway 会在部署前执行迁移）
-2. 确认 API 和 Worker 的 `MIGRATE_ON_STARTUP=false`、`DB_RECOVERY_ENABLED=false` 已被实际注入
+2. 确认合并后端服务的 `MIGRATE_ON_STARTUP=false`、`DB_RECOVERY_ENABLED=false` 已被实际注入
 3. 如果仍出现冲突，检查是否有其他服务绕过 release phase 执行 `ROLE=api`，以及是否错误启用了启动迁移
 
 **解决方案**：

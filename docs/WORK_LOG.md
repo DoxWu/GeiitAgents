@@ -1,10 +1,10 @@
 # 项目工作记录
 
-最后更新：2026-10-20。本文件是当前状态入口，每次完成工作后更新状态并追加记录。新对话接手请先阅读本次状态及 [WORK_HANDOFF_2026-10-03.md](WORK_HANDOFF_2026-10-03.md)。历史测试仅代表对应日期的本地结果，不代表线上验证；不在此保存任何真实凭据。完整第一版记录已归档至 [WORK_LOG_V1_2026-10-01.md](WORK_LOG_V1_2026-10-01.md)。
+最后更新：2026-10-21。本文件是当前状态入口，每次完成工作后更新状态并追加记录。新对话接手请先阅读本次状态及 [WORK_HANDOFF_2026-10-03.md](WORK_HANDOFF_2026-10-03.md)。历史测试仅代表对应日期的本地结果，不代表线上验证；不在此保存任何真实凭据。完整第一版记录已归档至 [WORK_LOG_V1_2026-10-01.md](WORK_LOG_V1_2026-10-01.md)。
 
 ## 当前阶段
 
-**2026-10-21 当前状态：** 当前分支 `develop/geiit-agents`，A13 离线加密联合恢复提交 `fd10a6c` 已普通推送，CI [39403631358](https://github.com/DoxWu/GeiitAgents/actions/runs/39403631358) 全部 job 成功。隔离 PostgreSQL 18.4/pgvector 上恢复包 + 原有运维/维护测试共 **64 项通过**；前端全量 **136 个文件/1299 项通过**，check/lint/Web build、Ruff 与构建上下文边界检查通过。CI 后端 **776 passed / 6 skipped，coverage 51.86%**；6 项为 CI OCR 环境跳过。生产构建和容器构建通过，Trivy 门禁复核：后端 76 条无修复版本 HIGH/CRITICAL（75 HIGH/1 CRITICAL），前端 0，两镜像可修复 HIGH/CRITICAL 均为 0。真实联测覆盖登录、文本/PDF 下载、pgvector 检索、待办读写；尚非目标部署/生产恢复验收。恢复包不含 Redis/Celery 队列、会话或外部对象存储，待处理消息需人工检查/重派；配置须人工审阅。按用户要求，本批 PG 临时库已清零、隔离 PG18 已停止；Docker Engine 本批未运行，没有创建测试容器/镜像。未操作线上部署或旧 `main`。
+**2026-10-21 当前状态：** A13 离线联合恢复已普通推送；CI [39403631358](https://github.com/DoxWu/GeiitAgents/actions/runs/39403631358) 对 `fd10a6c` 全部通过，后端 776 passed/6 skipped、覆盖率 51.86%，前端 136 文件/1299 项，构建与容器扫描通过。后续 CI [39524363150](https://github.com/DoxWu/GeiitAgents/actions/runs/39524363150) 对 `41d4df7` 因 Vite `6.4.3` 的 npm advisory 失败；后续 SBOM/Trivy/容器构建跳过。已在本地升级 Vite 至 `6.4.4`，官方 npm audit 为 0 漏洞，前端 136 文件/1299 项、check/lint/build 通过；Railway 部署说明已对齐单副本 `api+worker`、持久 `/app/data`、阿里云/DeepSeek 与 SMTP provider 配置。另修复监督器将子进程状态码 0 当作成功退出的问题，WSL 行为回归 1/1 通过。Compose 静态解析与 Sealos 模板预检通过。远端开发分支仍为 `41d4df7`，旧 `main` 为 `ea4917e`；Git 443 超时使 fetch/push 无法完成，新 CI 未触发。本机 Docker Engine 不可连接，本轮未创建 Docker 容器/镜像；此前临时 Docker 验收资源已按记录清理。目标环境恢复、A12 业务金标、A28 Resend/Celery/部署隐私、旧库跨向量维度迁移、低配/断电/原生升级仍开放，未操作线上部署。
 
 **2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
 
@@ -1033,3 +1033,11 @@
 - 本地复验：使用官方 npm registry 执行 `npm audit`，结果 **0 vulnerabilities**；`npm test -- --run` **136 文件 / 1299 项通过**；`npm run check`、`npm run lint`、`npm run build` 与 `git diff --check` 通过。生产构建保留已有 workflow 动态/静态导入提示。默认 `npm` 镜像的 audit endpoint 返回 404 `[NOT_IMPLEMENTED]`，因此审计明确切换到官方 registry。
 - 镜像与容器：本机 Docker Engine 未运行，容器/镜像清单查询无法连接 Docker API；本轮没有启动 Docker、创建镜像或容器，也没有可清理的本轮资源。CI 旧运行的生产容器构建因审计失败而跳过。用户要求后续测试结束清理本轮新建镜像/容器；仅清理本轮创建的资源，不做全局 prune。
 - Git 与待验证：依赖修复和本条工作记录已在本地提交。远端 `agents/develop/geiit-agents` 经 GitHub API 核实仍为 `41d4df7`，旧 `main` 仍为 `ea4917e`；普通 HTTPS 推送、命令级 Schannel/DNS 重试均因 443 连接超时失败，SSH 无可用公钥，故本次未推送且未触发新 CI。网络恢复后先 fetch/核对差异，再普通推送并检查 npm audit、SBOM、Trivy 与生产容器构建。保持 A12 业务金标/人工判分、A13 目标环境联合恢复与 RPO/RTO、旧库跨维度迁移、A28 Resend HTTP/Celery/部署隐私、低配/断电/原生升级等事项开放。
+
+### 2026-10-21：对齐 Railway 单副本 Beat 部署文档
+
+- 实际改动：将 Railway 和简版部署指南从独立 API/Worker 改为仓库已支持的单副本 `ROLE=api+worker`，明确入口进程监督 API、Worker、Beat；示例将上传目录和 Beat schedule 放在 `/app/data` Railway Volume，要求副本数为 1，并把提醒/清理入队验证留给隔离环境。检查监督器时发现，受监管子进程若以状态码 0 提前退出，入口会停止其他进程却也返回 0，导致 `ON_FAILURE` 不重启；现改为任何子进程提前退出都以状态码 1 结束容器，并记录其原退出码。部署选型与整改跟踪同步更新。
+- 配置说明：Railway 主变量改为阿里云主 LLM/Embedding、DeepSeek 文本备用及部署者确认的向量维度；SMTP 示例显式设置 `EMAIL_PROVIDER=smtp`。没有将用户 `.env` 值或维度复制到文档，也没有把 Resend HTTP/Celery/隐私验证描述为已通过。
+- 本地验证：WSL 对 Worker 返回状态码 0 的监督行为回归 **1/1 通过**，`bash -n` 通过；`docker compose ... config --quiet`、Sealos Kustomize template preflight、`railway.json` JSON 解析、Markdown fence 数量和 `git diff --check` 通过。pytest 只通过 WSL 临时 target 安装；该环境 pytest 为 9.1.1、Python 为 3.10.12，出现项目 asyncio 配置未知选项警告，不执行全后端测试。没有启动 Compose、执行迁移、发送邮件或访问 Railway。
+- 镜像与部署边界：本机 Docker Engine 未运行；这些检查使用静态配置和临时本地进程，没有创建或启动容器/镜像，故无本轮 Docker 资源需要清理；WSL 临时 pytest 依赖已删除。未操作线上服务。Railway Volume 行为、平台重启和真实定时任务仍需部署者在测试实例验收。
+- Git 与未完成：Vite `6.4.4` 修复仍未推送；GitHub API 远端开发分支为 `41d4df7`、旧 `main` 为 `ea4917e`，Git transport 443 超时使新 CI 尚未触发。后续恢复网络后先 fetch/确认祖先，再普通推送并检查 npm audit、SBOM、Trivy 和容器构建。A12 金标、A13 目标环境恢复、A28 Resend/Celery/隐私、旧数据库跨维度迁移、低配/断电/原生升级仍开放。
