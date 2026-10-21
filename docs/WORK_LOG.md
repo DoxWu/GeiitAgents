@@ -1025,3 +1025,11 @@
 - 边界与清理：bundle 不含 Redis/Celery 队列/会话、云外对象存储、客户端本地数据或未显式选定配置；待处理文档任务须人工审阅并重派。配置文件仅作为加密归档，不自动覆写 Secret。成功测试后临时数据库计数 0，专用 PG18 集群正常停止；Docker Engine 本轮不可用，未创建 Docker 容器或镜像，故本轮无容器/镜像需要删除，原有镜像/卷未触碰。目标 PVC/Secret 编排、目标站点停写、异地恢复、断电与 RPO/RTO 尚未验收。
 - Git 与 CI：fetch 确认远端开发分支是本地祖先后，代码与文档提交 `fd10a6c` 已普通推送；远端 `main` 保持 `ea4917e`。CI `39403631358` 全部成功：Linux 后端 776 passed/6 skipped、coverage 51.86%，前端 136 文件/1299 项，构建、审计/SBOM、密钥扫描、容器构建和 Trivy 门禁通过；真实 LangChain HTTP 合约通过。下载两份 Trivy JSON 并用仓库 `.github/scripts/check_trivy_results.py` 重核：后端 75 HIGH/1 CRITICAL 均无修复版本，前端没有 HIGH/CRITICAL，可修复 HIGH/CRITICAL 为 0。CI 前端构建有未设置 `%VITE_API_BASE_URL%` 提示及既有工作流分块提示；GitHub Actions 也提示 Node.js 20 弃用。保留未跟踪的 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/`，不纳入提交；没有部署或修改旧 `main`。
 - 仍开放：A12 业务金标/许可/人工判分；A13 目标部署停写编排、卷/Secret/队列恢复、异地/RPO/RTO/回滚演练；旧目标库跨维度安全迁移；A28 Resend HTTP/Celery 与部署隐私核实；8 GB/断电/原生升级。后端无修复版本的 76 条镜像告警保持持续追踪，不将 Trivy 门禁通过表述为零漏洞。
+
+### 2026-10-21：修复 Vite npm 审计门禁
+
+- CI 证据：[CI 39524363150](https://github.com/DoxWu/GeiitAgents/actions/runs/39524363150) 对应 `41d4df7`。前端测试/构建、后端测试和真实 LangChain HTTP 合约通过；依赖审计因 Vite `6.4.3` 的 3 条 HIGH advisory 失败，后续 SBOM、Trivy 镜像门禁及生产容器构建被跳过。后端为 **784 passed / 6 skipped，coverage 51.97%**，前端 **136 文件 / 1299 项通过**。
+- 实际修复：将 `kb_qa_system/frontend/package.json` 与锁文件中的 Vite 升至 `6.4.4`，锁定该版本并使用 npm 官方 tarball。此次只变更 Vite 声明、锁定版本、完整性与解析地址。
+- 本地复验：使用官方 npm registry 执行 `npm audit`，结果 **0 vulnerabilities**；`npm test -- --run` **136 文件 / 1299 项通过**；`npm run check`、`npm run lint`、`npm run build` 与 `git diff --check` 通过。生产构建保留已有 workflow 动态/静态导入提示。默认 `npm` 镜像的 audit endpoint 返回 404 `[NOT_IMPLEMENTED]`，因此审计明确切换到官方 registry。
+- 镜像与容器：本机 Docker Engine 未运行，容器/镜像清单查询无法连接 Docker API；本轮没有启动 Docker、创建镜像或容器，也没有可清理的本轮资源。CI 旧运行的生产容器构建因审计失败而跳过。用户要求后续测试结束清理本轮新建镜像/容器；仅清理本轮创建的资源，不做全局 prune。
+- Git 与待验证：依赖修复和本条工作记录已在本地提交。远端 `agents/develop/geiit-agents` 经 GitHub API 核实仍为 `41d4df7`，旧 `main` 仍为 `ea4917e`；普通 HTTPS 推送、命令级 Schannel/DNS 重试均因 443 连接超时失败，SSH 无可用公钥，故本次未推送且未触发新 CI。网络恢复后先 fetch/核对差异，再普通推送并检查 npm audit、SBOM、Trivy 与生产容器构建。保持 A12 业务金标/人工判分、A13 目标环境联合恢复与 RPO/RTO、旧库跨维度迁移、A28 Resend HTTP/Celery/部署隐私、低配/断电/原生升级等事项开放。
