@@ -4,6 +4,8 @@
 
 ## 当前阶段
 
+**2026-10-21 Embedding 单项复验：** 从项目后端 `.env` 读取主向量配置，向 `qwen3.7-text-embedding-flash` 发送一次合成文本请求，HTTP **200**，返回 **1024 维**，与配置一致。本次只验证端点连通性及响应维度，没有运行数据库、RAG、重排、邮件或全量回归。未启动或创建 Docker 资源；本轮只读确认 Docker 服务停止、引擎管道不存在，前批测试镜像/容器清理结果沿用下述已核对记录。开发分支代码及上批记录已推送至 `26d9bda`；本条记录另作本地提交，远端同步结果见末尾。
+
 **2026-10-21 当前状态：** 生产后端镜像默认 PostgreSQL 客户端已从发行版 PG17 修为官方签名 PGDG 的 PG16，与 Compose/CI 默认数据库一致，可通过 `POSTGRES_CLIENT_MAJOR` 构建参数调整。镜像内置 pg_dump/pg_restore 16.15 在隔离 PG16.14 上本地 **66 passed / 0 skipped / 1 warning，33.56 秒**；推送后 CI 同一组 **66 passed / 5 warnings，36.22 秒**，涵盖备份/维护队列/联合恢复、真实 pgvector 权限及进程监督器，均未挂载替代 PG 工具。最新 CI `39537768308`（`dcc28fb`）所有 job 成功：后端 **785 passed / 6 skipped，coverage 51.97%**，前端 **136 个文件 / 1299 项通过**，前端构建及 LangChain 合约、npm/Python/Windows Rust audit、SBOM、后端/前端容器构建和恢复门禁通过。Trivy 显示后端 **76 条无修复版本 HIGH/CRITICAL（75 HIGH、1 CRITICAL）**，前端 0，可修复 HIGH/CRITICAL 门禁通过，不表示后端零漏洞。上一批 HTTPS/Pillow 13.0.0 镜像全量 **791/791、coverage 53.16%**、110 个 Python 包 OSV 与 Beat→Redis→prefork Worker→回环 SMTP 结果未在本批重跑。用户要求清理测试资源已完成：本机 2 个测试容器/1 个新增镜像已删除，原 3 镜像完整 ID/4 卷保留，容器为空、未全局 prune；Docker Desktop 已停止。Git 两批修复已普通推送，开发分支远端为 `dcc28fb`，旧 main 为 `ea4917e`；新 CI 作业自动停止 runner 测试服务。A12 业务金标/人工判分、A13 目标部署恢复/RPO/RTO、A28 Resend HTTP/生产链/部署隐私、旧库跨维度迁移及低配/断电/原生升级仍开放，未操作线上部署。
 
 **2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
@@ -1090,3 +1092,11 @@
 - Trivy：后端/前端镜像构建及扫描成功，修复版门禁成功。CI 日志记后端 76 个无修复版本 HIGH/CRITICAL（75 HIGH、1 CRITICAL），前端 0；可修复 HIGH/CRITICAL 结果为 0。仍需跟踪 Debian 基础层可修复版本发布；不等同于零漏洞。CI 产生并上传 SBOM/Trivy JSON；本地通过 GitHub artifact API 下载时，Azure blob TLS handshake timeout，故本地仅复核可读取的作业日志/门禁计数，没有把本次 JSON/SBOM 下载后再解析计入验证。
 - 清理与 Git：本机按标签校验后删除两测试容器和唯一新增测试镜像，保留原三个镜像 ID、四个数据卷与默认网络，容器为空；未 prune，Docker Desktop 停止。CI workflow service container 的 `Stop containers` 成功，GitHub runner 作业完成后容器/镜像随临时 runner 回收。远端开发分支及本地 HEAD 均为 `dcc28fb`，旧 main 保持 `ea4917e`，工作树只保留既有未跟踪 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/`；无部署、模型调用或外部邮件。本地 Cargo `cargo check --locked` 因下载 crates 连接超时未完成；不把 Cargo audit 误报为完整原生构建。
 - 仍开放：后端 76 条无修复版本的 Trivy HIGH/CRITICAL；A12 有许可的业务金标/人工判分；A13 目标部署卷/Secret/队列、RPO/RTO/回滚；A28 Resend HTTP、目标邮件链/部署隐私；旧库跨维度迁移、8 GB/断电/原生安装升级。全局目标仍进行中。
+
+### 2026-10-21：主 Embedding 单次复验与清理状态确认
+
+- 本次实际工作：读取后端 `.env` 的主向量配置，使用现有 `httpx`/`python-dotenv` 发送一条合成英文短文本，不上传业务资料。模型为 `qwen3.7-text-embedding-flash`，返回 HTTP 200、1024 个有限数值，匹配配置维度。本次没有修改 `.env`、应用源码或向量索引，也没有访问 `DATABASE_URL`。
+- 验证边界：本机 Python 3.13.5 / HTTPX 0.28.1 缺少 `langchain_core`，无法直接导入应用 provider 包；按现有 YAML 的主 Embedding 变量映射读取配置。第一次尝试把 `max_redirects` 传给不支持它的顶层 `httpx.post`，在请求发送前出现本地 TypeError；核对签名后改用 `httpx.Client`，只发出一次无重试、禁止跳转的网络请求。只记录状态和维度，未打印密钥、向量正文或原始服务端异常。本次不构成 SDK、RAG、重排、数据库维度迁移或业务质量验收；之前成功的邮件不重发。
+- 清理：本次没有启动 Docker、创建镜像/容器/卷/网络。只读核对 `com.docker.service` 为 Stopped、Docker Desktop/后端进程不存在、Linux engine 管道不存在；未为清点资源重新启动 Docker。前批已删除两测试容器和唯一新增测试镜像、保留原三个镜像/四个卷的检查见上一条，本次未重新枚举或重复删除。
+- 文档与 Git：同步本文件当前状态、A28 修复跟踪与云端问答功能矩阵。此前开发分支代码和工作记录已同步到 `26d9bda`；本次仅为小项验收记录，保存本地文档提交，不再触发推送或 CI。历史全量测试、CI、供应商和 Office 结果均未在本次重跑；没有构建、发布或线上部署变更。既有未跟踪 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。
+- 未完成/下一步：A12 仍需有许可的企业问答/证据金标及人工判分；A13 仍需目标部署联合恢复、RPO/RTO 和回滚；A28 仍需 Resend HTTP/目标邮件链及部署者隐私信息核实。旧库跨维度迁移、8 GB/断电/原生安装升级及后端无修复版本镜像 advisory 继续跟踪。全局目标保持 active，不以本次向量复验通过关闭全部整改。
