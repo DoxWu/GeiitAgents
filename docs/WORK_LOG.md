@@ -1050,3 +1050,10 @@
 - 镜像与资源：本机 Docker Engine 不可用，未创建镜像/容器，没有本轮 Docker 资源需要删除；旧 CI PostgreSQL 服务容器已停止。未部署、未读 `.env`、未调用模型/邮件。普通 Git push 与命令级 Schannel/DNS 重试均在 `github.com:443` 超时；GitHub API 只读确认远端开发分支仍为 `b6a522b`、旧 `main` 为 `ea4917e`，新 CI 尚未触发。
 - Git/下一步：代码在本地提交 `0c0f044`，本次 push 失败情况已追加到工作记录与 A08 当前状态；随后以文档提交保存在本地，分支领先远端 2 个提交。GitHub 网络恢复后先 fetch 核对，再普通推送并检查新的 Python audit、Rust audit、SBOM、Trivy 和生产镜像构建；未强推、未通过其他接口写入远端。
 - 仍开放：A12 业务语料许可/金标/人工判分；A13 目标环境联合恢复、RPO/RTO 与回滚；A28 Resend/Celery 和部署隐私核验；旧目标库跨维度迁移；8 GB、断电及原生安装升级。保留未跟踪的 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/`，不纳入提交。
+
+### 2026-10-21：本机 Docker 镜像构建网络失败
+
+- 实际测试：启动前记录本机原有后端/前端/PostgreSQL 3 个镜像、3 个数据卷和空容器列表。对当前后端源码以独立标签 `geiit-pillow-audit:acceptance-20261021` 执行生产 Dockerfile 构建；Debian trixie 索引下载完成后，runtime 阶段在 `deb.debian.org:80` 下载 `ca-certificates` 与 `liblzma5` 时收到连接拒绝，构建退出 1，builder 阶段随后取消，未进入 Python 依赖安装。因此没有得到包含 Pillow `13.0.0` 的应用镜像，也不把这次构建记为通过。
+- 镜像/容器清理：失败后核对容器列表为空，镜像列表仍仅含启动前记录的 3 个原有镜像，独立标签不存在；3 个原有卷未变。本轮没有创建 Docker 容器或命名卷，也没有执行 prune。Docker Desktop 已停止以恢复启动前状态；失败构建可能留下 BuildKit 内部缓存，未做可能清除其他项目缓存的全局清理。
+- Git/CI：`git ls-remote` 与 GitHub API 均确认远端开发分支仍是 `b6a522b`、旧 `main` 是 `ea4917e`。普通 HTTPS push 和两种命令级 Schannel/DNS 重试分别出现 443 超时或 TLS 对端提前关闭；新 CI/Trivy 未触发。本地 `0c0f044`、文档状态提交 `b7b0db5` 与本条工作记录更新仍待同步，未强推或通过其他接口写远端。
+- 后续：网络恢复后先 fetch 核对，再普通推送，检查 Python/Rust 审计、SBOM、镜像构建与 Trivy；若本地 Docker 构建仍需验证，须先修复或确认 Debian 软件源的网络路径，再重复构建并删除本轮确实创建的容器/镜像。A12 金标、A13 目标环境联合恢复、A28 Resend/Celery/隐私、旧向量维度迁移及低配/断电/原生升级仍开放。原有未跟踪 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。
