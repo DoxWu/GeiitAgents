@@ -4,6 +4,8 @@
 
 ## 当前阶段
 
+**2026-10-21：** 云端向量跨维度离线迁移已接入 CI，workflow `39541985913`（`940ee52`）全部成功：后端 800/6 跳过、coverage 52.34%，前端 136 文件/1299 项，镜像内 PG16 恢复/迁移 81 项通过，审计/SBOM/Trivy 门禁和测试容器停止通过。CI artifact 原 Python 160 项 SBOM 当时缺 PURL/许可证字段；本机按精确 PyPI 元数据补齐的试验结果为 160 PURL、154 上游许可证声明、6 未知，保留原依赖/漏洞引用和审计版本。补齐脚本、17 项单元测试、CI 安装顺序及复现文档正在本地修改，尚未提交/推送/远程验收；该本机生成文件未替代 CI artifact。该 workflow Trivy 后端为 75 HIGH+1 CRITICAL（均无修复版本），前端 0。
+
 **2026-10-21 云端向量离线迁移：** 新增 `app.ops.embedding_migration` 的 inspect/prepare/activate/rollback/discard；保持旧分块/向量直到事务切换，使用共享模型空间指纹，并在数据、权限或暂存向量变化时拒绝覆盖。隔离 PostgreSQL 18.4/pgvector 已验证合成 1536→1024、真实 IVFFlat 查询与精确回退；真实 `qwen3.7-text-embedding-flash` 单条合成材料的准备/激活/回退/清理闭环通过，仅发一次 Embedding 请求、无邮件、无业务库连接。最终定向回归和 Git/CI 状态见末尾。工具需要先停写、验证联合备份；恢复写入后不承诺旧向量精确回退。新实现不等于已迁移用户目标库，也不关闭 A12/A13/A28 部署级开放项。本轮未启动 Docker，测试结束后停止临时本地 PG 集群。
 
 **2026-10-21 Embedding 单项复验：** 从项目后端 `.env` 读取主向量配置，向 `qwen3.7-text-embedding-flash` 发送一次合成文本请求，HTTP **200**，返回 **1024 维**，与配置一致。本次只验证端点连通性及响应维度，没有运行数据库、RAG、重排、邮件或全量回归。未启动或创建 Docker 资源；本轮只读确认 Docker 服务停止、引擎管道不存在，前批测试镜像/容器清理结果沿用下述已核对记录。开发分支代码及上批记录已推送至 `26d9bda`；本条记录另作本地提交，远端同步结果见末尾。
@@ -1102,6 +1104,14 @@
 - 清理：本次没有启动 Docker、创建镜像/容器/卷/网络。只读核对 `com.docker.service` 为 Stopped、Docker Desktop/后端进程不存在、Linux engine 管道不存在；未为清点资源重新启动 Docker。前批已删除两测试容器和唯一新增测试镜像、保留原三个镜像/四个卷的检查见上一条，本次未重新枚举或重复删除。
 - 文档与 Git：同步本文件当前状态、A28 修复跟踪与云端问答功能矩阵。此前开发分支代码和工作记录已同步到 `26d9bda`；本次仅为小项验收记录，保存本地文档提交，不再触发推送或 CI。历史全量测试、CI、供应商和 Office 结果均未在本次重跑；没有构建、发布或线上部署变更。既有未跟踪 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。
 - 未完成/下一步：A12 仍需有许可的企业问答/证据金标及人工判分；A13 仍需目标部署联合恢复、RPO/RTO 和回滚；A28 仍需 Resend HTTP/目标邮件链及部署者隐私信息核实。旧库跨维度迁移、8 GB/断电/原生安装升级及后端无修复版本镜像 advisory 继续跟踪。全局目标保持 active，不以本次向量复验通过关闭全部整改。
+
+### 2026-10-21：Python SBOM 包身份与上游许可证声明补全（待推送）
+
+- 发现依据：下载 CI `39541985913` 的真实 artifact 后，前端 215 项和 Rust 308 项都有 PURL/许可证，Python 160 项均缺 PURL/许可证元数据，不能直接称为已提供 Python 许可证清单。
+- 实际改动：新增 `.github/scripts/enrich_python_sbom.py`，按每个精确包名/版本从固定 PyPI HTTPS 来源取发布者声明，给原 CycloneDX 增加 PURL/可得许可标识、来源属性；另输出包含精确元数据 URL、响应哈希、legacy/license_expression/classifiers 的 `python-licenses.json`。保留 pip-audit 原 bom-ref、依赖和漏洞关联；未知许可明确列出，不把通用 classifier 推断成 SPDX。用 PEP 440 `Version` 比较规范等价，但 PURL/报告保留原审计版本。请求禁止重定向、尺寸上限、一次有界重试且并发不超过 24；不读取 `.env`、不执行/安装待查 package。
+- 验证：用 `39541985913` 已上传的原始 artifact 现场演练，160/160 PURL，154 上游 license 声明，6 未知：cuda-toolkit 13.0.3.0、nvidia-cuda-runtime 13.0.96、nvidia-cudnn-cu13 9.24.0.43、nvidia-nccl-cu13 2.30.7、nvidia-nvshmem-cu13 3.4.5、tiktoken 0.7.0。原清单依赖/漏洞关系和原始版本字符串逐项相等。新增 9 项 Python 脚本回归（其中 17 项测试计数包含旧 Trivy 策略 8 项）、YAML/CI 断言、ruff 和 git diff check 通过；全套 `.github/scripts` unittest **17 passed**。其中 Python metadata 查询依赖 httpx/packaging，已把测试门禁移到 CI 安装这些工具之后；还未在本条改动上重新运行 Actions，等待提交推送后确认。
+- 审计边界：上游 PyPI 字段不是法律结论，6 个 unknown、长许可文本和全部分发 license/notice 义务仍需发版者人工审阅。本机补充输出在 `.tools/embedding-migration-20261021/`，不写回旧 CI artifact。期间测试进程已停止，未启动 Docker、没有创建镜像/容器/卷；Docker 和本地 PostgreSQL 均仍停止。
+- 未完成：本批脚本/CI 尚待提交、普通推送和新一轮 SBOM/Trivy 验证；若 PyPI 请求失败，CI 应失败而不上传成功的假清单。A12 有许可业务金标/人工判分、A13 目标部署联合恢复/RPO/RTO/回滚、A28 Resend/生产邮件/部署隐私、旧目标库向量切换验收、8 GB/断电/原生升级及 76 条无修复系统 advisory 继续开放。
 
 ### 2026-10-21：补齐云端向量跨维度离线迁移与精确回退
 

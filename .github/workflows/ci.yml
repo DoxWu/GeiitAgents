@@ -72,7 +72,10 @@ jobs:
         run: python .github/scripts/test_build_context_boundaries.py
 
       - name: Install Python dependency auditor
-        run: python -m pip install --upgrade pip pip-audit
+        run: python -m pip install --upgrade pip pip-audit httpx==0.28.1 packaging
+
+      - name: Test Python SBOM enrichment
+        run: python -m unittest discover -s .github/scripts -p 'test_enrich_python_sbom.py'
 
       - name: Audit Python runtime and optional local ML dependencies
         working-directory: kb_qa_system/backend
@@ -83,6 +86,13 @@ jobs:
           --requirement requirements-test.txt
           --format cyclonedx-json
           --output "$RUNNER_TEMP/python-dependencies.cdx.json"
+
+      - name: Record Python package identities and publisher license declarations
+        run: >-
+          python .github/scripts/enrich_python_sbom.py
+          --input "$RUNNER_TEMP/python-dependencies.cdx.json"
+          --output "$RUNNER_TEMP/python-dependencies.cdx.json"
+          --licenses "$RUNNER_TEMP/python-licenses.json"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -116,6 +126,7 @@ jobs:
           path: |
             ${{ runner.temp }}/frontend-production.cdx.json
             ${{ runner.temp }}/python-dependencies.cdx.json
+            ${{ runner.temp }}/python-licenses.json
             ${{ runner.temp }}/rust-dependencies.cdx.json
           if-no-files-found: warn
           retention-days: 30
