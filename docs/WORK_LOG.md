@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-21 本次状态：** A28 与网页输出修正已推送至开发分支 `540cd26`，七 job CI 和精确镜像/容器/网络清理通过。随后继续修复独立运维告警状态文件对损坏数据的容错、Windows 临时文件占用恢复及 Resend 成功判定；新增/运维/邮件及供应商契约回归本地 **151 passed/15 个数据库 live 用例排除**，Ruff 与 diff 检查通过。该项新代码和后续 CI 尚待提交验证；本机 Docker 保持停止、没有新增容器或镜像。既有用户资料、邮件和线上环境均未访问。
+**2026-10-21 本次状态：** A28 与网页输出修正已推送至开发分支 `540cd26`，七 job CI 和精确镜像/容器/网络清理通过，记录已同步至 `73ba9b5`。随后独立运维告警状态容错、Windows 原生文件占用恢复和 Resend 成功判定加固已保存本地提交 `ce6d489`；最终本机 **151 passed/15 个数据库 live 用例排除**，Ruff/编译/CI YAML/diff 检查通过。普通 push 连续遇 GitHub 443 重置/超时，API 核对远端开发分支仍 `73ba9b5`、旧 main 仍 `ea4917e`；新代码尚未推送或进入 CI。本机 Docker 保持停止，没有新增容器/镜像，也未访问用户资料、邮件或线上环境。
 
 **2026-10-21 最新完整 CI：** 提交 `540cd26` 的 workflow [39559756813](https://github.com/DoxWu/GeiitAgents/actions/runs/39559756813) 七个 job 全部成功：后端 **856 passed/6 skipped/2 warnings、coverage 54.07%**；前端 **136 文件/1300 项**；生产镜像内 PG16 恢复/维护/联合恢复/向量迁移 **81 passed/5 warnings**；真实 LangChain 合约、secret scan、依赖审计、SBOM、前端构建、容器扫描及可修复 HIGH/CRITICAL 门禁均通过。Python SBOM 的 6 项上游许可证未知继续跟踪，发布者声明不等于法律审阅。本次下载实际 Trivy 报告核对后端 **76 项无修复版本（75 HIGH、1 CRITICAL）**，前端 0；不称为零漏洞。CI 日志确认本次 SHA 标签的 backend/frontend 测试镜像已删除，后端测试及镜像验收的服务容器/网络均移除；本机没有启动 Docker、没有新增镜像或容器。旧 main 仍为 `ea4917e`。
 
@@ -1204,3 +1204,9 @@
 - 最终本机回归：Windows Python 3.11.9、固定 pytest 9.0.3 / pytest-asyncio 1.4.0，test_ops_alerts/test_ops/test_maintenance/test_review_email_delivery/test_email_system/test_provider_acceptance 共 **151 passed/15 PG live deselected/1 warning，13.18 秒**。含真实 Windows 文件锁、新 40 项故障/HTTP 响应检查和既有邮件/供应商契约；数据库 live 未运行。两改动 Python 文件 Ruff check/format、编译和 git diff check 通过，新增测试纳入生产镜像恢复验收命令。初轮测试代码的 Mock 上下文、过长参数 ID 和断言已纠正；终端 DEBUG=release 类型冲突及旧 pytest 优先级纠正后才记本条最终结果。
 - 资源与 Git：本轮未启动 Docker，确认服务停止、engine pipe 不存在，没有新建镜像/容器/卷/网络，也未连接现有 PostgreSQL 5432、读取项目 .env 或调用真实模型/邮件。JUnit 在忽略目录 .tools/pytest-ops-alerts-20261021/。已成功 fetch 开发分支与 main；本批待本地提交、普通推送和新 CI，不用 540cd26 的既有绿色 CI 覆盖本批改动。用户原有 .vscode/、docs/PROJECT_OVERVIEW.md、output/、tmp/ 保留。
 - 当前未完成：A12 有许可业务金标和人工误拒/漏拒评分；A13 目标卷/Secret/队列恢复、RPO/RTO/回滚；A28 目标邮件链/真实 Resend（若使用）与部署隐私事实；实际目标库向量迁移、低配/断电/真机、原生安装升级、许可证审阅和无修复容器 advisory。全局目标保持 active。工作流/网页真实合成联调沿用前一批日期证据，本次只修正文档中仍称其未做真实模型的过时描述，没有新发模型请求。
+
+### 2026-10-21：运维告警加固本地提交与同步结果
+
+- 代码、40 项新回归、CI 生产镜像命令及操作/功能记录保存为 `ce6d489`。最后一次成功 fetch 时开发分支/main 与本地基线一致；随后普通 push 遇连接重置，再次 fetch 和两次普通 push 均因 GitHub 443 超时未完成。只读 API 复核开发分支仍 `73ba9b54ff43fceaef363d09e44ed13dbb07ad2d`，旧 main 仍 `ea4917e17b5cf7349948fb82c3e4c0414c74e77a`。本地比该远端领先一个代码提交，本条另存记录提交；未强推、未 API 改写分支、新 CI 没有启动。网络恢复后重新 fetch/核对祖先并普通同步，再验证新 CI 与本次 SHA 镜像/容器清理。
+- 最终证据为 Windows Python 3.11.9 / pytest 9.0.3 的 **151 passed/15 PG live 排除/1 warning**、Ruff/format、编译、YAML 解析和 diff 检查；已实际验证原生 Windows 文件锁释放后重试成功。先前 540cd26 的全量 CI 是历史结果，不覆盖本批代码。Docker 服务停止且引擎管道不存在，本轮没有创建镜像/容器/卷/网络，系统 5432 未操作，无本轮新增 Docker 资源需删除。
+- 目标部署/业务人工评分/隐私及设备验收的开放项沿用上一条。全局目标保持 active，用户原有未跟踪文件保留。本次没有真实模型/邮件/数据库请求或线上部署。
