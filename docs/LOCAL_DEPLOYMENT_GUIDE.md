@@ -48,7 +48,7 @@
 | 软件 | 版本要求 | 说明 |
 |------|----------|------|
 | Python | 3.11+ | 推荐 3.11.x（与 Dockerfile 一致） |
-| Node.js | 20+ | 推荐 20.x LTS |
+| Node.js | 22+ | 推荐 24.x LTS |
 | PostgreSQL | 16+ | 需安装 pgvector 扩展 |
 | Redis | 7+ | 用于缓存、限流、任务队列 |
 | Git | 2.40+ | 代码克隆 |

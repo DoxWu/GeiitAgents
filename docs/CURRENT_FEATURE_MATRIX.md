@@ -18,7 +18,7 @@
 | 笔记、待办与提醒 | 工作台「笔记与待办」；`PersonalItems.tsx`、`ServerReminders.tsx`；后端 `personal.py` | `test_personal.py`；历史单封合成 SMTP 已由用户确认收件；2026-10-21 新镜像真实 Beat→Redis→prefork Worker→回环认证 SMTP 通过，一次投递、重复两条消息不重发 | 隔离合成链不代表 Resend HTTP、真实收件箱或目标部署调度/持久卷/重启验收；本批未向外部发信。 |
 | 本机文件整理 | 工作台「文件整理」；`FileOrganizer.tsx`、文件历史与 Rust 文件桥 | `FileOrganizer.test.tsx`、`FileHistory.test.tsx`、文本编辑/批量编辑测试 | 仅在用户选择和授权的目录执行受限操作；跨卷、进程中断、原生 WebView2 和低配设备需目标机器验收。 |
 | 可视化工作流 | 工作台任务中的工作流页；`Workflows.tsx`、`workflows/`、加密任务存储 | `Workflows.test.tsx`、workflow 定义/布局/便携备份及全量前端回归 | 支持 DAG、条件、触发和最多 5 轮有界模型循环；每个工作流模型请求预算最多 30 次，成功轮次可加密检查点续跑。没有后台常驻执行或任意插件；真实模型/生产调度仍待验。 |
-| 监控、部署与供应商 | 后端 `/health`、`/ready`、可配置 `/metrics`；部署模板和 GitHub Actions | 2026-10-21 HTTPS 官方源的新生产镜像构建成功；镜像内后端全量 **791/791，coverage 53.16%**，含真实 PG16/Redis/OCR/监督器与匹配 PG16 客户端恢复；实际 110 个 Python 包 OSV 无 advisory。历史模型/合成 RAG/SMTP 收件证据见工作记录 | 本地 OSV 不覆盖系统包/可选 ML，新 CI/Trivy 仍待同步；最新远程 `39527474831` 仍为旧 Pillow 失败。最近完整成功 `39403631358` 的后端 76 条无修复告警是历史结果。本批修复默认镜像客户端为 PG16.15，内置工具真实恢复等 66 项通过；新增 CI 镜像恢复门禁待远端运行。其他部署须匹配版本。测试资源已清理，未部署。旧库迁移、Resend/生产链/隐私仍待验收。 |
+| 监控、部署与供应商 | 后端 `/health`、`/ready`、可配置 `/metrics`；部署模板和 GitHub Actions | 2026-10-21 HTTPS 官方源的新生产镜像构建成功；镜像内后端全量 **791/791，coverage 53.16%**，含真实 PG16/Redis/OCR/监督器；实际 110 个 Python 包 OSV 无 advisory。历史模型/合成 RAG/SMTP 收件证据见工作记录 | 本地 OSV 不覆盖系统包/可选 ML。新增 CI `39536620203` 后端/secret scan/LangChain/npm audit/Python audit 通过，但因 Node20 下载无用 CUDA provider 超时和两项新 Rust TLS advisories，前端构建及镜像/Trivy 门禁跳过；Node24/禁 CUDA 下载和 Cargo.lock 修复待新 CI。最近完整成功 `39403631358` 的后端 76 条无修复告警是历史结果。本批修复默认镜像客户端为 PG16.15，内置工具真实恢复等 66 项通过，CI 恢复门禁已加但未远程运行。其他部署须匹配版本。测试资源已清理，未部署。旧库迁移、Resend/生产链/隐私仍待验收。 |
 | FAQ 答案缓存 | 无用户入口或问答读写路径；旧 `FAQ_CACHE_TTL` 配置不启用功能 | 代码接线检查；管理员操作文档已明确未接入 | 未实现，不应描述为命中缓存、减少模型调用或可用功能。 |
 
 ## 证据口径

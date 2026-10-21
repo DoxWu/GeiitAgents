@@ -126,10 +126,24 @@ def test_postgres_dump_tools_match_default_compose_server():
     assert "tests/test_recovery_bundle.py" in workflow
 
 
+def test_frontend_build_skips_unused_node_cuda_runtime_download():
+    dockerfile = (ROOT / "kb_qa_system/frontend/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "FROM node:24-slim AS builder" in dockerfile
+    assert "ONNXRUNTIME_NODE_INSTALL=skip" in dockerfile
+    assert "RUN npm ci --no-audit --no-fund" in dockerfile
+    assert "npm install --legacy-peer-deps" not in dockerfile
+    assert 'ONNXRUNTIME_NODE_INSTALL: skip' in workflow
+    assert workflow.count('node-version: "24"') == 3
+
+
 if __name__ == "__main__":
     test_frontend_dockerignore_has_runtime_secret_boundaries()
     test_backend_dockerignore_keeps_example_only_environment_exception()
     test_gitignore_blocks_private_inputs_but_keeps_reviewed_sources()
     test_production_backend_image_does_not_ship_pip_vendored_packages()
     test_postgres_dump_tools_match_default_compose_server()
+    test_frontend_build_skips_unused_node_cuda_runtime_download()
     print("build context boundary checks passed")

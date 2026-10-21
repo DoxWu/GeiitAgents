@@ -7,15 +7,17 @@
 # ============================================
 
 # 阶段 1：构建
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
-ENV NPM_CONFIG_LOGLEVEL=warn
+# Local knowledge inference runs in the browser via WASM, without Node CUDA EPs.
+ENV NPM_CONFIG_LOGLEVEL=warn \
+    ONNXRUNTIME_NODE_INSTALL=skip
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
 
-RUN npm ci --legacy-peer-deps --no-cache || npm install --legacy-peer-deps --no-cache
+RUN npm ci --no-audit --no-fund
 
 COPY . .
 
