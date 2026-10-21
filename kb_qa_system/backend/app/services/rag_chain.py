@@ -29,6 +29,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 
 from app.core.config import settings
+from app.services.rag_answer_guard import medical_answer_boundary, requires_medical_evidence
 from app.services.vector_store import get_vector_store
 
 logger = logging.getLogger(__name__)
@@ -1251,8 +1252,11 @@ class RAGChainService:
         #   - kb_query: 走完整 RAG 流程（检索+预生成校验+生成）
         #   - chitchat/followup/meta: 走无检索路径（直接用 LLM 回复，跳过检索和校验）
         # 原因：闲聊/追问不需要检索文档，如果走 RAG 会被预生成校验误拦截
-        intent = self._classify_intent(question, conversation_history)
-        if not intent.needs_retrieval:
+        # Recognized medical questions require evidence, even if intent classification
+        # would otherwise route them to retrieval-free chat or follow-up generation.
+        medical_query = requires_medical_evidence(question)
+        intent = None if medical_query else self._classify_intent(question, conversation_history)
+        if intent is not None and not intent.needs_retrieval:
             # 非知识库提问，走无检索生成路径
             # 作用：闲聊/追问/元问题直接用 LLM 回复，不检索文档，不做预生成校验
             return self._generate_without_retrieval(
@@ -1270,8 +1274,10 @@ class RAGChainService:
         # 关键设计：改写后的 query 仅用于检索，原始 question 仍用于 LLM 生成（保持用户原意）
         # 意图切换时不用历史改写，避免旧话题的指代消解污染当前 query
         # 降级策略：LLM 不可用或超时返回原始 query（query_rewrite_service 内部处理）
-        search_query = self._rewrite_query_for_search(
-            question, conversation_history, intent_switched=intent_switched
+        search_query = (
+            question if medical_query else self._rewrite_query_for_search(
+                question, conversation_history, intent_switched=intent_switched
+            )
         )
 
         # 1. 检索相关文档（限定在用户可访问范围）
@@ -1286,6 +1292,10 @@ class RAGChainService:
             rerank_mode=rerank_mode,
         )
         retrieval_time_ms = int((_time.time() - retrieval_start) * 1000)
+
+        boundary = self._medical_boundary_response(question, search_results, retrieval_time_ms)
+        if boundary is not None:
+            return boundary
 
         # 1.5 矛盾检测（检索结果冲突标记）
         # 作用：检测多个文档片段之间是否存在内容矛盾
@@ -1430,6 +1440,43 @@ class RAGChainService:
             # 矛盾检测信息（供前端展示警告）
             # 作用：让前端知道检索结果存在矛盾，可展示警告提示用户
             "conflict": self._format_conflict_info(conflict_result),
+        }
+
+    def _medical_boundary_response(
+        self,
+        question: str,
+        search_results: list[dict[str, Any]],
+        retrieval_time_ms: int,
+        *,
+        stream: bool = False,
+    ) -> dict[str, Any] | None:
+        """Preserve both response contracts when a medical evidence rule ends generation."""
+        answer = medical_answer_boundary(question, search_results)
+        if answer is None:
+            return None
+        sources = [
+            {
+                "document_id": result["metadata"].get("document_id"),
+                "title": result["metadata"].get("document_title", "未知"),
+                "content": result["content"][:200] + "..."
+                if len(result["content"]) > 200
+                else result["content"],
+                "score": result.get("score", 0),
+            }
+            for result in search_results
+        ]
+        metrics = self._build_metrics(search_results, retrieval_time_ms, {}, degraded=False)
+        from app.core.prometheus_metrics import record_rag_metrics
+
+        record_rag_metrics(metrics, intent_type="kb_query", retrieval_happened=True, stream=stream)
+        return {
+            "answer": answer,
+            "sources": sources,
+            "question": question,
+            "degraded": False,
+            "degrade_reason": None,
+            "metrics": metrics,
+            "conflict": None,
         }
 
     def _build_metrics(
@@ -1585,8 +1632,10 @@ class RAGChainService:
         #   - kb_query: 走完整 RAG 流程（检索+预生成校验+生成）
         #   - chitchat/followup/meta: 走无检索路径（直接用 LLM 回复，跳过检索和校验）
         # 原因：闲聊/追问不需要检索文档，如果走 RAG 会被预生成校验误拦截
-        intent = self._classify_intent(question, conversation_history)
-        if not intent.needs_retrieval:
+        # Apply the same evidence requirement before retrieval-free streaming routes.
+        medical_query = requires_medical_evidence(question)
+        intent = None if medical_query else self._classify_intent(question, conversation_history)
+        if intent is not None and not intent.needs_retrieval:
             # 非知识库提问，走流式无检索生成路径
             # 作用：闲聊/追问/元问题直接用 LLM 流式回复，不检索文档，不做预生成校验
             async for event in self._generate_without_retrieval_stream(
@@ -1606,8 +1655,10 @@ class RAGChainService:
         # 关键设计：改写后的 query 仅用于检索，原始 question 仍用于 LLM 生成（保持用户原意）
         # 意图切换时不用历史改写，避免旧话题的指代消解污染当前 query
         # 降级策略：LLM 不可用或超时返回原始 query（query_rewrite_service 内部处理）
-        search_query = self._rewrite_query_for_search(
-            question, conversation_history, intent_switched=intent_switched
+        search_query = (
+            question if medical_query else self._rewrite_query_for_search(
+                question, conversation_history, intent_switched=intent_switched
+            )
         )
 
         # 1. 检索相关文档（限定在用户可访问范围）
@@ -1622,6 +1673,21 @@ class RAGChainService:
             rerank_mode=rerank_mode,
         )
         retrieval_time_ms = int((_time.time() - retrieval_start) * 1000)
+
+        boundary = self._medical_boundary_response(
+            question, search_results, retrieval_time_ms, stream=True
+        )
+        if boundary is not None:
+            yield {"type": "sources", "content": boundary["sources"]}
+            yield {"type": "chunk", "content": boundary["answer"]}
+            yield {
+                "type": "done",
+                "content": boundary["answer"],
+                "degraded": False,
+                "degrade_reason": None,
+                "metrics": boundary["metrics"],
+            }
+            return
 
         # 1.5 矛盾检测（检索结果冲突标记）
         # 作用：检测多个文档片段之间是否存在内容矛盾
