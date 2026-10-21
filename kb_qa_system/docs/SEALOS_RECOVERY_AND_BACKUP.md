@@ -76,7 +76,7 @@ readinessProbe:
 
 备份库保存的是 AES-256-GCM 加密的分块归档，不是可以直接切流的在线副本。多个源使用不同 BACKUP_SOURCE_ID，避免混用。存储账号不需要 pgvector，恢复演练环境需要；两者可在同一外部 PostgreSQL 实例。许多托管服务不开放 CREATEDB，此时另配可创建临时库的验证服务器。建议 PostgreSQL/pgvector 与主库同版本；pg_dump 客户端不能低于源库主版本，恢复到较旧主版本不受支持。
 
-镜像安装发行版的 `postgresql-client`。部署前运行 `pg_dump --version` 与主库 `SHOW server_version` 比对；如果主库比镜像客户端新，先在构建镜像中安装对应主版本客户端。当前尚未获取你线上 PostgreSQL 的版本，不能预先保证版本匹配。
+后端镜像的 `POSTGRES_CLIENT_MAJOR` 构建参数默认是 `16`，与 Compose/CI 的 PostgreSQL 16 一致。主库或恢复目标不是 16 时，构建镜像时使用相同主版本，例如 `docker build --build-arg POSTGRES_CLIENT_MAJOR=17 ...`；生产平台也须在 Docker 构建参数中设置该值，运行环境变量不能替代构建参数。部署前在 API/ops 容器运行 `pg_dump --version` 与主库 `SHOW server_version` 比对，并对照恢复目标版本；客户端须不低于源库，pg_dump/pg_restore 的主版本应与目标兼容。当前尚未获取线上 PostgreSQL 版本，不能预先保证版本匹配。
 
 公网数据库连接使用服务商要求的 TLS，优先 `sslmode=verify-full` 和可信根证书，至少 require；限制来源网络/IP。不要为此将主库无保护地开放到公网。也可通过专用隧道/VPN访问。数据库原有 RLS/权限限制不得让备份账号漏掉应用数据。
 

@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-21 当前状态：** 已将后端 Dockerfile 的 Debian 软件源改为 HTTPS，当前源码的生产镜像本机构建成功（Pillow 13.0.0、Python 3.11.17、Tesseract 5.5.0，运行层无 pip）。在该镜像内补入公开静态测试材料、使用隔离 PG16.14/Redis 7.4 和匹配的 PG16 客户端，后端全量 **791 passed / 0 skipped / 1 warning，84.69 秒，覆盖率 53.16%**；包含真实恢复/联合恢复、pgvector、Redis、OCR 和 POSIX 监督器回归。真实 Beat→Redis→prefork Worker→回环 SMTP 合成提醒链通过，重复两次消息没有重发；没有外部邮件或模型请求。新镜像实际 110 个 Python 包的 OSV 查询无已知 advisory，但不包含 OS/可选 ML，也不代替完整 CI/Trivy。测试后已删除本轮 4 容器、2 镜像和专用网络，核对原有 3 镜像 ID/4 数据卷不变，容器为空，Docker Desktop 已停止；未全局 prune。最近完整成功 CI 仍是 `39403631358`（`fd10a6c`）；最新 `39527474831`（`b6a522b`）因 Pillow 12.3.0 的 9 项 advisory 失败，本地已修复。远端开发分支最后核实为 `b6a522b`，旧 main 为 `ea4917e`，普通同步和新 CI 状态见末尾记录。A12 业务金标/人工判分、A13 目标部署恢复/RPO/RTO、A28 Resend HTTP/生产链/部署隐私、旧库跨维度迁移及低配/断电/原生升级仍开放，未操作线上部署。
+**2026-10-21 当前状态：** 本批修复生产镜像 PostgreSQL 客户端版本：默认从发行版 PG17 改为官方签名 PGDG 的 PG16，与 Compose/CI 默认服务器一致，可通过 `POSTGRES_CLIENT_MAJOR` 构建参数调整。新生产镜像构建成功，内置 pg_dump/pg_restore 16.15 在隔离 PG16.14 上 **66 passed / 0 skipped / 1 warning，33.56 秒**，包含备份/维护队列/联合恢复、真实 pgvector 权限与进程监督器；没有挂载替代 PG 工具。CI 新增生产镜像内置客户端版本和真实恢复门禁。上一批 HTTPS/Pillow 13.0.0 镜像的全量 **791/791、coverage 53.16%**、110 个 Python 包 OSV 和 Beat→Redis→prefork Worker→回环 SMTP 结果仍有效，本批未重跑全量或扫描。本批 2 容器/1 新增镜像已删除，原 3 镜像完整 ID/4 卷保留，容器为空，未全局 prune；Docker Desktop 已停止。Git fetch 在命令级 DNS 覆盖下恢复成功，提交/普通推送和新 CI 状态见末尾；最近完整成功仍为 `39403631358`，旧 Pillow 失败 `39527474831` 不代表本批代码。A12 业务金标/人工判分、A13 目标部署恢复/RPO/RTO、A28 Resend HTTP/生产链/部署隐私、旧库跨维度迁移及低配/断电/原生升级仍开放，未操作线上部署。
 
 **2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
 
@@ -135,7 +135,7 @@
 
 ## 下一步执行顺序
 
-2026-10-21 下一步：Pillow 修复与 HTTPS 构建已通过本机生产镜像全量 791 项回归；隔离 Celery/SMTP 链和资源清理已完成。网络恢复后先 fetch/核对祖先，再普通推送开发分支，复核完整 Python/Rust 审计、SBOM、Trivy 与镜像构建。继续推进 A12 有许可的业务金标/人工判分、A13 目标环境卷/Secret/队列与联合恢复/RPO/RTO/回滚、A28 Resend HTTP/生产业务链与部署隐私、旧目标库跨维度迁移以及低配/断电/原生安装升级；不重复发送真实邮件。镜像默认 PG17 客户端与 PG16 目标不构成恢复兼容性验收，部署须匹配客户端/源库/目标版本；本次 PG16 恢复明确使用测试挂载的匹配工具。
+2026-10-21 下一步：PG16 内置客户端镜像和定向 66 项真实恢复回归已通过，CI 已增加镜像恢复门禁；先完成本批开发分支普通推送并复核完整 Python/Rust 审计、SBOM、Trivy、生产构建和新增恢复步骤。上一批全量 791 项、隔离 Celery/SMTP 结果按各自日期/批次沿用，不重复发送真实邮件。继续推进 A12 有许可的业务金标/人工判分、A13 目标环境卷/Secret/队列与联合恢复/RPO/RTO/回滚、A28 Resend HTTP/目标部署生产链与部署隐私、旧目标库跨维度迁移和低配/断电/原生升级。默认 PG16 仅覆盖默认 Compose/CI；其他部署需构建时匹配客户端/源库/目标版本，不将运行环境变量等同构建参数。
 
 以下表格保留 2026-10-10 及此前的实施顺序；当前整改结果见顶部状态和修复跟踪，不再将已实现的认证、出站安全、上传一致性等重复列为未修复。
 
@@ -1072,3 +1072,12 @@
 
 - 使用命令级 Schannel/DNS 覆盖并保留 TLS 校验执行 `git fetch agents`，连接被对端重置（`Recv failure: Connection was reset`），未能核对新的远端差异，因此本批没有继续 push，也未触发新 CI/Trivy。开发分支最后确认及本机缓存为 `b6a522b`、旧 main 为 `ea4917e`，缓存不作为本次远端查询成功的证据。
 - HTTPS Dockerfile 和三份当前状态文档在 `develop/geiit-agents` 保存本地提交；网络恢复后先 fetch/核对，再普通推送并复核审计/SBOM/镜像门禁。现有未跟踪内容（含工作中出现的 `.vscode/`）不纳入提交；测试 Docker 资源已核对清理，未强推、未发布或部署。
+
+
+### 2026-10-21：生产镜像匹配 PG16 客户端及内置恢复门禁
+
+- 实际改动：发现生产 Dockerfile 的发行版 `postgresql-client` 已变为 PG17，而 Compose/CI 默认 PG16；上一批恢复依赖外部挂载 PG16 工具，尚不能证明原镜像自身兼容。现默认构建参数 `POSTGRES_CLIENT_MAJOR=16`，通过 HTTPS/独立签名 keyring 的 PostgreSQL 官方 PGDG 安装对应客户端，保留 TLS/apt 签名校验并增加有界下载重试。API/worker/beat/flower/ops Compose 透传该构建参数，示例环境和恢复指南说明非 16 服务器及构建参数边界。CI 在生产镜像构建后先核对内置客户端 16，再运行五个恢复相关测试文件；测试依赖外置，不为运行镜像加入 pip/pytest 或替代 PG 工具。
+- 构建与本地验证：前两次 PGDG 包下载因 443 连接拒绝失败，未生成应用镜像；加入有界 apt 重试后成功构建 `geiit-pg16-client:acceptance-20261021`，镜像 ID `35699685e9dd8086e7d5f0f9d67dd7447807fa3a0315ed17c8dd314987df19f8`，pg_dump/pg_restore 均为 16.15。PowerShell 曾将 Docker daemon 输出的管道关闭诊断转成非零命令状态，但 BuildKit 最终导出完成且随后 `image inspect`/实际运行验证镜像存在；不依赖该 PowerShell 状态宣称构建成功。该镜像在隔离 PG16.14 上执行 `test_ops.py`、`test_maintenance.py`、`test_recovery_bundle.py`、`test_vector_store_live_postgres.py`、`test_entrypoint_supervision.py`：**66 passed / 0 skipped / 1 warning，33.56 秒**；唯一 warning 为 passlib 的 crypt 弃用。真实联合恢复包括登录、上传文件下载、向量查询和待办更新；内置 PG 工具保持原 PATH，未挂旧工具。容器退出 0、无 OOM；应用限制 1100 MiB/1.5 CPU 只用于本次回归，不等同低配压测。未读 `.env`、未连业务库、未调用模型或外部邮件；全量 791、OSV 和前端结果沿用上一批，未在本批重跑。
+- 静态验证：构建上下文/PG 默认版本检查脚本、Python 编译、CI YAML/内嵌 Python 解析与 Bash 语法、默认和 ops 两个 Compose `config --quiet --no-env-resolution`、`git diff --check` 均通过。首次用于解析的 PowerShell 单行引号错误已更正并重跑，不计首次失败为成功。新 CI 门禁配置尚需远端实际运行；当前未确认目标部署 PG 版本，不保证其他主版本兼容。
+- 按用户要求清理：测试只使用 tmpfs、`network none` 与共享测试 PG 命名空间，无宿主端口/原数据卷。测试后集群仅余 `postgres`/`test`，随机恢复库为 0；已正常停止 PG 并删除 `geiit-pg16-app-20261021`、`geiit-pg16-db-20261021` 和本轮新增镜像。核对原后端/前端/PG 三个完整镜像 ID、四个原有卷与默认三个网络不变，容器为空；无新命名卷、无全局 prune。BuildKit 缓存可能保留，未清除其他项目缓存。日志、JUnit 与清理断言在忽略目录 `.tools/pg16-client-20261021/`。Docker Desktop 已正常停止。
+- Git 与下一步：默认 HTTPS fetch 在 443 超时；随后命令级 Schannel/DNS 覆盖的 `git fetch agents` 成功，开发分支/旧 main 仍为 `b6a522b`/`ea4917e`，本地祖先/差异将在提交前检查，普通推送和新 CI 状态另记，不强推、不部署。保留原 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/`。A12 业务金标/许可/人工判分、A13 目标环境恢复/RPO/RTO/回滚、A28 Resend HTTP/目标生产链/部署隐私、旧库跨维度迁移及 8 GB/断电/原生升级仍开放，全局目标保持 active。

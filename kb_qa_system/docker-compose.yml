@@ -138,6 +138,7 @@ services:
         # 本地 ML 依赖开关：设为 true 安装 sentence-transformers（+~800MB torch）
         # 开发环境默认 false，需要时在 .env 中设置 INSTALL_LOCAL_ML=true
         INSTALL_LOCAL_ML: ${INSTALL_LOCAL_ML:-false}
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}
     container_name: kb_qa_api
     restart: unless-stopped
     environment:
@@ -198,6 +199,7 @@ services:
       args:
         # 本地 ML 依赖开关（与 api 服务保持一致）
         INSTALL_LOCAL_ML: ${INSTALL_LOCAL_ML:-false}
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}
     container_name: kb_qa_worker
     restart: unless-stopped
     environment:
@@ -237,6 +239,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}
     container_name: kb_qa_beat
     restart: unless-stopped
     environment:
@@ -270,6 +274,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}
     container_name: kb_qa_flower
     restart: unless-stopped
     environment:

@@ -107,9 +107,29 @@ def test_production_backend_image_does_not_ship_pip_vendored_packages():
     assert "/usr/local/lib/python3.11/ensurepip" in dockerfile
 
 
+def test_postgres_dump_tools_match_default_compose_server():
+    dockerfile = (ROOT / "kb_qa_system/backend/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    compose = (ROOT / "kb_qa_system/docker-compose.yml").read_text(encoding="utf-8")
+    ops_compose = (ROOT / "kb_qa_system/docker-compose.ops.yml").read_text(
+        encoding="utf-8"
+    )
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "ARG POSTGRES_CLIENT_MAJOR=16" in dockerfile
+    assert 'postgresql-client-${POSTGRES_CLIENT_MAJOR}' in dockerfile
+    assert compose.count("POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}") >= 3
+    assert "POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}" in ops_compose
+    assert "POSTGRES_CLIENT_MAJOR=16" in workflow
+    assert "pgvector/pgvector:pg16" in workflow
+    assert "Restore with the production image's built-in PostgreSQL clients" in workflow
+    assert "tests/test_recovery_bundle.py" in workflow
+
+
 if __name__ == "__main__":
     test_frontend_dockerignore_has_runtime_secret_boundaries()
     test_backend_dockerignore_keeps_example_only_environment_exception()
     test_gitignore_blocks_private_inputs_but_keeps_reviewed_sources()
     test_production_backend_image_does_not_ship_pip_vendored_packages()
+    test_postgres_dump_tools_match_default_compose_server()
     print("build context boundary checks passed")

@@ -75,6 +75,8 @@ RUN /opt/venv/bin/python -m pip install --upgrade pip && \
 # --------------------------------------------
 FROM python:3.11-slim AS runtime
 
+ARG POSTGRES_CLIENT_MAJOR=16
+
 LABEL maintainer="kb-qa-system"
 LABEL description="GeiIt企业知识库后端（FastAPI + Celery）"
 
@@ -99,8 +101,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #             libsm6/libxrender1/libxext6/libgl1（opencv 已从依赖中删除）
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
+    ca-certificates \
     libpq5 \
-    postgresql-client \
     tesseract-ocr \
     tesseract-ocr-chi-sim \
     tesseract-ocr-eng \
@@ -120,6 +122,22 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
         /usr/local/lib/python3.11/ensurepip \
         /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
     && rm -rf /var/lib/apt/lists/*
+
+# Use the same client major as the default Compose/CI PostgreSQL server.
+# A newer pg_dump can emit settings that older restore targets cannot accept.
+# Other deployments can select their server major with POSTGRES_CLIENT_MAJOR.
+RUN case "${POSTGRES_CLIENT_MAJOR}" in ''|*[!0-9]*) exit 1 ;; esac && \
+    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        --output /usr/share/keyrings/postgresql.asc && \
+    . /etc/os-release && \
+    echo "deb [signed-by=/usr/share/keyrings/postgresql.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+        > /etc/apt/sources.list.d/postgresql.list && \
+    apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update && \
+    apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+        "postgresql-client-${POSTGRES_CLIENT_MAJOR}" && \
+    pg_dump --version && pg_restore --version && \
+    rm -rf /var/lib/apt/lists/*
 
 # 创建非 root 用户（在 COPY 之前，以便使用 --chown 直接设置属主）
 # 修复 P-05：此前先 COPY 再 chown -R /app /opt/venv，chown 会复制整个 venv 层（~6GB）

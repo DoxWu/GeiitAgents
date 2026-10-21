@@ -3,7 +3,10 @@
 # Run: docker compose -f docker-compose.ops.yml up -d --build
 services:
   ops:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}
     restart: unless-stopped
     env_file: .env.ops
     environment:
