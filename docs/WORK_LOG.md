@@ -1047,5 +1047,6 @@
 - CI 证据：[CI 39527474831](https://github.com/DoxWu/GeiitAgents/actions/runs/39527474831) 对应 `b6a522b`。npm 审计、构建上下文检查、LangChain 合约、后端/前端测试与前端构建通过；Python 严格 OSV 审计在 Pillow `12.3.0` 上发现 9 项漏洞，Rust 审计、生产镜像构建及 Trivy 因依赖门禁失败而跳过。PostgreSQL service container 已由 CI 的 `Stop containers` 步骤正常停止。
 - 实际改动：将 `kb_qa_system/backend/requirements.txt` 中 Pillow 固定版本升至 `13.0.0`。OSV 中对应 9 项 advisory 均标明 `13.0.0` 为修复版本；从失败运行下载的 Python SBOM 含 160 个组件，逐项按原版本查询 OSV、仅将 Pillow 改为 `13.0.0` 后，没有返回已知 advisory。此独立查询不是 CI `pip-audit` 的替代结果。
 - 本地验证：使用隔离 Python 3.11.9 安装 Pillow `13.0.0` wheel，`test_review_ocr_limits.py` 与 `test_review_downloads.py` **19/19 通过**。首轮因继承的 `DEBUG=release` 和系统 pytest 临时目录权限失败，改用 `DEBUG=false` 与仓库内 basetemp 后完整通过。`git diff --check` 通过。本机完整 `pip-audit` 在 Windows 解析可选 ML 依赖时长时间无输出并中止，最终审计等待新 CI。
-- 镜像与资源：本机 Docker Engine 不可用，未创建镜像/容器，没有本轮 Docker 资源需要删除；旧 CI PostgreSQL 服务容器已停止。未部署、未读 `.env`、未调用模型/邮件。只核对本地开发分支与远端同为 `b6a522b`，随后提交并普通推送本次修复，检查新的 Python audit、Rust audit、SBOM、Trivy 和生产镜像构建。
+- 镜像与资源：本机 Docker Engine 不可用，未创建镜像/容器，没有本轮 Docker 资源需要删除；旧 CI PostgreSQL 服务容器已停止。未部署、未读 `.env`、未调用模型/邮件。普通 Git push 与命令级 Schannel/DNS 重试均在 `github.com:443` 超时；GitHub API 只读确认远端开发分支仍为 `b6a522b`、旧 `main` 为 `ea4917e`，新 CI 尚未触发。
+- Git/下一步：代码在本地提交 `0c0f044`，本次 push 失败情况已追加到工作记录与 A08 当前状态；随后以文档提交保存在本地，分支领先远端 2 个提交。GitHub 网络恢复后先 fetch 核对，再普通推送并检查新的 Python audit、Rust audit、SBOM、Trivy 和生产镜像构建；未强推、未通过其他接口写入远端。
 - 仍开放：A12 业务语料许可/金标/人工判分；A13 目标环境联合恢复、RPO/RTO 与回滚；A28 Resend/Celery 和部署隐私核验；旧目标库跨维度迁移；8 GB、断电及原生安装升级。保留未跟踪的 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/`，不纳入提交。
