@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import os
 import re
 import smtplib
@@ -131,8 +133,10 @@ def probe_tools(item: dict, label: str) -> None:
             temperature=0,
         )
         calls = response.choices[0].message.tool_calls if response.choices else None
-        if not calls or calls[0].function.name != "acceptance_probe":
+        if not calls or len(calls) != 1 or calls[0].function.name != "acceptance_probe":
             raise ValueError("tool_call_not_returned")
+        if json.loads(calls[0].function.arguments) != {"marker": "ok"}:
+            raise ValueError("tool_arguments_invalid")
         print(f"PASS {label}: tool calling")
     except Exception as error:
         status = safe_failure(error)
@@ -152,12 +156,20 @@ def probe_embedding(item: dict, label: str, expected_dimension: int) -> None:
         request["dimensions"] = expected_dimension
     try:
         response = client.embeddings.create(**request)
-        actual = len(response.data[0].embedding)
+        if len(response.data) != 1:
+            raise ValueError("embedding_count_mismatch")
+        vector = response.data[0].embedding
+        actual = len(vector)
         if actual != expected_dimension:
             raise ValueError("embedding_dimension_mismatch")
         configured = int(item.get("dimension") or 0)
         if configured != expected_dimension:
             raise ValueError("configured_dimension_mismatch")
+        if not all(
+            isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+            for value in vector
+        ) or not any(vector):
+            raise ValueError("embedding_values_invalid")
         print(f"PASS {label}: embedding dimension={actual}")
     except Exception as error:
         status = safe_failure(error)
@@ -168,10 +180,10 @@ def probe_embedding(item: dict, label: str, expected_dimension: int) -> None:
 
 
 def send_resend_test(recipient: str) -> str:
-    api_key = os.environ.get("RESEND_API_KEY", "")
+    api_key = os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_PASSWORD", "")
     sender = os.environ.get("EMAIL_FROM", "")
     if not api_key or not sender:
-        raise ValueError("Resend requires RESEND_API_KEY and EMAIL_FROM")
+        raise ValueError("Resend requires RESEND_API_KEY or SMTP_PASSWORD, and EMAIL_FROM")
     payload = {
         "from": sender,
         "to": [recipient],
@@ -191,18 +203,26 @@ def send_resend_test(recipient: str) -> str:
         return f"unknown:http_{response.status_code}"
     if response.status_code >= 400:
         return f"rejected:http_{response.status_code}"
+    if not 200 <= response.status_code < 300:
+        return f"unknown:http_{response.status_code}"
     try:
         message_id = response.json().get("id")
     except (ValueError, AttributeError):
         message_id = None
-    return "accepted" if message_id else "unknown:missing_provider_id"
+    return (
+        "accepted"
+        if isinstance(message_id, str) and message_id.strip()
+        else "unknown:missing_provider_id"
+    )
 
 
 def preflight_smtp(recipient: str) -> list[str]:
     issues: list[str] = []
-    for name in ("SMTP_HOST", "SMTP_PASSWORD", "EMAIL_FROM"):
+    for name in ("SMTP_HOST", "EMAIL_FROM"):
         if not os.environ.get(name):
             issues.append(f"{name}: missing")
+    if not (os.environ.get("SMTP_PASSWORD") or os.environ.get("RESEND_API_KEY")):
+        issues.append("SMTP_PASSWORD or RESEND_API_KEY: missing")
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
         issues.append("email recipient: invalid address")
     try:
@@ -239,7 +259,9 @@ def send_smtp_test(recipient: str) -> str:
                 client.starttls(context=ssl.create_default_context())
             username = os.environ.get("SMTP_USER", "")
             if username:
-                client.login(username, os.environ["SMTP_PASSWORD"])
+                client.login(
+                    username, os.environ.get("SMTP_PASSWORD") or os.environ["RESEND_API_KEY"]
+                )
             refused = client.send_message(message)
     except smtplib.SMTPRecipientsRefused:
         return "rejected:recipient_refused"
@@ -318,8 +340,8 @@ def verify_database_dimension(expected: int) -> tuple[bool, str]:
 
 def preflight_resend(recipient: str) -> list[str]:
     issues = []
-    if not os.environ.get("RESEND_API_KEY"):
-        issues.append("RESEND_API_KEY: missing")
+    if not (os.environ.get("RESEND_API_KEY") or os.environ.get("SMTP_PASSWORD")):
+        issues.append("RESEND_API_KEY or SMTP_PASSWORD: missing")
     if not os.environ.get("EMAIL_FROM"):
         issues.append("EMAIL_FROM: missing")
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):

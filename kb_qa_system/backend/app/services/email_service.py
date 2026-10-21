@@ -324,13 +324,13 @@ def _send_via_http_api(
     通过 Resend HTTP API 发送邮件（主通道）
 
     作用：
-        使用 Resend 官方 SDK 通过 HTTPS 443 端口发送邮件，
+        使用 HTTPX 通过 HTTPS 443 端口发送单次 Resend 请求，
         绕过 Railway 等云平台对 SMTP 端口（25/465/587）的限制。
 
     优势：
         - HTTPS 443 端口通常不受云平台限制
         - Resend 官方推荐方式，性能优于 SMTP
-        - SDK 内部处理重试和错误分类
+        - 不自动重试或跟随重定向；结果不明确时由人工核对供应商事件
 
     参数：
         to: str - 收件人邮箱
@@ -341,7 +341,7 @@ def _send_via_http_api(
         str - Resend 返回的邮件 ID（如 "re_123abc"）
 
     异常：
-        ValueError - RESEND_API_KEY 未配置
+        ValueError - RESEND_API_KEY 及 SMTP_PASSWORD 均未配置
         EmailDeliveryRejected - Resend explicitly rejected the request
         EmailDeliveryOutcomeUnknown - provider acceptance could not be confirmed
     """
@@ -365,7 +365,7 @@ def _send_via_http_api(
         raise EmailDeliveryOutcomeUnknown("resend_delivery_outcome_unknown") from None
     if 400 <= response.status_code < 500:
         raise EmailDeliveryRejected(response.status_code)
-    if response.status_code >= 500:
+    if not 200 <= response.status_code < 300:
         raise EmailDeliveryOutcomeUnknown("resend_delivery_outcome_unknown")
     try:
         result = response.json()
@@ -425,7 +425,7 @@ async def _send_via_smtp_async(
         hostname=settings.SMTP_HOST,
         port=settings.SMTP_PORT,
         username=settings.SMTP_USER,
-        password=settings.SMTP_PASSWORD,
+        password=settings.SMTP_PASSWORD or settings.RESEND_API_KEY,
         use_tls=settings.SMTP_USE_TLS,
         start_tls=settings.SMTP_START_TLS,
         timeout=settings.SMTP_TIMEOUT,

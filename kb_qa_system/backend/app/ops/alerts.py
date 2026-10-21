@@ -37,7 +37,7 @@ def deliver(cfg, subject, text):
             if cfg.SMTP_START_TLS:
                 smtp.starttls(context=ssl.create_default_context())
             if cfg.SMTP_USER:
-                smtp.login(cfg.SMTP_USER, cfg.SMTP_PASSWORD)
+                smtp.login(cfg.SMTP_USER, cfg.SMTP_PASSWORD or cfg.RESEND_API_KEY)
             smtp.send_message(message)
     else:
         raise ValueError("Unsupported email provider")

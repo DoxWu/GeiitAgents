@@ -48,7 +48,10 @@ def install_response(monkeypatch, response=None, error=None):
 
 def test_resend_acceptance_requires_provider_message_id(monkeypatch):
     calls = install_response(monkeypatch, FakeResponse(200, {"id": "msg-test"}))
-    assert email_service._send_via_http_api("recipient@example.invalid", "subject", "body") == "msg-test"
+    assert (
+        email_service._send_via_http_api("recipient@example.invalid", "subject", "body")
+        == "msg-test"
+    )
     assert len([call for call in calls if call.get("url")]) == 1
     assert calls[1]["url"] == "https://api.resend.com/emails"
     assert calls[1]["request"]["headers"]["Authorization"] == "Bearer test-secret"
@@ -65,7 +68,12 @@ def test_resend_explicit_http_rejection_is_traceable_without_body(monkeypatch, s
 
 @pytest.mark.parametrize(
     "response",
-    [FakeResponse(503, {"message": "private response body"}), FakeResponse(200, {})],
+    [
+        FakeResponse(503, {"message": "private response body"}),
+        FakeResponse(200, {}),
+        FakeResponse(302, {"id": "synthetic-id"}),
+        FakeResponse(200, {"id": " "}),
+    ],
 )
 def test_resend_ambiguous_response_is_not_claimed_as_sent(monkeypatch, response):
     install_response(monkeypatch, response)
@@ -80,6 +88,68 @@ def test_resend_timeout_is_unknown_and_attempted_once(monkeypatch):
         email_service._send_via_http_api("recipient@example.invalid", "subject", "body")
     assert "private response body" not in str(error.value)
     assert len([call for call in calls if call.get("url")]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("password", ["", "smtp-synthetic"])
+async def test_smtp_application_uses_configured_password_or_api_key(monkeypatch, password):
+    calls = []
+
+    async def send(message, **options):
+        calls.append((message, options))
+
+    monkeypatch.setattr(email_service.aiosmtplib, "send", send)
+    monkeypatch.setattr(email_service.settings, "SMTP_PASSWORD", password)
+    monkeypatch.setattr(email_service.settings, "RESEND_API_KEY", "api-synthetic")
+    await email_service._send_via_smtp_async("recipient@example.invalid", "Synthetic", "body")
+    assert len(calls) == 1
+    assert calls[0][1]["password"] == (password or "api-synthetic")
+    assert calls[0][0]["To"] == "recipient@example.invalid"
+
+
+@pytest.mark.parametrize("password", ["", "smtp-synthetic"])
+def test_ops_smtp_uses_same_api_key_fallback(monkeypatch, password):
+    from types import SimpleNamespace
+
+    from app.ops import alerts
+
+    logins = []
+    sends = []
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def login(self, username, password):
+            logins.append((username, password))
+
+        def send_message(self, message):
+            sends.append(message)
+
+    monkeypatch.setattr(alerts.smtplib, "SMTP_SSL", Client)
+    cfg = SimpleNamespace(
+        OPS_ALERTS_ENABLED=True,
+        ADMIN_NOTIFY_EMAIL="recipient@example.invalid",
+        EMAIL_FROM="sender@example.invalid",
+        EMAIL_PROVIDER="smtp",
+        SMTP_USE_TLS=True,
+        SMTP_START_TLS=False,
+        SMTP_HOST="smtp.example.invalid",
+        SMTP_PORT=465,
+        SMTP_TIMEOUT=15,
+        SMTP_USER="synthetic-user",
+        SMTP_PASSWORD=password,
+        RESEND_API_KEY="api-synthetic",
+    )
+    assert alerts.deliver(cfg, "Synthetic", "body") is True
+    assert logins == [("synthetic-user", password or "api-synthetic")]
+    assert len(sends) == 1
 
 
 @pytest.fixture
