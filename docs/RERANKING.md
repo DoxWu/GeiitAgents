@@ -24,3 +24,5 @@ Qwen 重排使用现有 `providers.yaml` 中第一项主 LLM 的 API Key 和 API
 随后在隔离 Docker PostgreSQL 16.14 + pgvector 中，从空库迁移并核对 `vector(1024)`，用真实主 Embedding 为三份合成资料建向量，验证权限过滤、真实 Qwen 重排及非流式/流式 RAG。检索结果含 `rerank_score`，命中相关的本人资料；回答符合合成资料，来源未包含另一账号的私有资料，流式有正文 chunk 且只有一个 done。随机测试库已删除。
 
 这次是服务层合成资料联调，关闭了 query rewrite、intent detection、conflict detection 和原有 BGE 重排，以限定检查范围；没有覆盖 HTTP 上传/登录、Celery、旧目标库跨维度迁移或业务回答质量。另一个真实 pgvector 回归验证同维度、`embedding_space=NULL` 的旧片段在显式重新生成向量后可检索，不代表已有 1536 维列会自动变成 1024 维。
+
+2026-10-21 新增[云端向量离线迁移与回退](CLOUD_EMBEDDING_MIGRATION.md)：支持在停写副本中重建旧维度分块，事务切换并保留精确回退窗口；隔离合成 1536→1024 演练和真实主 Embedding 单条材料闭环通过。尚未迁移用户目标库，也未因此扩大上述 RAG 业务质量验收范围。

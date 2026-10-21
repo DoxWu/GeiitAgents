@@ -22,7 +22,6 @@
 import time
 import re
 import hashlib
-import json
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -31,6 +30,7 @@ from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.embedding_space import embedding_space_id
 from app.core.database import SessionLocal
 from app.core.redis import RedisManager, RedisKeys
 from app.core.circuit_breaker import CircuitBreakerOpenError
@@ -79,15 +79,7 @@ class VectorStoreService:
 
     @staticmethod
     def _embedding_space_id(client) -> str:
-        config = client.config
-        identity = {
-            "type": config.type,
-            "model": config.model,
-            "api_base": config.api_base,
-            "dimension": int(client.dimension),
-        }
-        encoded = json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        return embedding_space_id(client.config, client.dimension)
 
     def _generate_embedding_with_space(
         self, text: str
