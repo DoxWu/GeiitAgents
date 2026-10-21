@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-21 本次状态：** A28 修正与网页输出格式修正均已普通推送至开发分支 `540cd26`；下文更早记录中的“待推送/等待新 CI”仅为历史状态。最新 [CI 39559756813](https://github.com/DoxWu/GeiitAgents/actions/runs/39559756813) 七个 job 全部成功，7 条历史合成样例的精确 Gitleaks fingerprint 已验证，按当前 SHA 删除两张测试镜像和停止/移除服务容器及网络均成功。AI 网页、Office 导出及有界循环的真实合成联调、本地全量前端验证通过；没有部署或重发邮件。
+**2026-10-21 本次状态：** A28 与网页输出修正已推送至开发分支 `540cd26`，七 job CI 和精确镜像/容器/网络清理通过。随后继续修复独立运维告警状态文件对损坏数据的容错、Windows 临时文件占用恢复及 Resend 成功判定；新增/运维/邮件及供应商契约回归本地 **151 passed/15 个数据库 live 用例排除**，Ruff 与 diff 检查通过。该项新代码和后续 CI 尚待提交验证；本机 Docker 保持停止、没有新增容器或镜像。既有用户资料、邮件和线上环境均未访问。
 
 **2026-10-21 最新完整 CI：** 提交 `540cd26` 的 workflow [39559756813](https://github.com/DoxWu/GeiitAgents/actions/runs/39559756813) 七个 job 全部成功：后端 **856 passed/6 skipped/2 warnings、coverage 54.07%**；前端 **136 文件/1300 项**；生产镜像内 PG16 恢复/维护/联合恢复/向量迁移 **81 passed/5 warnings**；真实 LangChain 合约、secret scan、依赖审计、SBOM、前端构建、容器扫描及可修复 HIGH/CRITICAL 门禁均通过。Python SBOM 的 6 项上游许可证未知继续跟踪，发布者声明不等于法律审阅。本次下载实际 Trivy 报告核对后端 **76 项无修复版本（75 HIGH、1 CRITICAL）**，前端 0；不称为零漏洞。CI 日志确认本次 SHA 标签的 backend/frontend 测试镜像已删除，后端测试及镜像验收的服务容器/网络均移除；本机没有启动 Docker、没有新增镜像或容器。旧 main 仍为 `ea4917e`。
 
@@ -14,7 +14,7 @@
 
 **2026-10-21 A12 运行时保护：** 新增有限词法规则识别常见个人症状和药品剂型/疗效查询；命中者使用原问题直接检索，避免无检索意图分流及 Query 改写绕过边界。个人问题命中历史病例/诊疗问答或检索为空、药品疗效问题未完整匹配所问名称时，在冲突分析和答复 LLM 之前返回固定答复。病例引用使用实际命中编号，资料缺失不硬配来源；流式与非流式保持相同答复和零答复模型指标。一般指南、非医疗问题和明确历史事实保留正常生成。规则不建立个体适用性或临床正确性，未覆盖的问法继续走现有提示词。本批验证结果与 Git 同步状态见末尾；没有重新调用真实模型/Embedding/邮件，没有启动 Docker 或部署。
 
-**2026-10-21 当前未完成与下一步：** A12 需要有授权的企业问答/证据金标和业务人员判分；新增的医疗/品牌词法保护仍需误拒/漏拒评估。A13 离线联合恢复已有合成回归，目标卷/Secret/队列、RPO/RTO、部署回滚及低配/物理断电仍未实测；开发机 27.6 GiB RAM，不能冒充 8 GB 验收。A28 管理员邮箱按部署配置隐藏、用户确认的一封 SMTP 测试邮件已有证据；Resend HTTP 是否仍在用、目标生产投递链、运营主体和实际处理区域/保留/跨境仍待部署者核实。旧目标向量库实际跨维度迁移、Safari/WebView2/真机和 Windows 原生安装升级仍开放。后端 76 项无修复版本容器 HIGH/CRITICAL 及 6 项 Python 上游许可证未知继续跟踪。本机 Docker 服务保持停止，本批未创建本机容器/镜像；CI 精确镜像删除与服务容器/网络清理均已验证成功；未触及线上部署，不做全局 prune。下一步推进业务人工评分和目标环境验收准备，继续跟踪依赖修复及 Windows 运维状态文件偶发写入问题。
+**2026-10-21 当前未完成与下一步：** A12 需要有授权的企业问答/证据金标和业务人员判分；新增的医疗/品牌词法保护仍需误拒/漏拒评估。A13 离线联合恢复已有合成回归，目标卷/Secret/队列、RPO/RTO、部署回滚及低配/物理断电仍未实测；开发机 27.6 GiB RAM，不能冒充 8 GB 验收。A28 管理员邮箱按部署配置隐藏、用户确认的一封 SMTP 测试邮件已有证据；运维邮件有模拟 API 测试，Resend HTTP 真实收件、目标生产投递链、运营主体和实际处理区域/保留/跨境仍待部署者核实。旧目标向量库实际跨维度迁移、Safari/WebView2/真机和 Windows 原生安装升级仍开放。后端镜像 76 项无修复版本容器 HIGH/CRITICAL 及 6 项 Python 上游许可证未知继续跟踪。本机 Docker 服务保持停止，本批未创建本机容器/镜像；最新确认 CI 精确镜像删除与服务容器/网络清理均已成功；未触及线上部署，不做全局 prune。Windows 运维状态文件先前偶发写入失败根因未复现；本批加入损坏状态校验、唯一原子暂存文件和 Windows sharing/lock 错误有限重试，测试后再按 CI 结果更新。后续继续推动业务人工评分、目标环境验收准备及依赖修复跟踪。
 
 **2026-10-21 A13 联合恢复边界复验：** 阅读 `JOINT_RECOVERY_BUNDLE.md`、生产实现、原恢复回归及 CI job；工具要求停写 API/Worker/Beat/清理/ops 进程，以 AEAD 包 PostgreSQL、上传树及显式选择的配置，恢复只进入新空工作区和空库，目标 Secret、队列与流量切换由部署者单独处理。本轮使用当前固定测试依赖重跑 `test_recovery_bundle.py -k "not live"`，**34 passed / 1 deselected**，覆盖错误密钥/来源、篡改/截断/附加数据、路径清单、checksum、源文件变动、失败 marker 和 CLI 脱敏。live PG 联合恢复没有在本轮重跑，继续沿用 10 月 20/21 的本机/CI 证据。当前 Docker 服务停止且引擎管道不存在，本轮没有启动或创建镜像/容器，故无 Docker 资源需清理。目标卷、Secret、队列、恢复时长/RPO/RTO、跨卷故障和部署回滚仍未验证；不得从隔离验收推断部署结果。
 
@@ -1195,3 +1195,12 @@
 - 按用户要求清理：CI 的 `Remove this run's test images` 成功，日志确认 `geiit/backend:540cd260a36440002aa3b9bf1b5d69c5b8d75d9d` 与 `geiit/frontend:540cd260a36440002aa3b9bf1b5d69c5b8d75d9d` 已取消标签并删除层；生产镜像验收与后端测试的 `Stop containers` 均成功，PostgreSQL/Redis 临时容器及各自网络已移除。本机 Docker 服务仍 Stopped，本轮没有启动 Docker 或创建本机镜像/容器，也没有为枚举而重新启动；前批本机资源清理沿用原记录。没有全局 prune 或删除其他项目资源，5432 上的既有服务未触碰。
 - 其他临时文件：未完成的 Gitleaks 下载 `.tools/gitleaks_8.24.3_windows_x64.zip` 曾通过 PowerShell 请求删除，被自动审批以 `blocked by policy` 拒绝；未绕过，该 ZIP 保留在忽略目录。Gitleaks 已由 CI 实际验证；这不是镜像或容器清理失败。
 - 未完成与下一步：A12 有许可业务金标/逐题人工评分与误拒漏拒；A13 目标部署卷/Secret/队列联合恢复及 RPO/RTO/回滚；A28 目标邮件链/Resend HTTP（若使用）与运营主体、实际区域/保留/跨境事实；实际目标库向量切换、8 GB/物理断电、Windows 原生安装升级、Safari/WebView2/真机、许可证审阅和无修复镜像告警仍开放。Windows 运维状态文件偶发写入失败未复现，不称已修复。全局目标保持 active，既有未跟踪 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。本次文档将单独提交并普通同步，不为仅补记结果再次触发镜像构建。
+
+### 2026-10-21：独立运维告警状态容错、原生 Windows 文件占用恢复与 HTTP 接收判定
+
+- 实际复现：隔离状态文件的 list 根节点、字符串计数和缺失字段分别引发 AttributeError/TypeError/KeyError，可能终止独立监控；模拟 Resend HTTP 200 空对象原来被误判已接收。修复后损坏/过大/深嵌套 JSON 使用脱敏警告并重置，无效条目单独重建，其他组件的有效冷却状态保留。
+- 持久化：同目录唯一临时文件先 flush/fsync/关闭再原子替换；失败保留旧完整文件和进程内冷却状态，清理本次临时文件。Windows WinError 5/32/33 最多尝试 3 次、等待总计 150 ms；其他错误直接保留旧状态。原生 Windows 用 CreateFileW 保持不允许删除共享的真实句柄，首次替换实际失败，释放句柄后重试成功，重载后无重复告警。此前偶发 OSError 的具体根因仍未复现，不声称已定位根因或完成物理断电验收。单副本约束、落盘与外发非事务及可能重复告警的边界已写入运维指南。
+- 运维 HTTP 邮件：只认 2xx 加非空字符串邮件 ID；无效 JSON/ID、204、3xx/4xx/5xx 均不记成功，异常不暴露响应内容。单次 deliver 仍只发一次、不跟随重定向；监控下一周期保留原失败重试策略。没有向真实邮件服务发信。
+- 最终本机回归：Windows Python 3.11.9、固定 pytest 9.0.3 / pytest-asyncio 1.4.0，test_ops_alerts/test_ops/test_maintenance/test_review_email_delivery/test_email_system/test_provider_acceptance 共 **151 passed/15 PG live deselected/1 warning，13.18 秒**。含真实 Windows 文件锁、新 40 项故障/HTTP 响应检查和既有邮件/供应商契约；数据库 live 未运行。两改动 Python 文件 Ruff check/format、编译和 git diff check 通过，新增测试纳入生产镜像恢复验收命令。初轮测试代码的 Mock 上下文、过长参数 ID 和断言已纠正；终端 DEBUG=release 类型冲突及旧 pytest 优先级纠正后才记本条最终结果。
+- 资源与 Git：本轮未启动 Docker，确认服务停止、engine pipe 不存在，没有新建镜像/容器/卷/网络，也未连接现有 PostgreSQL 5432、读取项目 .env 或调用真实模型/邮件。JUnit 在忽略目录 .tools/pytest-ops-alerts-20261021/。已成功 fetch 开发分支与 main；本批待本地提交、普通推送和新 CI，不用 540cd26 的既有绿色 CI 覆盖本批改动。用户原有 .vscode/、docs/PROJECT_OVERVIEW.md、output/、tmp/ 保留。
+- 当前未完成：A12 有许可业务金标和人工误拒/漏拒评分；A13 目标卷/Secret/队列恢复、RPO/RTO/回滚；A28 目标邮件链/真实 Resend（若使用）与部署隐私事实；实际目标库向量迁移、低配/断电/真机、原生安装升级、许可证审阅和无修复容器 advisory。全局目标保持 active。工作流/网页真实合成联调沿用前一批日期证据，本次只修正文档中仍称其未做真实模型的过时描述，没有新发模型请求。

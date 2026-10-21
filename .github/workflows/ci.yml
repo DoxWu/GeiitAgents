@@ -370,7 +370,7 @@ jobs:
             -e PYTHONPATH=/test-deps:/app -e PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
             --mount "type=bind,source=$RUNNER_TEMP/image-test-deps,target=/test-deps,readonly" \
             geiit/backend:${{ github.sha }} \
-            -m pytest tests/test_ops.py tests/test_maintenance.py \
+            -m pytest tests/test_ops.py tests/test_ops_alerts.py tests/test_maintenance.py \
             tests/test_recovery_bundle.py tests/test_vector_store_live_postgres.py \
             tests/test_embedding_migration.py \
             tests/test_entrypoint_supervision.py \
