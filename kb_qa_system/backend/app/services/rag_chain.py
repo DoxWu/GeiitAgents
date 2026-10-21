@@ -1086,12 +1086,12 @@ class RAGChainService:
 
         作用：
             LLM 可能生成不合法的引用标注（如 [文档99] 但实际只有 3 个来源）。
-            本方法检查所有 [文档X] 引用，移除引用编号超出范围的非法引用，
+            本方法检查单项 [文档X] 和闭区间 [文档X-Y]，移除超出范围的非法引用，
             避免误导用户。
 
         实现方式：
-            1. 用正则匹配所有 [文档X] 模式
-            2. 检查 X 是否在有效范围 [1, source_count]
+            1. 用正则匹配单项或闭区间引用
+            2. 检查编号范围是否在 [1, source_count] 且起点不大于终点
             3. 超出范围的引用替换为空（移除方括号引用，保留正文）
 
         参数：
@@ -1106,20 +1106,21 @@ class RAGChainService:
             sanitized = self._sanitize_answer("参见[文档5]", 3)
             # → "参见" （[文档5] 被移除，因为 5 > 3）
         """
-        if not answer or source_count <= 0:
+        if not answer:
             return answer
 
-        # 匹配 [文档X] 或 [文档 X]，X 为数字
-        # 作用：找到所有引用标注
-        pattern = re.compile(r'\[文档\s*(\d+)\]')
+        # 区间引用包含首尾文档编号，必须整体落在可用来源范围内。
+        pattern = re.compile(r"\[文档\s*(\d+)(?:\s*[-–]\s*(\d+))?\]")
 
         def _replace_invalid(match):
-            """回调：检查引用编号是否合法，不合法则移除"""
-            doc_num = int(match.group(1))
-            if 1 <= doc_num <= source_count:
+            """Remove citations whose single index or inclusive range is invalid."""
+            first = int(match.group(1))
+            last = int(match.group(2) or first)
+            if 1 <= first <= last <= source_count:
                 return match.group(0)  # 合法引用，保留
-            # 非法引用，移除（替换为空字符串）
-            logger.debug(f"移除非法引用 [文档{doc_num}]（有效范围 1-{source_count}）")
+            logger.debug(
+                "移除非法引用 %s（有效范围 1-%s）", match.group(0), source_count
+            )
             return ""
 
         sanitized = pattern.sub(_replace_invalid, answer)
