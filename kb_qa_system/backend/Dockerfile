@@ -30,7 +30,8 @@ ENV PIP_NO_CACHE_DIR=1 \
 
 # 安装构建依赖
 # 作用：psycopg 编译需要 libpq-dev，部分包需要 build-essential
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     git \
@@ -96,7 +97,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   - tzdata: 时区数据（任务6），使 TZ 环境变量生效
 # 轻量化优化：移除了 libmagic1（python-magic 已从依赖中删除）、
 #             libsm6/libxrender1/libxext6/libgl1（opencv 已从依赖中删除）
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
     libpq5 \
     postgresql-client \
     tesseract-ocr \

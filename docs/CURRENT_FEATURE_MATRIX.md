@@ -1,6 +1,6 @@
 # 当前功能矩阵
 
-更新日期：2026-10-20。本矩阵按当前路由、界面组件、服务实现和测试入口整理。代码存在或本地测试通过，不等于目标部署已启用，也不等于真实供应商、数据恢复或业务质量验收通过。
+更新日期：2026-10-21。本矩阵按当前路由、界面组件、服务实现和测试入口整理。代码存在或本地测试通过，不等于目标部署已启用，也不等于真实供应商、数据恢复或业务质量验收通过。
 
 | 功能域 | 用户入口与实现 | 当前验证证据 | 限制与未验收项 |
 | --- | --- | --- | --- |
@@ -15,10 +15,10 @@
 | AI 文档与 Office 生成 | 工作台「任务」页；`components/workbench/OfficeTasks.tsx`、`DocumentTasks.tsx`、`officeTasks/` | 前端全量 135 文件/1298 项通过，Playwright 使用模拟模型；Word 36 页自动版面检查通过，人工抽看；PowerPoint 和 Excel COM 实开产物，另核验 XLS 的数字/长中文/公式文本 | DOCX 支持目录、页眉页码、手动分页和受限表格布局；PPTX 有可编辑表格及长内容分页；XLSX 有样式/冻结/筛选，XLS 只保留数据/列宽。两者支持安全数值、只转换首张 Markdown 表格、不计算公式，不承诺任意文件保真。 |
 | AI 可视化网页设计 | 工作台「任务 → 网页设计」；`components/workbench/WebDesigner.tsx`、`webDesignerOutput.ts` | `WebDesigner.test.tsx` 与 `npm run verify:ai-workbench`：布局、主副色、组件色、六类滚动示例、文字/图片、沙箱预览和下载 | 浏览器流程使用模拟模型且模型请求为 0；真实生成质量需由部署者连接模型后验收。导出 HTML 需人工检查再部署。 |
 | 参考资料复用 | 文档/Markdown 任务内的本机资料库；`ReferenceLibrary.tsx`、`LocalMarkdown.tsx`、`workbenchStore.ts` | `LocalMarkdown.test.tsx` 与 `workbenchStore.test.ts` 77 项通过；浏览器流程覆盖清空后载回和加密检查 | 保存的是解析后的文本，不是原文件；最多 20 份。载回本身不发送资料，执行云端任务时仍需逐次授权。 |
-| 笔记、待办与提醒 | 工作台「笔记与待办」；`PersonalItems.tsx`、`ServerReminders.tsx`；后端 `personal.py` | `PersonalItems.test.tsx`、`PersonalImport.test.tsx`、`test_personal.py`；用户确认收到单封合成 SMTP 运维测试邮件 | SMTP 单封收件不代表提醒业务链验收；Resend、生产 provider 设置与 Celery 调度仍待联调。 |
+| 笔记、待办与提醒 | 工作台「笔记与待办」；`PersonalItems.tsx`、`ServerReminders.tsx`；后端 `personal.py` | `test_personal.py`；历史单封合成 SMTP 已由用户确认收件；2026-10-21 新镜像真实 Beat→Redis→prefork Worker→回环认证 SMTP 通过，一次投递、重复两条消息不重发 | 隔离合成链不代表 Resend HTTP、真实收件箱或目标部署调度/持久卷/重启验收；本批未向外部发信。 |
 | 本机文件整理 | 工作台「文件整理」；`FileOrganizer.tsx`、文件历史与 Rust 文件桥 | `FileOrganizer.test.tsx`、`FileHistory.test.tsx`、文本编辑/批量编辑测试 | 仅在用户选择和授权的目录执行受限操作；跨卷、进程中断、原生 WebView2 和低配设备需目标机器验收。 |
 | 可视化工作流 | 工作台任务中的工作流页；`Workflows.tsx`、`workflows/`、加密任务存储 | `Workflows.test.tsx`、workflow 定义/布局/便携备份及全量前端回归 | 支持 DAG、条件、触发和最多 5 轮有界模型循环；每个工作流模型请求预算最多 30 次，成功轮次可加密检查点续跑。没有后台常驻执行或任意插件；真实模型/生产调度仍待验。 |
-| 监控、部署与供应商 | 后端 `/health`、`/ready`、可配置 `/metrics`；部署模板和 GitHub Actions | 2026-10-20 固定依赖 Linux Docker 后端 747 项全过、覆盖率 49.34%，包含真实 PostgreSQL/Redis；主备 LLM、1024 维 Embedding、合成 RAG 与用户确认的单封 SMTP 收件通过 | 本机复用旧镜像作隔离测试基底；CI `39399397307` 全部通过（远程后端 741/6 跳过、前端 1298），新生产镜像构建/Trivy 门禁通过，未发布或部署。后端 76 条无修复版本告警，前端 0，可修复 HIGH/CRITICAL 均 0。旧目标库迁移、Resend/Celery 业务链及部署隐私待完成；SMTP 不重复发送。 |
+| 监控、部署与供应商 | 后端 `/health`、`/ready`、可配置 `/metrics`；部署模板和 GitHub Actions | 2026-10-21 HTTPS 官方源的新生产镜像构建成功；镜像内后端全量 **791/791，coverage 53.16%**，含真实 PG16/Redis/OCR/监督器与匹配 PG16 客户端恢复；实际 110 个 Python 包 OSV 无 advisory。历史模型/合成 RAG/SMTP 收件证据见工作记录 | 本地 OSV 不覆盖系统包/可选 ML，新 CI/Trivy 仍待同步；最新远程 `39527474831` 仍为旧 Pillow 失败。最近完整成功 `39403631358` 的后端 76 条无修复告警是历史结果。恢复测试明确挂载 PG16 工具，镜像默认 PG17 工具不等于 PG16 恢复兼容；部署须匹配版本。测试资源已清理，未部署。旧库迁移、Resend/生产链/隐私仍待验收。 |
 | FAQ 答案缓存 | 无用户入口或问答读写路径；旧 `FAQ_CACHE_TTL` 配置不启用功能 | 代码接线检查；管理员操作文档已明确未接入 | 未实现，不应描述为命中缓存、减少模型调用或可用功能。 |
 
 ## 证据口径

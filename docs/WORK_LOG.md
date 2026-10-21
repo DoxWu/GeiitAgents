@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**2026-10-21 当前状态：** A13 离线联合恢复已普通推送；CI [39403631358](https://github.com/DoxWu/GeiitAgents/actions/runs/39403631358) 对 `fd10a6c` 全部通过，后端 776 passed/6 skipped、覆盖率 51.86%，前端 136 文件/1299 项，构建与容器扫描通过。后续 CI [39524363150](https://github.com/DoxWu/GeiitAgents/actions/runs/39524363150) 对 `41d4df7` 因 Vite `6.4.3` 的 npm advisory 失败；后续 SBOM/Trivy/容器构建跳过。已在本地升级 Vite 至 `6.4.4`，官方 npm audit 为 0 漏洞，前端 136 文件/1299 项、check/lint/build 通过；Railway 部署说明已对齐单副本 `api+worker`、持久 `/app/data`、阿里云/DeepSeek 与 SMTP provider 配置。另修复监督器将子进程状态码 0 当作成功退出的问题，WSL 行为回归 1/1 通过。Compose 静态解析与 Sealos 模板预检通过。远端开发分支仍为 `41d4df7`，旧 `main` 为 `ea4917e`；Git 443 超时使 fetch/push 无法完成，新 CI 未触发。本机 Docker Engine 不可连接，本轮未创建 Docker 容器/镜像；此前临时 Docker 验收资源已按记录清理。目标环境恢复、A12 业务金标、A28 Resend/Celery/部署隐私、旧库跨向量维度迁移、低配/断电/原生升级仍开放，未操作线上部署。
+**2026-10-21 当前状态：** 已将后端 Dockerfile 的 Debian 软件源改为 HTTPS，当前源码的生产镜像本机构建成功（Pillow 13.0.0、Python 3.11.17、Tesseract 5.5.0，运行层无 pip）。在该镜像内补入公开静态测试材料、使用隔离 PG16.14/Redis 7.4 和匹配的 PG16 客户端，后端全量 **791 passed / 0 skipped / 1 warning，84.69 秒，覆盖率 53.16%**；包含真实恢复/联合恢复、pgvector、Redis、OCR 和 POSIX 监督器回归。真实 Beat→Redis→prefork Worker→回环 SMTP 合成提醒链通过，重复两次消息没有重发；没有外部邮件或模型请求。新镜像实际 110 个 Python 包的 OSV 查询无已知 advisory，但不包含 OS/可选 ML，也不代替完整 CI/Trivy。测试后已删除本轮 4 容器、2 镜像和专用网络，核对原有 3 镜像 ID/4 数据卷不变，容器为空，Docker Desktop 已停止；未全局 prune。最近完整成功 CI 仍是 `39403631358`（`fd10a6c`）；最新 `39527474831`（`b6a522b`）因 Pillow 12.3.0 的 9 项 advisory 失败，本地已修复。远端开发分支最后核实为 `b6a522b`，旧 main 为 `ea4917e`，普通同步和新 CI 状态见末尾记录。A12 业务金标/人工判分、A13 目标部署恢复/RPO/RTO、A28 Resend HTTP/生产链/部署隐私、旧库跨维度迁移及低配/断电/原生升级仍开放，未操作线上部署。
 
 **2026-10-20 本批验证边界：** Linux 容器 Python 3.11.16 / pytest 9.0.3 加载当前固定 requirements，747 项包含真实恢复/维护队列 29 项、Redis 模块加载及三种生命周期 4 项、pgvector 1 项、OCR 6 项及真实 LangChain HTTP 合约。复用旧后端镜像作为 Python 运行基底，以 `python -S`/独立依赖目录隔离旧包，没有构建新生产镜像。最后仅导入排序、类型注解与测试变量整理后，Windows Python 3.11.9 定向 **128 项通过**（含真实 PG/Redis）；六个改动 Python 文件 Ruff 通过。合成 RAG 关闭 query rewrite、intent detection、conflict detection 和旧 BGE 重排；检查真实 `rerank_score`、本人来源/答案、另一账号私有资料隔离、流式 chunk/唯一 done。随机库已删除，残留计数为 0。主备 LLM/新 Embedding 直连与用户确认的单封 SMTP 收件沿用本日上一批证据，不重复发信；前端/Office 结果见下段，未在本批重跑。
 
@@ -135,7 +135,7 @@
 
 ## 下一步执行顺序
 
-2026-10-20 下一步：本轮 Docker/Redis/合成 RAG 服务层及 CI/Trivy 验收已完成，测试容器/新增镜像已清理。后续推进可独立完成的恢复/配置与评估改进；旧目标库跨维度迁移、A12 有许可的业务金标/人工判分、Resend/Celery 提醒链、部署隐私、数据库/文件/配置联合恢复、低配/断电和原生安装升级验收保持开放。后端无修复版本的系统包告警随上游更新复扫。
+2026-10-21 下一步：Pillow 修复与 HTTPS 构建已通过本机生产镜像全量 791 项回归；隔离 Celery/SMTP 链和资源清理已完成。网络恢复后先 fetch/核对祖先，再普通推送开发分支，复核完整 Python/Rust 审计、SBOM、Trivy 与镜像构建。继续推进 A12 有许可的业务金标/人工判分、A13 目标环境卷/Secret/队列与联合恢复/RPO/RTO/回滚、A28 Resend HTTP/生产业务链与部署隐私、旧目标库跨维度迁移以及低配/断电/原生安装升级；不重复发送真实邮件。镜像默认 PG17 客户端与 PG16 目标不构成恢复兼容性验收，部署须匹配客户端/源库/目标版本；本次 PG16 恢复明确使用测试挂载的匹配工具。
 
 以下表格保留 2026-10-10 及此前的实施顺序；当前整改结果见顶部状态和修复跟踪，不再将已实现的认证、出站安全、上传一致性等重复列为未修复。
 
@@ -1053,7 +1053,22 @@
 
 ### 2026-10-21：本机 Docker 镜像构建网络失败
 
-- 实际测试：启动前记录本机原有后端/前端/PostgreSQL 3 个镜像、3 个数据卷和空容器列表。对当前后端源码以独立标签 `geiit-pillow-audit:acceptance-20261021` 执行生产 Dockerfile 构建；Debian trixie 索引下载完成后，runtime 阶段在 `deb.debian.org:80` 下载 `ca-certificates` 与 `liblzma5` 时收到连接拒绝，构建退出 1，builder 阶段随后取消，未进入 Python 依赖安装。因此没有得到包含 Pillow `13.0.0` 的应用镜像，也不把这次构建记为通过。
-- 镜像/容器清理：失败后核对容器列表为空，镜像列表仍仅含启动前记录的 3 个原有镜像，独立标签不存在；3 个原有卷未变。本轮没有创建 Docker 容器或命名卷，也没有执行 prune。Docker Desktop 已停止以恢复启动前状态；失败构建可能留下 BuildKit 内部缓存，未做可能清除其他项目缓存的全局清理。
+- 实际测试：启动前记录本机原有后端/前端/PostgreSQL 3 个镜像、4 个数据卷（更正此前误记的 3 个卷）和空容器列表。对当前后端源码以独立标签 `geiit-pillow-audit:acceptance-20261021` 执行生产 Dockerfile 构建；Debian trixie 索引下载完成后，runtime 阶段在 `deb.debian.org:80` 下载 `ca-certificates` 与 `liblzma5` 时收到连接拒绝，构建退出 1，builder 阶段随后取消，未进入 Python 依赖安装。因此没有得到包含 Pillow `13.0.0` 的应用镜像，也不把这次构建记为通过。
+- 镜像/容器清理：失败后核对容器列表为空，镜像列表仍仅含启动前记录的 3 个原有镜像，独立标签不存在；4 个原有卷未变。本轮没有创建 Docker 容器或命名卷，也没有执行 prune。Docker Desktop 已停止以恢复启动前状态；失败构建可能留下 BuildKit 内部缓存，未做可能清除其他项目缓存的全局清理。
 - Git/CI：`git ls-remote` 与 GitHub API 均确认远端开发分支仍是 `b6a522b`、旧 `main` 是 `ea4917e`。普通 HTTPS push 和两种命令级 Schannel/DNS 重试分别出现 443 超时或 TLS 对端提前关闭；新 CI/Trivy 未触发。本地 `0c0f044`、文档状态提交 `b7b0db5` 与本条工作记录更新仍待同步，未强推或通过其他接口写远端。
 - 后续：网络恢复后先 fetch 核对，再普通推送，检查 Python/Rust 审计、SBOM、镜像构建与 Trivy；若本地 Docker 构建仍需验证，须先修复或确认 Debian 软件源的网络路径，再重复构建并删除本轮确实创建的容器/镜像。A12 金标、A13 目标环境联合恢复、A28 Resend/Celery/隐私、旧向量维度迁移及低配/断电/原生升级仍开放。原有未跟踪 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。
+
+### 2026-10-21：HTTPS 生产镜像构建、全量回归、真实队列链与清理
+
+- 实际改动：后端 Dockerfile 的 builder/runtime Debian 官方源改为 HTTPS，保留 TLS/apt 签名校验。此前 HTTP 80 端口连接拒绝已消除；PyPI 初次连接超时后自动重试成功，没有修改 pip 源。当前固定 requirements 的生产镜像构建成功，临时标签 `geiit-pillow-audit:acceptance-20261021`，镜像 ID `2c3976ff8e76233ceb5ca9d3f472552fae2d6e4ec15b2f531a05cd442c8a78fb`。核对 Python 3.11.17、Pillow 13.0.0、Tesseract 5.5.0 及无 pip；默认未安装可选本地 ML 包。
+- 测试过程与结果：一次相对路径误挂载导致测试脚本未找到，空容器已删除。随后测试收集缺少仓库上层共享 fixture；补入合成协议 fixture 后，763 项通过、28 项因生产镜像有意排除 README/架构文档/Compose/监控模板而失败。未更改生产排除规则，只在验收容器补入这六份公开静态文件并完整重跑：**791 passed / 0 skipped / 1 warning，84.69 秒，coverage 53.16%（门槛 44.3%）**。该次包含真实 pgvector/权限、恢复与联合恢复、Redis 三种生命周期、Tesseract OCR、LangChain HTTP 合约和 POSIX 入口监督器。唯一 warning 为测试依赖 passlib 使用弃用 crypt 模块。
+- 隔离与版本边界：数据库使用专用 PG16.14 容器与 tmpfs，不挂原数据卷、不暴露宿主端口；Redis 7.4 使用独立容器/internal 网络。应用共享测试 PG 网络命名空间，保持 live fixture 对 localhost/ops_test 的保护，不改测试安全约束。恢复用测试挂载的 PG16.14 工具；生产镜像当前默认客户端为 17.11，本次不声称 PG17 dump→PG16 恢复已通过，部署仍须按文档匹配版本。两个应用验收容器各限制 1100 MiB、分别 1.5/1 CPU，均退出 0、无 OOM；不能据此宣称 8 GB 实机或压力测试验收。没有读取/挂载项目 `.env` 或连接真实业务库。
+- A28 队列补充：在新镜像中启动真实 Celery Beat、Redis broker、prefork Worker 和仅监听回环地址的认证 SMTP 接收端；Beat 使用原 60 秒计划，Worker 未启动时先观察到提醒调度任务入队，再启动 Worker，数据库 outbox/邮件状态均为 sent、一次性提醒完成、投递尝试 1 次。随后投递两条相同日志任务，SMTP 收到消息仍为 1。只使用合成账号、内容和 `.invalid` 地址，未请求外部邮件或模型。该结果覆盖隔离生产代码队列链，不等于 Resend HTTP、真实收件箱、平台持久卷/重启或目标部署提醒验收；之前用户确认收件的邮件未重发。
+- 依赖与检查：对新镜像实际安装的 110 个 Python distribution 查询 OSV，无已知 advisory；这不是完整 pip-audit/可选 ML/OS 或新 Trivy 报告。构建上下文 boundary 脚本、验收脚本编译与 `git diff --check` 通过。前端、Office 原生渲染、供应商真实联调均沿用明确日期的历史证据，本批未重跑。
+- 已完成清理：恢复用随机库计数为 0；删除 `geiit-qa-app-20261021`、`geiit-qa-celery-20261021`、`geiit-qa-redis-20261021`、`geiit-qa-pg-20261021`，删除 `geiit-qa-net-20261021` 和本轮新增应用/Redis 两镜像。核对空容器列表、原有后端/前端/PostgreSQL 三镜像完整 ID 不变、`GeiItRAG`/`kb_qa_system_postgres_data`/`kb_qa_system_redis_data`/`kb_qa_system_uploads_data` 四卷保留；未创建命名卷、未全局 prune。Docker Desktop 已停止以恢复启动前状态。BuildKit 内部构建缓存可能保留，未使用会清除其他项目缓存的全局命令。验收脚本、JUnit/覆盖率、OSV、队列日志与清理核对保存于 `.tools/acceptance-20261021/`，不提交字体、样本或产物。
+- Git 与未完成：只在开发分支保存本地修改，普通同步结果在后续条目记录；不强推、不改旧 main、不部署。A12 业务授权语料/金标/人工判分、A13 目标环境恢复编排/RPO/RTO/回滚、A28 Resend HTTP/目标部署生产邮件/隐私核实、旧目标库跨维度迁移、低配/断电/原生升级仍开放；本次不因局部验收通过关闭全局任务。用户已有未跟踪 `docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。
+
+### 2026-10-21：本批 Git 同步状态
+
+- 使用命令级 Schannel/DNS 覆盖并保留 TLS 校验执行 `git fetch agents`，连接被对端重置（`Recv failure: Connection was reset`），未能核对新的远端差异，因此本批没有继续 push，也未触发新 CI/Trivy。开发分支最后确认及本机缓存为 `b6a522b`、旧 main 为 `ea4917e`，缓存不作为本次远端查询成功的证据。
+- HTTPS Dockerfile 和三份当前状态文档在 `develop/geiit-agents` 保存本地提交；网络恢复后先 fetch/核对，再普通推送并复核审计/SBOM/镜像门禁。现有未跟踪内容（含工作中出现的 `.vscode/`）不纳入提交；测试 Docker 资源已核对清理，未强推、未发布或部署。
