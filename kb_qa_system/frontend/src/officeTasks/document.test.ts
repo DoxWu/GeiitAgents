@@ -22,6 +22,13 @@ it('passes validated reference images as OpenAI-compatible multimodal message pa
   ]);
   expect(() => buildDocumentMessages({ title: '页面', instruction: 'x', referenceImages: [{ ...image, dataUrl: 'data:image/png;base64,AAAA' }] })).toThrow('数据无效');
 });
+it('uses an HTML-specific system prompt for web design tasks', () => {
+  const messages = buildDocumentMessages({ title: '品牌首页', instruction: '生成网页', outputFormat: 'html' });
+  expect(messages[0].content).toContain('单文件 HTML 网页');
+  expect(messages[0].content).toContain('只输出一个 ```html 代码块');
+  expect(messages[0].content).toContain('不得访问 localStorage');
+  expect(messages[0].content).not.toContain('生成完整 Markdown 文档');
+});
 it('normalizes one outer Markdown fence and hashes the final artifact', async () => {
   expect(normalizeDocumentMarkdown('```markdown\n# 标题\n\n正文\n```')).toBe('# 标题\n\n正文\n');
   expect(normalizeDocumentMarkdown('# 标题')).toBe('# 标题\n');

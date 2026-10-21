@@ -444,3 +444,15 @@ jobs:
             fi
           done
           python .github/scripts/check_trivy_results.py backend-trivy.json frontend-trivy.json
+
+      - name: Remove this run's test images
+        if: always()
+        env:
+          BACKEND_TEST_IMAGE: geiit/backend:${{ github.sha }}
+          FRONTEND_TEST_IMAGE: geiit/frontend:${{ github.sha }}
+        run: |
+          for image_ref in "$BACKEND_TEST_IMAGE" "$FRONTEND_TEST_IMAGE"; do
+            if docker image inspect "$image_ref" > /dev/null 2>&1; then
+              docker image rm "$image_ref"
+            fi
+          done

@@ -109,14 +109,14 @@ export function WebDesigner() {
     const design = { layout, colors, effects: selectedEffects, brief: brief.trim(), sampleText: sampleText.trim(), images: images.map(image => ({ name: image.name, mimeType: image.mimeType })) };
     const instruction = [
       '生成一份完整、可独立运行的单文件 HTML 网页，请只输出一个 ```html 代码块。不要引用 CDN、外部字体或外部图片，不要联网。',
-      '使用原生 HTML/CSS/JavaScript，响应式适配手机。实现我选择的滚动效果，并尊重 prefers-reduced-motion。',
+      '使用原生 HTML/CSS/JavaScript，响应式适配手机。实现我选择的滚动效果，并尊重 prefers-reduced-motion。脚本只使用普通 DOM 和内存状态，不访问 localStorage、sessionStorage、Cookie、parent 或 top。',
       '图片请使用精确地址 asset://image-1、asset://image-2 等占位符；应用会在本机预览和下载时嵌入附件。没有附件时不要输出占位图片。',
       '颜色、组件颜色、排版、滚动效果、图片说明和文字样例来自 source JSON，必须遵循。页面内容应体现下方需求，不要输出说明文。',
       `网页需求：${brief.trim()}`,
     ].join('\n');
     const spec = JSON.stringify(design, null, 2);
     const prior = new Set(store.taskRuns.map(item => item.id));
-    const pending = store.startDocumentTask(profileId, { title: `网页设计：${pageName.trim() || '新网页'}`, instruction, sourceName: 'web-design-spec.json', sourceContent: spec, referenceImages: images }, consent);
+    const pending = store.startDocumentTask(profileId, { title: `网页设计：${pageName.trim() || '新网页'}`, instruction, outputFormat: 'html', sourceName: 'web-design-spec.json', sourceContent: spec, referenceImages: images }, consent);
     queueMicrotask(() => {
       const created = useWorkbenchStore.getState().taskRuns.find(item => !prior.has(item.id));
       if (created) setSelectedTaskId(created.id);

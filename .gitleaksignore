@@ -1,0 +1,7 @@
+8c1f51cfc4674279ec66a6facd85a910bfde8ed2:kb_qa_system/frontend/scripts/verify-vault-capacity.mjs:generic-api-key:14
+10c93432433bb99e7dcabb2faa6964474d459c4b:kb_qa_system/frontend/src/store/__tests__/fileOrganizerStore.test.ts:generic-api-key:8
+99cca693c0f701703a232729644e7551bb67f9b9:kb_qa_system/frontend/src/localKnowledge/resources.ts:generic-api-key:5
+99cca693c0f701703a232729644e7551bb67f9b9:kb_qa_system/frontend/src/localKnowledge/resources.ts:generic-api-key:6
+cffcba767c86c5808b114ba92ffb9fefc74ba495:docs/EMAIL_SYSTEM_DESIGN.md:generic-api-key:736
+89ddbd74f01701fc031cfd51249c41bcf3a4cbc0:kb_qa_system/backend/tests/test_phase_c_fixes.py:generic-api-key:76
+89ddbd74f01701fc031cfd51249c41bcf3a4cbc0:kb_qa_system/backend/tests/test_phase_c_fixes.py:generic-api-key:77
