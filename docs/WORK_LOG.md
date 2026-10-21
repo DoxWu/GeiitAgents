@@ -4,9 +4,9 @@
 
 ## 当前阶段
 
-**2026-10-21 本次状态：** A28 修正代码提交 50c57a1 与记录提交 5a37d94 已同步到远端开发分支；下文更早记录中的“待推送”仅为历史状态。CI 39555944195 除密钥扫描外均通过；本批修复其 7 条历史样例指纹，并补充精确测试镜像清理步骤，等待新 CI。AI 网页输出格式冲突已修复，本地全量前端和真实合成联调通过；详见本文末尾新条目。
+**2026-10-21 本次状态：** A28 修正与网页输出格式修正均已普通推送至开发分支 `540cd26`；下文更早记录中的“待推送/等待新 CI”仅为历史状态。最新 [CI 39559756813](https://github.com/DoxWu/GeiitAgents/actions/runs/39559756813) 七个 job 全部成功，7 条历史合成样例的精确 Gitleaks fingerprint 已验证，按当前 SHA 删除两张测试镜像和停止/移除服务容器及网络均成功。AI 网页、Office 导出及有界循环的真实合成联调、本地全量前端验证通过；没有部署或重发邮件。
 
-**2026-10-21 最新完整 CI：** A12 提示词及运行时边界的三个本地提交已普通推送至 `96b9163`，workflow [39553286247](https://github.com/DoxWu/GeiitAgents/actions/runs/39553286247) 所有 job 成功：后端 **831 passed/6 skipped、coverage 53.61%**；前端 **136 文件/1299 项**；生产镜像内 PG16 恢复/迁移 **81 passed**；真实 LangChain 合约、secret scan、依赖审计、SBOM、容器扫描及可修复 HIGH/CRITICAL 门禁均通过。Python SBOM 160 PURL、6 项上游许可证未知；其余 154 项有发布者声明，不等于法律审阅。本次下载实际 Trivy 报告核对后端 **76 项无修复版本（75 HIGH、1 CRITICAL）**，前端 0；不称为零漏洞。CI 的 `Stop containers` 成功，临时服务容器及网络移除；本机没有启动 Docker、没有新增镜像或容器。旧 main 仍为 `ea4917e`。
+**2026-10-21 最新完整 CI：** 提交 `540cd26` 的 workflow [39559756813](https://github.com/DoxWu/GeiitAgents/actions/runs/39559756813) 七个 job 全部成功：后端 **856 passed/6 skipped/2 warnings、coverage 54.07%**；前端 **136 文件/1300 项**；生产镜像内 PG16 恢复/维护/联合恢复/向量迁移 **81 passed/5 warnings**；真实 LangChain 合约、secret scan、依赖审计、SBOM、前端构建、容器扫描及可修复 HIGH/CRITICAL 门禁均通过。Python SBOM 的 6 项上游许可证未知继续跟踪，发布者声明不等于法律审阅。本次下载实际 Trivy 报告核对后端 **76 项无修复版本（75 HIGH、1 CRITICAL）**，前端 0；不称为零漏洞。CI 日志确认本次 SHA 标签的 backend/frontend 测试镜像已删除，后端测试及镜像验收的服务容器/网络均移除；本机没有启动 Docker、没有新增镜像或容器。旧 main 仍为 `ea4917e`。
 
 **2026-10-21 A28 配置与验收修正：** 对齐验收脚本、业务 SMTP 与独立运维 SMTP 的密钥回退优先级；HTTP 接收只认 2xx 加有效邮件 ID，重定向不再误报成功；工具探测核对唯一调用及固定参数，向量探测拒绝多条、零、非有限和布尔向量。定向回归 **108 passed/5 个 PG live 排除/1 warning**。代码 `50c57a1` 与工作记录 `5a37d94` 已普通推送；GitHub API 核对开发分支为 `5a37d94`、旧 main 为 `ea4917e`。用户已确认收到的 SMTP 验收邮件不重发；本批没有新发邮件或部署。
 
@@ -14,7 +14,7 @@
 
 **2026-10-21 A12 运行时保护：** 新增有限词法规则识别常见个人症状和药品剂型/疗效查询；命中者使用原问题直接检索，避免无检索意图分流及 Query 改写绕过边界。个人问题命中历史病例/诊疗问答或检索为空、药品疗效问题未完整匹配所问名称时，在冲突分析和答复 LLM 之前返回固定答复。病例引用使用实际命中编号，资料缺失不硬配来源；流式与非流式保持相同答复和零答复模型指标。一般指南、非医疗问题和明确历史事实保留正常生成。规则不建立个体适用性或临床正确性，未覆盖的问法继续走现有提示词。本批验证结果与 Git 同步状态见末尾；没有重新调用真实模型/Embedding/邮件，没有启动 Docker 或部署。
 
-**2026-10-21 当前未完成与下一步：** A12 需要有授权的企业问答/证据金标和业务人员判分；新增的医疗/品牌词法保护仍需误拒/漏拒评估。A13 离线联合恢复已有合成回归，目标卷/Secret/队列、RPO/RTO、部署回滚及低配/物理断电仍未实测；开发机 27.6 GiB RAM，不能冒充 8 GB 验收。A28 管理员邮箱按部署配置隐藏、用户确认的一封 SMTP 测试邮件已有证据；Resend HTTP 是否仍在用、目标生产投递链、运营主体和实际处理区域/保留/跨境仍待部署者核实。旧目标向量库实际跨维度迁移、Safari/WebView2/真机和 Windows 原生安装升级仍开放。后端 76 项无修复版本容器 HIGH/CRITICAL 及 6 项 Python 上游许可证未知继续跟踪。本机 Docker 服务保持停止，本批未创建本机容器/镜像；CI 容器已停止，新 CI 精确镜像删除步骤待验证；未触及线上部署。下一步验证逐条 Gitleaks fingerprint 与镜像清理 CI，再推进可本地验证的安全/恢复缺口；不做全局 prune。
+**2026-10-21 当前未完成与下一步：** A12 需要有授权的企业问答/证据金标和业务人员判分；新增的医疗/品牌词法保护仍需误拒/漏拒评估。A13 离线联合恢复已有合成回归，目标卷/Secret/队列、RPO/RTO、部署回滚及低配/物理断电仍未实测；开发机 27.6 GiB RAM，不能冒充 8 GB 验收。A28 管理员邮箱按部署配置隐藏、用户确认的一封 SMTP 测试邮件已有证据；Resend HTTP 是否仍在用、目标生产投递链、运营主体和实际处理区域/保留/跨境仍待部署者核实。旧目标向量库实际跨维度迁移、Safari/WebView2/真机和 Windows 原生安装升级仍开放。后端 76 项无修复版本容器 HIGH/CRITICAL 及 6 项 Python 上游许可证未知继续跟踪。本机 Docker 服务保持停止，本批未创建本机容器/镜像；CI 精确镜像删除与服务容器/网络清理均已验证成功；未触及线上部署，不做全局 prune。下一步推进业务人工评分和目标环境验收准备，继续跟踪依赖修复及 Windows 运维状态文件偶发写入问题。
 
 **2026-10-21 A13 联合恢复边界复验：** 阅读 `JOINT_RECOVERY_BUNDLE.md`、生产实现、原恢复回归及 CI job；工具要求停写 API/Worker/Beat/清理/ops 进程，以 AEAD 包 PostgreSQL、上传树及显式选择的配置，恢复只进入新空工作区和空库，目标 Secret、队列与流量切换由部署者单独处理。本轮使用当前固定测试依赖重跑 `test_recovery_bundle.py -k "not live"`，**34 passed / 1 deselected**，覆盖错误密钥/来源、篡改/截断/附加数据、路径清单、checksum、源文件变动、失败 marker 和 CLI 脱敏。live PG 联合恢复没有在本轮重跑，继续沿用 10 月 20/21 的本机/CI 证据。当前 Docker 服务停止且引擎管道不存在，本轮没有启动或创建镜像/容器，故无 Docker 资源需清理。目标卷、Secret、队列、恢复时长/RPO/RTO、跨卷故障和部署回滚仍未验证；不得从隔离验收推断部署结果。
 
@@ -1182,7 +1182,16 @@
 
 - 实际修正：网页设计过去复用文档 Markdown system prompt，与“仅输出 HTML 代码块”要求冲突。新增 DocumentTaskInput.outputFormat，网页设计使用 HTML 专用提示，同时明确不访问 local/session storage、Cookie、父/顶层窗口，兼容仅 allow-scripts 的隔离预览；普通文档仍使用原 Markdown 规则。新增单测验证格式提示分流。
 - CI/密钥扫描：对照 39555944195 的 SARIF，逐条忽略 7 个提交/路径/规则/行号精确 fingerprint；没有对目录或整批提交做宽泛排除。生产容器 job 新增按当前 Git SHA 标签删除 backend/frontend 镜像步骤，使用 if: always()。此前该 CI 的 Stop containers 已通过；本批提交后的 Gitleaks 与镜像删除行为尚待新 run 验证。
-- 真实合成联调：使用先前授权的项目配置，通过生产浏览器包和隔离账户 SSE 路由请求真实主模型；文档生成后导出 DOCX、PPTX、XLSX、XLS 均通过。网页专测 HTTP 200、流正常完成、下载/CSP、本地图片策略、用户色彩和示例文字、390px 内外层宽度及 0 页面异常通过。循环专测真实两轮请求；在第二轮前注入一次浏览器层 503，检查首次检查点在重载后保留、续跑重新授权、准确复用上一轮内容、停止标记不发第三轮及历史重载不重放，均通过。合成内容，无客户资料；没有调用 Embedding、数据库、邮件或外网。helper 最终退出，本机无测试监听端口或剩余 helper 进程。
+- 真实合成联调：使用先前授权的项目配置，通过生产浏览器包和隔离账户 SSE 路由请求真实主模型；文档生成后导出 DOCX、PPTX、XLSX、XLS 均通过。网页专测 HTTP 200、流正常完成、下载/CSP、本地图片策略、用户色彩和示例文字、390px 内外层宽度及 0 页面异常通过。循环专测真实两轮请求；在第二轮前注入一次浏览器层 503，检查首次检查点在重载后保留、续跑重新授权、准确复用上一轮内容、停止标记不发第三轮及历史重载不重放，均通过。合成内容，无客户资料；没有调用 Embedding、数据库或邮件，除已授权的主模型供应商请求外，浏览器外部流量被拦截。helper 最终退出，本机无测试监听端口或剩余 helper 进程。
 - 本地验证：前端全量 **136 文件/1300 项通过**，lint、tsc -b --noEmit、生产构建通过；npm run verify:ai-workbench 对生产预览通过。一次开发服务器模式导出等待超时，切换生产预览后该回归通过，不据开发服务器失败推断生产包失败。node --check、live helper py_compile、git diff --check 通过。
 - 资源清理与边界：本机 Docker Desktop 服务保持停止，5432 上已有本机服务未触碰；本批未启动 Docker、未创建本机镜像或容器。CI 服务容器/网络的 Stop containers 已成功；新 CI 将验证两张本次构建镜像按 SHA 移除。未发送邮件、未操作线上服务。
 - Git/后续：本次代码改动及记录待提交；API 只读确认远端开发分支为 5a37d94、旧 main 为 ea4917e。Git HTTPS 443 连接失败，需对本批提交做普通 push，若继续不可达则保留本地提交并记录；新 CI 用于确认 7 条历史 fingerprint 处理、全量测试及镜像清理。A12 业务金标/人工判分、A13 目标部署恢复/RPO/RTO/回滚、A28 目标邮件链和部署隐私事实、实际目标库迁移、8 GB/断电/原生升级及许可证审阅仍开放；全局目标保持 active。用户已有未跟踪 .vscode/、docs/PROJECT_OVERVIEW.md、output/、tmp/ 继续保留。
+
+### 2026-10-21：网页修正已推送、完整 CI 通过及镜像/容器清理确认
+
+- Git：网页 HTML 专用输出提示、精确 Gitleaks 样例指纹和 CI 镜像清理步骤已作为 `540cd26` 普通推送至 `agents/develop/geiit-agents`。旧 main 保持 `ea4917e17b5cf7349948fb82c3e4c0414c74e77a`；未强推、发布镜像或部署。本条为结果核对与工作日志更新，没有重跑本地模型、邮件、Office、前后端测试或构建。
+- 最新完整 [CI 39559756813](https://github.com/DoxWu/GeiitAgents/actions/runs/39559756813)：head `540cd260a36440002aa3b9bf1b5d69c5b8d75d9d`，七个 job 全部成功。后端 **856 passed/6 skipped/2 warnings，coverage 54.07%**；前端 **136 文件/1300 项通过**；生产镜像内置 PG16 客户端的恢复/维护/联合恢复/向量迁移 **81 passed/5 warnings**。前端 lint/类型检查/构建、真实 LangChain 合约、精确历史指纹后的 secret scan、npm/Python/Rust audit、SBOM 上传与可修复 HIGH/CRITICAL 门禁均通过。此前 `39555944195` 的历史样例扫描失败已由此次成功 run 更新。
+- 扫描边界：下载此次真实 Trivy JSON 至忽略目录 `.tools/ci-39559756813/`，过滤空结果后逐项核对后端 **75 HIGH + 1 CRITICAL = 76 项**，均没有 FixedVersion；前端 0。不得把门禁成功写成零漏洞。6 项 Python 上游许可证未知及分发义务人工审阅仍未关闭。
+- 按用户要求清理：CI 的 `Remove this run's test images` 成功，日志确认 `geiit/backend:540cd260a36440002aa3b9bf1b5d69c5b8d75d9d` 与 `geiit/frontend:540cd260a36440002aa3b9bf1b5d69c5b8d75d9d` 已取消标签并删除层；生产镜像验收与后端测试的 `Stop containers` 均成功，PostgreSQL/Redis 临时容器及各自网络已移除。本机 Docker 服务仍 Stopped，本轮没有启动 Docker 或创建本机镜像/容器，也没有为枚举而重新启动；前批本机资源清理沿用原记录。没有全局 prune 或删除其他项目资源，5432 上的既有服务未触碰。
+- 其他临时文件：未完成的 Gitleaks 下载 `.tools/gitleaks_8.24.3_windows_x64.zip` 曾通过 PowerShell 请求删除，被自动审批以 `blocked by policy` 拒绝；未绕过，该 ZIP 保留在忽略目录。Gitleaks 已由 CI 实际验证；这不是镜像或容器清理失败。
+- 未完成与下一步：A12 有许可业务金标/逐题人工评分与误拒漏拒；A13 目标部署卷/Secret/队列联合恢复及 RPO/RTO/回滚；A28 目标邮件链/Resend HTTP（若使用）与运营主体、实际区域/保留/跨境事实；实际目标库向量切换、8 GB/物理断电、Windows 原生安装升级、Safari/WebView2/真机、许可证审阅和无修复镜像告警仍开放。Windows 运维状态文件偶发写入失败未复现，不称已修复。全局目标保持 active，既有未跟踪 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 保留。本次文档将单独提交并普通同步，不为仅补记结果再次触发镜像构建。
