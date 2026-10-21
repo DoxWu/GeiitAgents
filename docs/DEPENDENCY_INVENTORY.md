@@ -20,7 +20,7 @@ python .github/scripts/enrich_python_sbom.py \
   --licenses python-licenses.json
 ```
 
-2026-10-21 对 CI `39541985913` 已上传的 160 项原始 Python SBOM 做本机补充演练：全部 160 项得到 PURL，154 项有上游许可证声明，6 项未知。版本身份采用 PEP 440 等价比较以兼容上游规范化（例如审计记录 `13.0.3.0`、发布元数据返回 `13.0.3`）；输出 PURL 和 sidecar 保留原始审计版本。此演练没有改写该 CI artifact；实现修正将在后续 CI 生成新 artifact。
+2026-10-21 对 CI `39541985913` 的原始 Python SBOM 做本机补充演练后，将 enrichment 实现推送并在 CI `39546004556` 验证。该 workflow 日志确认 Python 160 项全部有 PURL、6 项上游许可证未知；依赖审计、Python enrichment、Rust 清单生成与依赖清单 artifact 上传步骤成功。原始 `39541985913` artifact 未被覆盖，当前 artifact 来自新 CI。版本身份采用 PEP 440 等价比较以兼容上游规范化（例如审计记录 `13.0.3.0`、发布元数据返回 `13.0.3`）；输出 PURL 和 sidecar 保留原始审计版本。未知项、上游声明和分发许可义务仍须人工审阅。
 
 工具最多 24 个并发 HTTPS 请求，校验证书、不跟随重定向，服从 runner 明确设置的 HTTP(S) 代理，每个版本最多一次有限重试，有响应大小上限。请求只含公开包名/版本，不读取应用 `.env`、供应商凭据或业务数据。
 
