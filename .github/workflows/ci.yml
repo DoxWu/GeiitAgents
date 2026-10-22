@@ -68,6 +68,9 @@ jobs:
       - name: Test image vulnerability gate
         run: python -m unittest discover -s .github/scripts -p 'test_check_trivy_results.py'
 
+      - name: Test production frontend response-policy verifier
+        run: python -m unittest discover -s .github/scripts -p 'test_verify_frontend_image.py'
+
       - name: Check Docker build context boundaries
         run: python .github/scripts/test_build_context_boundaries.py
 
@@ -427,6 +430,13 @@ jobs:
           list-all-pkgs: true
           exit-code: "0"
 
+      - name: Verify production frontend preview isolation and application headers
+        if: steps.build-frontend.outcome == 'success'
+        run: |
+          python .github/scripts/verify_frontend_image.py \
+            --image geiit/frontend:${{ github.sha }} \
+            --output "$RUNNER_TEMP/frontend-preview-acceptance"
+
       - name: Upload image scan reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -435,6 +445,7 @@ jobs:
           path: |
             backend-trivy.json
             frontend-trivy.json
+            $RUNNER_TEMP/frontend-preview-acceptance/result.json
           if-no-files-found: warn
           retention-days: 30
 

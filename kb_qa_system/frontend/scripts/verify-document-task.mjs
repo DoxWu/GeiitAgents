@@ -11,7 +11,7 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import * as LegacyXLS from 'styled-exceljs';
 
-const { values } = parseArgs({ options: { 'native-exe': { type: 'string' }, output: { type: 'string' } } });
+const { values } = parseArgs({ options: { 'native-exe': { type: 'string' }, output: { type: 'string' }, 'served-csp': { type: 'boolean', default: false } } });
 const native = Boolean(values['native-exe']);
 const liveProvider = process.env.DOCUMENT_TASK_LIVE === '1';
 if (native && (process.platform !== 'win32' || liveProvider)) throw new Error('Native mode requires Windows and synthetic generation.');
@@ -96,7 +96,7 @@ await context.route('**/*', route => {
 });
 // vite preview has no response CSP; use the exact production policies so script
 // execution and sandbox checks also cover the deployed web build.
-if (!native) await context.route(url => url.origin === previewOrigin, async route => {
+if (!native && !values['served-csp']) await context.route(url => url.origin === previewOrigin, async route => {
   const response = await route.fetch();
   const pathname = new URL(route.request().url()).pathname;
   return route.fulfill({ response, headers: { ...response.headers(), 'content-security-policy': pathname === '/web-preview.html' ? previewCsp : appCsp } });
@@ -470,7 +470,7 @@ try {
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(3);
   expect(sent).toHaveLength(3);
   expect(errors).toEqual([]);
-  await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, runtime: native ? 'Windows packaged WebView2' : 'Chromium with production response CSP', webview: browser?.version(), binary,
+  await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, runtime: native ? 'Windows packaged WebView2' : values['served-csp'] ? 'Chromium with production Nginx response CSP' : 'Chromium with injected production response CSP', webview: browser?.version(), binary,
   generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic', errors, externalAttempts,
   checks: ['explicit cloud consent', 'encrypted reusable reference save/load without reopening the source file', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLS/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'six scroll-animation examples including reveal, linked progress, parallax, sticky, snap, and horizontal scrolling', 'local image attachment and HTML embedding', 'opaque sandbox denies parent/storage access and Tauri commands; preview CSP blocks network requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
   console.log(JSON.stringify({ passed: true, runtime: native ? 'WebView2' : 'Chromium', report: path.join(output, 'result.json') }));

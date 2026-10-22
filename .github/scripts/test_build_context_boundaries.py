@@ -20,6 +20,7 @@ def test_frontend_dockerignore_has_runtime_secret_boundaries():
     required = {
         ".env.*",
         "!.env.example",
+        "src-tauri/target*/",
         "backups/",
         "backup/",
         "*.dump",
@@ -96,6 +97,11 @@ def test_gitignore_blocks_private_inputs_but_keeps_reviewed_sources():
     assert not any(is_ignored(path) for path in allowed)
 
 
+def test_frontend_dockerignore_excludes_native_build_targets():
+    rules = _rules(ROOT / "kb_qa_system/frontend/.dockerignore")
+    assert "src-tauri/target*/" in rules
+
+
 def test_production_backend_image_does_not_ship_pip_vendored_packages():
     dockerfile = (ROOT / "kb_qa_system/backend/Dockerfile").read_text(
         encoding="utf-8"
@@ -143,6 +149,7 @@ if __name__ == "__main__":
     test_frontend_dockerignore_has_runtime_secret_boundaries()
     test_backend_dockerignore_keeps_example_only_environment_exception()
     test_gitignore_blocks_private_inputs_but_keeps_reviewed_sources()
+    test_frontend_dockerignore_excludes_native_build_targets()
     test_production_backend_image_does_not_ship_pip_vendored_packages()
     test_postgres_dump_tools_match_default_compose_server()
     test_frontend_build_skips_unused_node_cuda_runtime_download()

@@ -11,6 +11,7 @@
 # 依赖目录（Docker 内重新安装）
 # ============================================
 node_modules/
+src-tauri/target*/
 .npm/
 .pnpm-store/
 .yarn/cache/
