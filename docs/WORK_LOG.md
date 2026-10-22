@@ -10,7 +10,7 @@
 
 **2026-10-22 原生容量与进程恢复：** 本轮新增 `verify-native-vault-recovery.mjs`，在现有 dev.69/WebView2 155.0.4283.62 全新 profile 中验证 500 记录、100 初始草稿、五条长会话（16,662,903 字节明文快照）和实际加密备份下载（22,190,650 字节）。正式写入配额错误后草稿/旧记录保留，重试不重复建记录；真实应用最终事务未提交时强杀宿主及 WebView2 子树，重启完整恢复原快照与草稿；保存成功后第二次强杀重启密文逐字节不变。最终四次启动、五项检查通过，无页面异常/外网尝试/测试进程残留。没有重建或安装应用；不是 8 GB、物理断电、实际磁盘满、安装器中断或目标部署验收。详见 [原生恢复验收](NATIVE_VAULT_RECOVERY_ACCEPTANCE_2026-10-22.md)。
 
-**2026-10-22 Git 同步状态：** dev.70 修复 `516df4b`、验收文档 `74fb6ce` 和生产 Nginx CI 门禁 `3e328bb` 均保存在本地。普通 Git push 对 `github.com:443` 超时 154 秒；本轮确认同主机 Git smart HTTP 仍无法连接，GitHub API 读取可用且账号具有本项目 push scope。最终先通过可验证的非强制 fast-forward 同步路径尝试推送并核对新 SHA/CI；不能套用旧 CI `39723490636`。旧 main 仍 `ea4917e`，没有强推或部署。
+**2026-10-22 Git 同步状态：** dev.70 修复、生产 Nginx CI 门禁及验收文档共六个提交已通过 GitHub Git Data API 同步至开发分支 `d0ec2376d61f4261d8250d4d91fd0912add90840`；每个 blob/tree/commit SHA 均与本地一致，更新分支使用 `force:false`，远端与本地跟踪引用一致。普通 Git smart HTTP 此前持续超时；没有覆盖远端独有历史。新 CI `39732223721` 对该 SHA 七个 job 全部通过；旧 main 仍 `ea4917e`，没有发布或部署。收尾发现响应检查报告上传路径被当作字面变量，正在修正并另跑验证。
 
 **2026-10-22 许可证清单修正：** 补充无具体 classifier 的长许可证声明，以 CycloneDX `license.text` 保留完整 UTF-8 原文和来源，不推断 SPDX 标识，不覆盖已有许可证。本机 SBOM 回归 11 项、连同 Trivy 门禁共 19 项通过；离线 160 包复放/格式验证通过。新 CI `39723490636` 已实际运行 11 项回归并重新生成 160 包清单，下载的 CycloneDX 1.4 校验通过；tiktoken 1078 字节完整声明与 publisher inventory 相同，unknown 实际从 6 项降为 5 项 CUDA/NVIDIA 空元数据。分发许可证审阅仍开放。
 
@@ -1340,3 +1340,11 @@
 - 从实际镜像 Nginx 获得未注入/未改写的响应头后，Chromium 完整合成任务通过文档缓存复用/版本/导出、公式文本安全、图表、六类动画示例及 sandbox。生成脚本实际执行，父页面/localStorage 读取失败、Tauri 命令拒绝、connect-src 阻断；`errors=[]`、`externalAttempts=[]`。生成使用 mock、账号和素材合成，没有真实模型/API/邮件/数据库请求。报告 `.tools/frontend-preview-qa-20261022/{result.json,browser/result.json}`。新增 policy unittest 3/3、Docker 忽略边界脚本、workflow YAML、Python compile、前端脚本 node syntax 通过。
 - 清理：QA tag 对应镜像 SHA `12d1ae10d8cad8571a730e839c048a1a1d6692d9d49c1af5dd800a846df05caf` 已删除；脚本精确临时容器清理为 true，最后 `docker ps -a` 空。测试开始前只有 3 张既有镜像和 4 个既有卷，结束后这些镜像 ID/卷名均未改变。没有全局 prune。本轮启动的 Docker Desktop 用官方 shutdown 命令停回 `Stopped`，engine pipe 关闭。本批并未运行 backend/Redis/Trivy 本机容器；真实新 SHA 的完整 CI 等待远端。
 - GitHub API 当前可读且 `gh auth status` 显示该远程仓库账号具 push scope，但访问 `github.com:443` 的 Git smart HTTP 持续约 21 秒超时/上轮 154 秒无输出。修复提交 `516df4b` 和镜像 CI 门禁 `3e328bb` 已完成；本地 Nginx 结果如上，A23/A08 状态文档随后单独保存。稍后核对远端精确祖先后，尝试 non-force fast-forward API 对象推送；不覆盖旧历史/旧 main。最终同步 SHA 与 CI 另记，本地 Docker 已停。目标保持 active。
+
+### 2026-10-22：dev.70 全量 CI 通过与前端验收报告归档修正
+
+- A12 selected-30 保持用户定性人工验收通过；逐题评分栏留空，不推算准确率。dev.70 代码、Nginx 检查器及 Docker context 规则已通过非强制 fast-forward API 同步至开发分支 `d0ec2376d61f4261d8250d4d91fd0912add90840`，六个提交 tree/commit SHA 均与本地一致，旧 main 仍 `ea4917e`。
+- CI `39732223721`（workflow_dispatch，精确运行于该 SHA）七个 job 全部成功。后端 **895 passed/7 skipped/2 warnings，coverage 54%**；前端 **137 文件/1303 项**、Node IPC 3 项、lint/类型/构建、独立 LangChain、secret scan、npm/Python/Windows Rust audit/SBOM 通过。生产镜像 PG16 恢复/维护/联合恢复/向量迁移/OCR **126 passed/1 skipped/5 warnings**，六项 OCR 在镜像中实际执行通过；真实 Redis 三路结果与本次服务清理日志已留存。
+- 下载并结构化核对本次 Trivy JSON：后端 **75 HIGH + 1 CRITICAL**，全部无 FixedVersion；前端 **0**。本次 Python 160 包 CycloneDX 1.4 校验通过，tiktoken 原文与发布方 inventory 一致，5 项 CUDA/NVIDIA 空许可元数据及分发义务仍开放。证据在忽略目录 `.tools/ci-39732223721/`，不是历史 CI 复用结论。
+- 新 Nginx 响应检查在 CI 实际成功，日志 JSON 确认严格主应用 CSP、独立 opaque preview CSP、运行配置、source map 404 与 `containerRemoved:true`；但 upload-artifact 的输入不会展开 `$RUNNER_TEMP`，本次 artifact 只有扫描 JSON，没有该检查报告。将上传路径改为 Actions 的 `runner.temp` 表达式；该修正未改变应用功能，新 SHA 的归档验证仍待运行。首次下载全部 artifact 遇 Docker build record 的 ZIP 格式错误，随后按名称下载 SBOM 成功；两份 Trivy JSON 与日志完整，未把下载错误写成扫描失败。
+- 清理日志确认按本 SHA 删除两张临时镜像、后端 PostgreSQL/Redis 和容器 job 的 PostgreSQL 容器及两个 job 网络，预览容器精确删除。本机 Docker 服务仍 Stopped，本轮未创建本机 Docker 资源、未全局 prune、发邮件、调用真实供应商/目标数据库或操作线上部署；原有未跟踪文件保留。其余部署恢复/隐私、目标库迁移、真机/低配/断电/签名更新、无修复漏洞和分发许可仍开放。

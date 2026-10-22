@@ -445,7 +445,7 @@ jobs:
           path: |
             backend-trivy.json
             frontend-trivy.json
-            $RUNNER_TEMP/frontend-preview-acceptance/result.json
+            ${{ runner.temp }}/frontend-preview-acceptance/result.json
           if-no-files-found: warn
           retention-days: 30
 
