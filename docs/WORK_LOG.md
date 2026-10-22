@@ -6,9 +6,11 @@
 
 **2026-10-22 dev.70 网页预览与原生业务：** 修复生成 HTML 的 `srcDoc` 继承 CSP 导致动画脚本无法运行的问题；Web 独立静态入口和桌面固定协议使用独立沙箱 CSP，主应用仍禁止内联脚本。WebView2 子框架仍可能有只读 Tauri 对象，自定义 IPC 仅在顶层安装 invoke key，子框架拒绝桌面命令。图片占位符展开前累计限制。最终前端 **137 文件/1303 项**、Node IPC **3 项**、Rust **22 项**、lint/类型检查、Web 与 Windows NSIS 构建通过；浏览器生产 CSP 和真实 dev.70 WebView2 的完整文档任务、九个原生流式请求均通过。构建未签名/未安装/未发布；旧 CI `39723490636` 只覆盖 `1802bdb`，不覆盖这些新改动。详见 [工作台原生验收](NATIVE_WORKBENCH_ACCEPTANCE_2026-10-22.md)。本轮测试进程及预览服务已退出，Docker 未启动，无新增镜像/容器待清理。
 
+**2026-10-22 实际生产 Nginx 验收：** 在本机 Docker 以当前工作树构建未发布临时前端镜像，Nginx 实际响应的主应用 CSP/preview CSP、MIME、缓存、nosniff、运行配置、source map 404 均通过；Chromium 完整文档任务直接使用 Nginx 返回头通过，生成脚本正常运行且没有外网尝试。新增响应检查器 3 项 unittest 与 context 边界回归通过。首次构建发现 `src-tauri/target*` 导致 context 超过 2 GB；中止后补充 Docker 忽略项并实测 context **95.33 MB**，生产构建完成。镜像及唯一合成验收容器已按本轮 tag/name 删除，Docker Desktop 停回开始前状态；原有三张镜像和四个卷未变，没有全局 prune。报告在 `.tools/frontend-preview-qa-20261022/`，本机结果不替代 GitHub 新 SHA 的 Trivy/Redis/后端 CI。
+
 **2026-10-22 原生容量与进程恢复：** 本轮新增 `verify-native-vault-recovery.mjs`，在现有 dev.69/WebView2 155.0.4283.62 全新 profile 中验证 500 记录、100 初始草稿、五条长会话（16,662,903 字节明文快照）和实际加密备份下载（22,190,650 字节）。正式写入配额错误后草稿/旧记录保留，重试不重复建记录；真实应用最终事务未提交时强杀宿主及 WebView2 子树，重启完整恢复原快照与草稿；保存成功后第二次强杀重启密文逐字节不变。最终四次启动、五项检查通过，无页面异常/外网尝试/测试进程残留。没有重建或安装应用；不是 8 GB、物理断电、实际磁盘满、安装器中断或目标部署验收。详见 [原生恢复验收](NATIVE_VAULT_RECOVERY_ACCEPTANCE_2026-10-22.md)。
 
-**2026-10-22 Git 同步状态：** dev.70 修复和本机验收已保存为 `516df4b`。最终普通 push 超过 154 秒无输出，已精确结束本次 git 子树；之后 API 确认远端仍为 `1802bdbbb4aaae3faa0f7162df5f50364bf9708f`，旧 main 为 `ea4917e`。本批代码、此前 `4547f00`/`4304016` 收尾文档及本条记录仍待同步，没有新 CI。旧 CI `39723490636` 不覆盖新改动；没有强推、改 main 或部署。
+**2026-10-22 Git 同步状态：** dev.70 修复 `516df4b`、验收文档 `74fb6ce` 和生产 Nginx CI 门禁 `3e328bb` 均保存在本地。普通 Git push 对 `github.com:443` 超时 154 秒；本轮确认同主机 Git smart HTTP 仍无法连接，GitHub API 读取可用且账号具有本项目 push scope。最终先通过可验证的非强制 fast-forward 同步路径尝试推送并核对新 SHA/CI；不能套用旧 CI `39723490636`。旧 main 仍 `ea4917e`，没有强推或部署。
 
 **2026-10-22 许可证清单修正：** 补充无具体 classifier 的长许可证声明，以 CycloneDX `license.text` 保留完整 UTF-8 原文和来源，不推断 SPDX 标识，不覆盖已有许可证。本机 SBOM 回归 11 项、连同 Trivy 门禁共 19 项通过；离线 160 包复放/格式验证通过。新 CI `39723490636` 已实际运行 11 项回归并重新生成 160 包清单，下载的 CycloneDX 1.4 校验通过；tiktoken 1078 字节完整声明与 publisher inventory 相同，unknown 实际从 6 项降为 5 项 CUDA/NVIDIA 空元数据。分发许可证审阅仍开放。
 
@@ -22,7 +24,7 @@
 
 **2026-10-21 A12 运行时保护：** 新增有限词法规则识别常见个人症状和药品剂型/疗效查询；命中者使用原问题直接检索，避免无检索意图分流及 Query 改写绕过边界。个人问题命中历史病例/诊疗问答或检索为空、药品疗效问题未完整匹配所问名称时，在冲突分析和答复 LLM 之前返回固定答复。病例引用使用实际命中编号，资料缺失不硬配来源；流式与非流式保持相同答复和零答复模型指标。一般指南、非医疗问题和明确历史事实保留正常生成。规则不建立个体适用性或临床正确性，未覆盖的问法继续走现有提示词。本批验证结果与 Git 同步状态见末尾；没有重新调用真实模型/Embedding/邮件，没有启动 Docker 或部署。
 
-**2026-10-22 当前未完成与下一步：** A12 selected-30 定性人工验收通过，后续企业金标和医疗/品牌误拒漏拒作为质量跟踪，不要求本批补分。dev.70 完整文档/网页任务与原生流式已完成，仍需新代码同步后的精确 SHA CI/Nginx 镜像验证；旧 CI 不覆盖本批。A19 安装器中断、独有格式降级、签名和正式更新仍开放，历史 dev.69 基础安装链已通过。A13 目标卷/Secret/队列、RPO/RTO、回滚、真实 8 GB/磁盘满/物理断电仍未验；不以目标部署准备阻塞本地开发。A28 用户确认收件的 SMTP 邮件不重发，Resend HTTP（若采用）、目标投递链和运营/区域/保留/跨境事实待部署者核实。目标向量库迁移、Safari/移动真机、其他原生业务和复杂模板、后端 76 项无修复漏洞及五项空许可元数据/分发义务继续开放。本机测试树/预览服务已退出，Docker 停止且无新资源，未全局 prune 或操作线上部署。
+**2026-10-22 当前未完成与下一步：** A12 selected-30 定性人工验收通过，后续企业金标和医疗/品牌误拒漏拒作为质量跟踪，不要求本批补分。dev.70 完整文档/网页任务、原生流式和当前前端生产 Nginx 镜像任务已通过；本批加上的 image-response CI 门禁/单测及 Docker context 排除还要提交、同步，之后按新 SHA 等待完整后端/前端/Trivy/Redis/清理 CI。A19 安装器中断、独有格式降级、签名和正式更新仍开放。A13 目标卷/Secret/队列、RPO/RTO、回滚、真实 8 GB/磁盘满/物理断电仍未验；不以目标部署准备阻塞本地开发。A28 用户确认收件的 SMTP 邮件不重发，Resend HTTP（若采用）、目标投递链和运营/区域/保留/跨境事实待部署者核实。目标向量库迁移、Safari/移动真机、其他原生业务和复杂模板、后端无修复漏洞及空许可元数据/分发义务继续开放。本机测试树/容器/image 已清理、Docker 停止，无全局 prune 或线上操作。
 
 **2026-10-22 A28 合成供应商联调：** 使用项目后端 `.env` 及当前供应商配置，对主阿里云 MAAS LLM、DeepSeek 备用 LLM、主 Embedding 和主端点重排各做一次禁重试直接请求。主/备聊天与工具调用均通过，Embedding 返回有限非零 1024 维向量，`qwen3.7-text-rerank` 对两段合成文本返回完整分数、将相关段排前并保留检索分数，六项全通过；模型名、状态和耗时记录在忽略目录 `.tools/provider-current-20261022/result.json`，不含密钥或正文。该脚本未发送邮件、访问 `DATABASE_URL`、运行完整 RAG 或使用业务资料；旧供应商验收脚本 `--live` 会连带发信和查数据库，因此没有调用。此前 SMTP 单封邮件用户已确认收到，本轮未重发。该次配置实际区域、供应商数据处理/保留、目标部署投递链仍须部署者核实。
 
@@ -175,7 +177,7 @@
 
 ## 下一步执行顺序
 
-2026-10-22 下一步：先保存并普通同步 dev.70 的预览隔离/IPC 修复及本机验收，若成功推送，按准确 SHA 核对新 CI 与临时镜像/容器清理；网络失败保留本地提交，不反复重建或重试。A12 selected-30 已按用户判断验收通过。其他待办为目标部署 A13/A28/向量迁移、真实低配/磁盘满/断电、安装器中断/独有格式降级/签名更新、Safari/移动真机及其他原生流程和复杂模板、分发许可与无修复漏洞跟踪。本轮已完成 dev.70 完整任务与原生流式，历史 dev.69 安装/容量恢复不重跑；未连接真实供应商、邮件、目标数据库或部署环境，Docker 无新增资源。
+2026-10-22 下一步：生产 Nginx 响应/CSP 检查、`src-tauri/target*` context 排除已提交 `3e328bb`，本机真实前端镜像/Chromium 检查通过；随后核对远端祖先并用当前可访问的 GitHub API 做安全 fast-forward，检查新 SHA CI/Trivy/Redis 和清理。如果 API 分支保护拒绝写入则保留本地。A12 selected-30 按用户判断验收通过。持续开放 A13/A28 目标部署、向量迁移、真实低配/磁盘满/断电、安装器中断/独有格式降级/签名更新、Safari/移动真机、其他原生流程/复杂模板和分发许可/无修复漏洞跟踪。本轮 Docker image/container 已清理，Docker 服务停回原状态，没有部署、邮件或真实供应商/数据库访问。
 
 以下表格保留 2026-10-10 及此前的实施顺序；当前整改结果见顶部状态和修复跟踪，不再将已实现的认证、出站安全、上传一致性等重复列为未修复。
 
@@ -1330,3 +1332,11 @@
 - 预览/CSP/IPC 修复、验收脚本、CI 新门禁和五份说明共 24 文件已保存为 `516df4b`；暂存 diff 检查通过。凭据边界检查在不打印数值的情况下比对本机六项长敏感配置、私钥标记及运行文件路径，均未进入暂存；该检查不是完整 secret scan。本地旧 gitleaks ZIP 无有效中央目录，解压失败，扫描器没有运行，后续远端 secret-scan 仍待新 CI。
 - 推送前 API 确认开发分支等于本地跟踪 `1802bdb` 且为 HEAD 祖先，使用普通 push。该次超过 **154 秒**无输出，按核对过命令的精确 git PID 结束该子树；不是成功推送。随后 API 再次确认开发分支仍 `1802bdbbb4aaae3faa0f7162df5f50364bf9708f`、旧 main `ea4917e17b5cf7349948fb82c3e4c0414c74e77a`，Actions 仍只有此前 CI，没有新 SHA 验收。保留本地提交，不重试循环或强推。
 - 本条为同步结果文档，以 `[skip ci]` 单独保存，未再推送；网络恢复后先核对远端差异再普通同步全部待推提交。最终仅用户原有 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 未跟踪，应用测试/预览进程退出、Docker 停止且无本轮新增资源。没有部署、邮件或真实供应商/目标库请求；全局目标继续 active，待办见顶部。
+
+### 2026-10-22：生产前端 Nginx 预览 CSP 镜像验收与 Docker context 缩减
+
+- 本轮后续推进：新增 `.github/scripts/verify_frontend_image.py`，在给定 Docker image 内创建唯一随机名称的临时容器，只绑定 loopback ephemeral port，实际请求 app/preview/static/runtime-config/source-map 路径并断言生产响应头、CSP 指令与正文。浏览器选项通过真实响应头运行现有模拟文档完整任务；每种退出路径在 `finally` 精确强删其容器并复核不存在。新增策略单测并扩充 CI artifact 报告和 Docker image acceptance 门禁。上次已证实 `.test.mjs` 会被 Vitest 收集，故 Node 源回归仍使用 `native-ipc-check.mjs`。
+- 首次直接 Docker build 读取本机 Rust `src-tauri/target`/`target-dev` 桌面产物，实际 context 传输到 2.24 GB 后中断，该轮未建镜像/容器。新增 `.dockerignore` `src-tauri/target*/` 规则及构建上下文回归；再次构建实测 context **95.33 MB**，净减少约 96%。当前工作树前端生产 Dockerfile 的 Nginx 运行镜像 Vite 生产构建完成，实际 HTTP 检查 GET `/`、`/workbench`、`/index.html`、`/runtime-config.js`、`/web-preview.html`、`*.map`，核对主应用严格 CSP、预览独立 CSP/sandbox、MIME/no-store/nosniff/运行时配置/source map 404 均成功。
+- 从实际镜像 Nginx 获得未注入/未改写的响应头后，Chromium 完整合成任务通过文档缓存复用/版本/导出、公式文本安全、图表、六类动画示例及 sandbox。生成脚本实际执行，父页面/localStorage 读取失败、Tauri 命令拒绝、connect-src 阻断；`errors=[]`、`externalAttempts=[]`。生成使用 mock、账号和素材合成，没有真实模型/API/邮件/数据库请求。报告 `.tools/frontend-preview-qa-20261022/{result.json,browser/result.json}`。新增 policy unittest 3/3、Docker 忽略边界脚本、workflow YAML、Python compile、前端脚本 node syntax 通过。
+- 清理：QA tag 对应镜像 SHA `12d1ae10d8cad8571a730e839c048a1a1d6692d9d49c1af5dd800a846df05caf` 已删除；脚本精确临时容器清理为 true，最后 `docker ps -a` 空。测试开始前只有 3 张既有镜像和 4 个既有卷，结束后这些镜像 ID/卷名均未改变。没有全局 prune。本轮启动的 Docker Desktop 用官方 shutdown 命令停回 `Stopped`，engine pipe 关闭。本批并未运行 backend/Redis/Trivy 本机容器；真实新 SHA 的完整 CI 等待远端。
+- GitHub API 当前可读且 `gh auth status` 显示该远程仓库账号具 push scope，但访问 `github.com:443` 的 Git smart HTTP 持续约 21 秒超时/上轮 154 秒无输出。修复提交 `516df4b` 和镜像 CI 门禁 `3e328bb` 已完成；本地 Nginx 结果如上，A23/A08 状态文档随后单独保存。稍后核对远端精确祖先后，尝试 non-force fast-forward API 对象推送；不覆盖旧历史/旧 main。最终同步 SHA 与 CI 另记，本地 Docker 已停。目标保持 active。

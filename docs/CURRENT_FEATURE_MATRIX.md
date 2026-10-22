@@ -4,6 +4,8 @@
 
 本轮 dev.70 预览/IPC 修复后的前端 **137 文件/1303 项**、Node IPC **3 项**、Rust **22 项**及 lint/类型/Web/Windows NSIS 构建通过。浏览器生产 CSP 与 dev.70 WebView2 的完整任务、九个原生流式请求通过，详见 [工作台原生验收](NATIVE_WORKBENCH_ACCEPTANCE_2026-10-22.md)。下表 CI `39723490636` 对应此前 `1802bdb`，不覆盖本轮新代码。
 
+本轮另外实际构建当前工作树的生产前端 Docker 镜像，并在运行镜像中经 Nginx 验证主应用/网页预览的 CSP、安全头、静态路由和运行配置；完整合成浏览器任务直接接收真实 Nginx CSP 通过。新增验证门禁将加入下次 GitHub CI；本地镜像及唯一测试容器已清除。Rust `target*` 排除规则把本机 context 从首次发现的 2.24 GB 降至 **95.33 MB**，本地边界检查和 CI 单测通过。
+
 | 功能域 | 用户入口与实现 | 当前验证证据 | 限制与未验收项 |
 | --- | --- | --- | --- |
 | 云端文档管理 | Web `/documents`；前端 `kb_qa_system/frontend/src/pages/DocumentsPage.tsx`、`components/documents/`；后端 `kb_qa_system/backend/app/api/routes/documents.py` | 文档页、列表、预览、筛选组件测试；后端 `test_upload_conflict.py`、`test_review_lifecycle.py`、`test_review_downloads.py` | 需要已迁移且可连接的目标数据库/文件卷。过滤搜索不扫描正文；远程部署和用户数据恢复未验收。 |
@@ -17,7 +19,7 @@
 | Windows 开发包与升级 | `frontend/src-tauri/tauri.dev.conf.json`、`scripts/build-desktop.mjs`、`scripts/verify-native-upgrade.mjs`；结果见 [原生升级验收](NATIVE_UPGRADE_ACCEPTANCE_2026-10-22.md) | 最新 dev.70 未签名 EXE/NSIS 构建及独立 EXE 业务验收通过，未安装；此前 dev.68→dev.69→dev.68 同目录安装/升级/回退、旧库/备份迁移与临时卸载通过，原程序/注册项/快捷方式已还原 | 本轮没有重跑安装器链。仅合成隔离 WebView2 目录，用户日常安装仍为 dev.68；中断升级、全新机器/多用户、签名/更新校验、独有格式降级和断电仍未验。 |
 | 本地知识库 | `/local-knowledge`；`frontend/src/localKnowledge/`、`pages/LocalKnowledgePage.tsx` | `LocalKnowledgePage.test.tsx`、本地 E5 浏览器基准、四浏览器 API smoke，证据见工作记录和 `LOCAL_KNOWLEDGE_BENCHMARK_2026-09-22.md` | 用户主动启用后才下载 E5。运行中的原文/向量未加密；加密备份不改变此边界。低配设备、Safari/WebView2 和目标容量仍未完整验收。 |
 | AI 文档与 Office 生成 | 工作台「任务」页；`components/workbench/OfficeTasks.tsx`、`DocumentTasks.tsx`、`officeTasks/` | 本轮浏览器生产 CSP 与 dev.70 WebView2 完整任务通过四格式下载/内容解析、版本修改/对比/恢复及公式文本安全；前端全量 137 文件/1303 项。此前 Word 36 页自动版面检查和 PowerPoint/Excel COM 实开证据沿用历史结果，本轮未重跑原生 Office | DOCX 支持目录、页眉页码、手动分页和受限表格布局；PPTX 有可编辑表格及长内容分页；XLSX 有样式/冻结/筛选，XLS 只保留数据/列宽。两者支持安全数值、只转换首张 Markdown 表格、不计算公式，不承诺任意文件保真。 |
-| AI 可视化网页设计 | 工作台「任务 → 网页设计」；`components/workbench/WebDesigner.tsx`、`WebPagePreview.tsx`、`webDesignerOutput.ts` | 浏览器和 dev.70 WebView2 合成完整任务验收覆盖布局、主副色、组件色、六类滚动示例、文字/图片、独立入口 CSP 沙箱预览和下载；预览脚本不能读父页、应用存储或桌面 IPC，外网连接被拦截 | 历史 2026-10-21 真实主模型仅覆盖生成、CSP/下载与 390px 检查，不是本轮运行；本轮使用模拟输出。不能推导所有网页设计质量。导出 HTML 需人工检查再部署。 |
+| AI 可视化网页设计 | 工作台「任务 → 网页设计」；`components/workbench/WebDesigner.tsx`、`WebPagePreview.tsx`、`webDesignerOutput.ts` | 浏览器/dev.70 WebView2 合成完整任务和生产 Nginx 镜像 CSP 实际响应检查通过；覆盖布局、颜色、六种滚动示例、文字/图片、父页/存储/桌面命令隔离和外网拦截 | 模型为模拟输出，不能推导任意网页生成质量。导出 HTML 需人工检查再部署；本地镜像验收不是 CI/线上部署。 |
 | 参考资料复用 | 文档/Markdown 任务内的本机资料库；`ReferenceLibrary.tsx`、`LocalMarkdown.tsx`、`workbenchStore.ts` | `LocalMarkdown.test.tsx` 与 `workbenchStore.test.ts` 77 项通过；浏览器流程覆盖清空后载回和加密检查 | 保存的是解析后的文本，不是原文件；最多 20 份。载回本身不发送资料，执行云端任务时仍需逐次授权。 |
 | 笔记、待办与提醒 | 工作台「笔记与待办」；`PersonalItems.tsx`、`ServerReminders.tsx`；后端 `personal.py` | `test_personal.py`；历史单封合成 SMTP 已由用户确认收件；2026-10-21 新镜像真实 Beat→Redis→prefork Worker→回环认证 SMTP 通过，一次投递、重复两条消息不重发 | 隔离合成链不代表 Resend HTTP、真实收件箱或目标部署调度/持久卷/重启验收；本批未向外部发信。 |
 | 本机文件整理 | 工作台「文件整理」；`FileOrganizer.tsx`、文件历史与 Rust 文件桥 | `FileOrganizer.test.tsx`、`FileHistory.test.tsx`、文本编辑/批量编辑测试 | 仅在用户选择和授权的目录执行受限操作；跨卷、进程中断、原生 WebView2 和低配设备需目标机器验收。 |
