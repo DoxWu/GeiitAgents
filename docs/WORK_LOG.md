@@ -4,6 +4,8 @@
 
 ## 当前阶段
 
+**2026-10-22 Git 同步状态：** 验收文档已本地提交 `064a809`；随后普通推送因 GitHub 443 连接重置/超时失败。API 再核对远端开发分支仍为 `ba07b66`，旧 main 为 `ea4917e`。本条同步记录另作本地提交；网络恢复后先核对远端祖先及差异，再普通推送，不强推。
+
 **2026-10-22 本次状态：** 用户人工抽查当前提示词的 selected-30 正例整体通过，确认大部分答案依据正确、证据不足时会提示；这不是逐题评分或准确率。Vitest `4.1.12` 修复已推送至开发分支 `d0eb12e`。OCR 改动 `a737af6` 对应的 CI [39714675935](https://github.com/DoxWu/GeiitAgents/actions/runs/39714675935) 已完成且七个 job 全部成功：依赖审计、后端 `895 passed/7 skipped`、前端 `136 文件/1300 项`、构建、LangChain 合约和 secret scan 均通过；生产镜像验收 `126 passed/1 skipped/5 warnings`，其中六项 OCR 均实际执行并通过。后端 Trivy 为 76 项无修复版本 HIGH/CRITICAL（75 HIGH、1 CRITICAL），前端 0；可修复漏洞门禁通过不代表零漏洞。CI 已精确删除本 SHA 两张测试镜像，PostgreSQL/Redis 服务容器及网络已清理。Windows 本机真实 OCR/预算测试此前为 6/6 通过。旧 main 未改；本机 Docker 引擎保持停止，没有本机新建资源、部署、邮件发送或数据库连接。本批仅补充验收记录，文档独立提交，不重复运行构建。
 
 **2026-10-22 最新完整成功 CI：** `39714675935` 对 `a737af6` 七个 job 全部成功：依赖审计、后端/前端测试、构建、LangChain 合约、secret scan、生产镜像扫描与验收均通过；镜像回归 `126 passed/1 skipped/5 warnings`，六项 OCR 实际执行通过。Trivy JSON 已下载并解析：后端 76 项 HIGH/CRITICAL（75 HIGH、1 CRITICAL），全部无修复版本；前端 0。Python SBOM 160 个组件中 6 项在清单标记为 unknown：5 个 CUDA/NVIDIA 可选 ML 包的许可证元数据为空；tiktoken 0.7.0 已声明完整 MIT 文本，但超过当前归一规则的 256 字符上限而未被识别。清单限制不等于没有许可证，分发包的许可证与义务仍需审阅，发布者元数据不是法律结论。CI 按 SHA 清理两张临时镜像、PostgreSQL/Redis 服务容器及网络；这不是发布或部署。
@@ -1258,3 +1260,4 @@
 - OCR 提交 `a737af6` 的 CI `39714675935` 已终态成功，七个 job 全部通过；后端 895 passed/7 skipped，前端 136 文件/1300 项，生产镜像恢复/维护/联合恢复/向量迁移/OCR 126 passed/1 skipped/5 warnings，六项 OCR 均在 Linux 生产镜像实际执行通过。CI 下载的 Trivy JSON 已结构化复核：后端 HIGH/CRITICAL 共 76 项（75 HIGH、1 CRITICAL），全部无 FixedVersion；前端 0。漏洞门禁通过不代表镜像无漏洞。
 - CI 清理日志确认按本次 SHA 删除 backend/frontend 临时镜像层，PostgreSQL/Redis 临时服务容器与 job 网络清理成功。本机 Docker 服务停止、Linux engine pipe 不存在，本批没有创建本机容器/镜像；没有全局 prune、部署、数据库访问或邮件发送。日志与报告留在忽略目录 `.tools/ci-39714675935/`。
 - 同步更新本文件的最新 CI 和待办状态，并更新 [审查整改跟踪](REVIEW_REMEDIATION_2026-10-10.md) 的 A08/A12 结果。仍开放的主要验收为 A13 目标部署恢复/RPO/RTO/回滚、A28 目标邮件链和部署隐私事实、目标数据库向量迁移、8 GB/断电/原生升级/真机，以及无修复容器漏洞持续跟踪和分发许可证审阅。提交前 API 核对远端开发分支已与 `ba07b66` 一致，`d4eb33d`/`ba07b66` 均已同步，旧 main 为 `ea4917e`；本批仅文档变更，以 `[skip ci]` 单独保存，不为补记结果再次构建镜像。
+- 本次 Git 结果：差异与凭据边界检查通过，仅上述两份文档提交为 `064a809`。fetch 连接超时，API 确认远端与已知跟踪 SHA 一致且为本地祖先后，普通 push 两次分别遇连接重置和 GitHub 443 超时；远端仍为 `ba07b66`，没有新 CI。代码及验收记录留存本地，网络恢复后重新核对再同步；没有强推、改旧 main 或纳入用户既有未跟踪文件。
