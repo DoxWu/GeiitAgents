@@ -346,10 +346,13 @@ jobs:
 
       - name: Prepare external test dependencies for the production image
         if: steps.build-backend.outcome == 'success'
-        run: >-
-          python -m pip install
-          --target "$RUNNER_TEMP/image-test-deps"
-          --requirement kb_qa_system/backend/requirements-test.txt
+        run: |
+          python -m pip install \
+            --target "$RUNNER_TEMP/image-test-deps" \
+            --requirement kb_qa_system/backend/requirements-test.txt
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+          test -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 
       - name: Restore with the production image's built-in PostgreSQL clients
         if: steps.build-backend.outcome == 'success'
@@ -367,13 +370,16 @@ jobs:
             -e DATABASE_URL=postgresql+psycopg://ops_test:test@localhost:5432/test \
             -e GEIIT_OPS_TEST_ADMIN_URL=postgresql+psycopg://ops_test:test@localhost:5432/postgres \
             -e EMAIL_ENABLED=false -e LOCAL_EMBEDDING_ENABLED=false \
+            -e GEIIT_OCR_REQUIRED=1 \
             -e PYTHONPATH=/test-deps:/app -e PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
             --mount "type=bind,source=$RUNNER_TEMP/image-test-deps,target=/test-deps,readonly" \
+            --mount "type=bind,source=/usr/share/fonts/opentype/noto,target=/usr/share/fonts/opentype/noto,readonly" \
             geiit/backend:${{ github.sha }} \
             -m pytest tests/test_ops.py tests/test_ops_alerts.py tests/test_maintenance.py \
             tests/test_recovery_bundle.py tests/test_vector_store_live_postgres.py \
             tests/test_embedding_migration.py \
             tests/test_entrypoint_supervision.py \
+            tests/test_review_ocr_limits.py \
             -p pytest_asyncio.plugin --basetemp=/tmp/image-tests \
             -o cache_dir=/tmp/image-pytest-cache
 

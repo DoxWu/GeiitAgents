@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import os
+import re
 from pathlib import Path
 
 import fitz
@@ -11,6 +13,12 @@ from app.core.config import settings
 from app.services.document_pipeline.chunker import TextChunker
 from app.services.document_pipeline.context import PipelineContext
 from app.services.document_pipeline.image_processor import ImageProcessor
+
+
+def missing_ocr_dependency(reason: str) -> None:
+    if os.environ.get("GEIIT_OCR_REQUIRED") == "1":
+        pytest.fail(reason)
+    pytest.skip(reason)
 
 
 def make_image(text: str = "Invoice Total 583.25") -> bytes:
@@ -29,7 +37,7 @@ def make_image(text: str = "Invoice Total 583.25") -> bytes:
         None,
     )
     if font_path is None:
-        pytest.skip("No Chinese-capable test font is installed")
+        missing_ocr_dependency("No Chinese-capable test font is installed")
     draw.text((25, 35), text, fill="black", font=ImageFont.truetype(str(font_path), 52))
     output = io.BytesIO()
     image.save(output, format="PNG")
@@ -50,7 +58,7 @@ def test_scanned_pdf_ocr_is_chunked_with_chinese_and_english(
 ) -> None:
     processor = ImageProcessor()
     if not processor._is_tesseract_available():
-        pytest.skip("Tesseract is not installed")
+        missing_ocr_dependency("Tesseract is not installed")
     monkeypatch.setattr(settings, "ENABLE_OCR", True)
     monkeypatch.setattr(settings, "ENABLE_VISION", False)
     monkeypatch.setattr(settings, "PARSER_OCR_TIMEOUT_SECONDS", 20)
@@ -64,6 +72,7 @@ def test_scanned_pdf_ocr_is_chunked_with_chinese_and_english(
     assert context.images
     assert "7421" in context.images[0].ocr_text
     assert "583.25" in context.images[0].ocr_text
+    assert "员工编号" in re.sub(r"\s+", "", context.images[0].ocr_text)
     assert context.chunks
     assert any("7421" in chunk.text and "583.25" in chunk.text for chunk in context.chunks)
 
