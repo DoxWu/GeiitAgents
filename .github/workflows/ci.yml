@@ -263,6 +263,9 @@ jobs:
       - name: Run tests
         run: npm run test -- --run
 
+      - name: Verify native IPC frame isolation and serialization
+        run: node --test scripts/native-ipc-check.mjs
+
   # --------------------------------------------
   # 前端生产构建
   # --------------------------------------------

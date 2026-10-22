@@ -14,3 +14,9 @@ it('does not treat prose or an incomplete model response as a runnable page', ()
   expect(htmlFromArtifact('Here is the HTML: <html><body>unsafe</body></html>', [])).toBeNull();
   expect(htmlFromArtifact('```html\n<body>unfinished', [])).toBeNull();
 });
+
+it('bounds repeated image expansion before building the preview string', () => {
+  const image = { name: 'hero.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,' + 'A'.repeat(1_000_000), bytes: 750000 };
+  expect(htmlFromArtifact('```html\n' + '<img src="asset://image-1">'.repeat(9) + '\n```', [image])).toBeNull();
+  expect(htmlFromArtifact('```html\n<img src="asset://image-1">\n```', [image])).toContain(image.dataUrl);
+});

@@ -2,19 +2,68 @@ import { readVaultCiphertext } from './vault-qa.mjs';
 // Browser integration for encrypted office TaskRun/ToolRun/Artifact. Uses only synthetic fixtures and mocked generation.
 import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:net';
+import { parseArgs } from 'node:util';
 import path from 'node:path';
 import JSZip from 'jszip';
 import * as LegacyXLS from 'styled-exceljs';
 
-const output = path.resolve('../../.tools/document-task-qa');
-const baseUrl = process.env.DOCUMENT_TASK_BASE_URL ?? 'http://127.0.0.1:1423';
-const previewOrigin = new URL(baseUrl).origin;
+const { values } = parseArgs({ options: { 'native-exe': { type: 'string' }, output: { type: 'string' } } });
+const native = Boolean(values['native-exe']);
 const liveProvider = process.env.DOCUMENT_TASK_LIVE === '1';
+if (native && (process.platform !== 'win32' || liveProvider)) throw new Error('Native mode requires Windows and synthetic generation.');
+const root = path.resolve(values.output ?? (native ? '../../.tools/native-document-task-qa' : '../../.tools/document-task-qa'));
+await mkdir(root, { recursive: true });
+const output = native ? await mkdtemp(path.join(root, 'run-')) : root;
 await mkdir(output, { recursive: true });
-const context = await chromium.launchPersistentContext(path.join(output, 'browser-profile-' + Date.now()), { headless: true, acceptDownloads: true, viewport: { width: 1280, height: 900 } });
-const page = await context.newPage();
-for (const old of context.pages()) if (old !== page) await old.close();
+let app, browser, appExit, debugPort, binary;
+let context, page, baseUrl = process.env.DOCUMENT_TASK_BASE_URL ?? 'http://127.0.0.1:1423';
+async function close() {
+  if (!native) { await context?.close(); return; }
+  await browser?.close().catch(() => {});
+  if (app?.exitCode === null && app.pid) {
+    const killer = spawn('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    await once(killer, 'exit');
+  }
+  let timer;
+  try { if (appExit) await Promise.race([appExit, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Synthetic native host did not exit')), 10000); })]); }
+  finally { clearTimeout(timer); }
+}
+try {
+  if (native) {
+    const exe = path.resolve(values['native-exe']);
+    const bytes = await readFile(exe);
+    binary = { path: exe, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+    const probe = createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+    debugPort = probe.address().port; await new Promise(resolve => probe.close(resolve));
+    app = spawn(exe, [], { windowsHide: true, stdio: 'ignore', env: { ...process.env,
+      WEBVIEW2_USER_DATA_FOLDER: path.join(output, 'webview'),
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${debugPort}`,
+    } });
+    let launchError; app.on('error', error => { launchError = error; });
+    appExit = once(app, 'exit').catch(() => {});
+    await expect.poll(async () => {
+      if (launchError) throw launchError;
+      if (app.exitCode !== null) throw new Error('Synthetic native host exited before CDP connection');
+      try { browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { timeout: 500 }); return true; }
+      catch { return false; }
+    }, { timeout: 30000 }).toBe(true);
+    context = browser.contexts()[0]; page = context.pages()[0] ?? await context.waitForEvent('page');
+    await expect.poll(() => page.url(), { timeout: 15000 }).toMatch(/^https?:\/\/tauri\.localhost/);
+    baseUrl = new URL(page.url()).origin;
+    await page.setViewportSize({ width: 1280, height: 900 });
+  } else {
+    context = await chromium.launchPersistentContext(path.join(output, 'browser-profile-' + Date.now()), { headless: true, acceptDownloads: true, viewport: { width: 1280, height: 900 } });
+    page = await context.newPage();
+    for (const old of context.pages()) if (old !== page) await old.close();
+  }
+} catch (error) { await close(); throw error; }
+const previewOrigin = new URL(baseUrl).origin;
+const appCsp = (await readFile('security-headers.conf', 'utf8')).match(/add_header Content-Security-Policy "([^"]+)"/)[1];
+const previewCsp = (await readFile('preview-security-headers.conf', 'utf8')).match(/add_header Content-Security-Policy "([^"]+)"/)[1];
 const requests = [], sent = [], errors = [], externalAttempts = [];
 let releaseSecond;
 async function live(messages) {
@@ -38,11 +87,19 @@ page.on('pageerror', error => errors.push(error.message));
 await context.routeWebSocket('**/ws/notifications', () => {});
 await context.route('**/*', route => {
   const url = new URL(route.request().url());
+  if (native && url.hostname === 'geiit-preview.localhost') return route.continue();
   if (/^https?:$/.test(url.protocol) && url.origin !== previewOrigin) {
     externalAttempts.push(`${route.request().method()} ${url.origin}`);
     return route.abort();
   }
   return route.continue();
+});
+// vite preview has no response CSP; use the exact production policies so script
+// execution and sandbox checks also cover the deployed web build.
+if (!native) await context.route(url => url.origin === previewOrigin, async route => {
+  const response = await route.fetch();
+  const pathname = new URL(route.request().url()).pathname;
+  return route.fulfill({ response, headers: { ...response.headers(), 'content-security-policy': pathname === '/web-preview.html' ? previewCsp : appCsp } });
 });
 await context.route('**/api/v1/**', async route => {
   const endpoint = new URL(route.request().url()).pathname;
@@ -56,7 +113,7 @@ await context.route('**/api/v1/**', async route => {
     const cancellation = serialized.includes('不会被保存的测试文档');
     if (cancellation && completions > 1) await new Promise(resolve => { releaseSecond = resolve; });
     const result = liveProvider && completions === 1 ? await live(body.messages) : webDesign
-      ? { model: 'fixture-document-model', content: '```html\n<!doctype html><html><head><title>合成网页</title></head><body><main><h1>合成网页</h1><img src="asset://image-1" alt="sample.png"></main><script>fetch("https://external.invalid/track").catch(() => {})</script></body></html>\n```' }
+      ? { model: 'fixture-document-model', content: '```html\n<!doctype html><html><head><title>合成网页</title></head><body><main><h1>合成网页</h1><img src="asset://image-1" alt="sample.png"></main><script>document.body.dataset.animationReady="true";try{parent.document.body.dataset.previewEscaped="true"}catch{document.body.dataset.parentBlocked="true"}try{localStorage.setItem("preview-escape","bad")}catch{document.body.dataset.storageBlocked="true"}if(typeof window.__TAURI_INTERNALS__?.invoke === "function"){window.__TAURI_INTERNALS__.invoke("cancel_local_model",{requestId:"synthetic-preview-probe"}).then(()=>{document.body.dataset.bridgeBlocked="false"},()=>{document.body.dataset.bridgeBlocked="true"})}else{document.body.dataset.bridgeBlocked="true"}fetch("https://external.invalid/track").catch(() => {document.body.dataset.networkBlocked="true"});fetch("http://ipc.localhost/organizer_pick_directory",{method:"POST"}).catch(() => {document.body.dataset.ipcBlocked="true"});</script></body></html>\n```' }
       : { model: 'fixture-document-model', content: '```markdown\n# 项目周报\n\n## 进展\n\n登录模块已完成。\n\n## 风险\n\n- 安全评审待完成\n```' };
     const wire = 'data: ' + JSON.stringify({ type: 'chunk', content: result.content }) + '\n\n'
       + 'data: ' + JSON.stringify({ type: 'done', ...result, finish_reason: 'stop' }) + '\n\n';
@@ -69,6 +126,8 @@ try {
   await page.goto(new URL('/workbench', baseUrl).href);
   await page.evaluate(() => {
     localStorage.clear();
+    localStorage.setItem('kb_account_server', 'https://account.example.test/api/v1');
+    localStorage.setItem('kb_auth_server', 'https://account.example.test/api/v1');
     localStorage.setItem('kb_auth_tokens', JSON.stringify({ access_token: 'synthetic-task-session', refresh_token: 'synthetic-task-session' }));
     localStorage.setItem('kb_auth_user', JSON.stringify({ id: 202, username: 'task-fixture', email: 'task@example.test', is_active: true, is_superuser: false, user_type: 'regular', created_at: '' }));
   });
@@ -249,7 +308,7 @@ try {
   expect(requests.some(url => /\/assets\/ChartTasks-/.test(url))).toBe(false);
   await page.getByRole('tab', { name: '图表工具' }).click();
   const beforeCharts = sent.length;
-  const chartApiRequests = requests.filter(url => url.includes('/api/v1/')).length;
+  const chartModelRequests = requests.filter(url => url.includes('/private-models/account/complete')).length;
   await page.getByLabel('图表标题').fill('季度营收 <内部>');
   await page.getByLabel('单位（可选）').fill('万元');
   await page.getByLabel('CSV 数据').fill('季度,营收\n第一季度,=SUM(A1)');
@@ -279,7 +338,7 @@ try {
   expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   await writeFile(path.join(output, 'chart-line.png'), png);
   expect(sent.length).toBe(beforeCharts);
-  expect(requests.filter(url => url.includes('/api/v1/')).length).toBe(chartApiRequests);
+  expect(requests.filter(url => url.includes('/private-models/account/complete')).length).toBe(chartModelRequests);
   const chartEncrypted = await readVaultCiphertext(page);
   expect(chartEncrypted).not.toContain('季度营收'); expect(chartEncrypted).not.toContain('第一季度'); expect(chartEncrypted).not.toContain('<svg');
   await page.setViewportSize({ width: 390, height: 844 });
@@ -375,6 +434,9 @@ try {
   const webPreview = page.frameLocator('iframe[title="生成的网页预览"]');
   await expect(webPreview.getByRole('heading', { name: '合成网页' })).toBeVisible();
   await expect(webPreview.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  for (const name of ['animation-ready', 'parent-blocked', 'storage-blocked', 'bridge-blocked', 'network-blocked', 'ipc-blocked'])
+    await expect(webPreview.locator('body')).toHaveAttribute(`data-${name}`, 'true');
+  expect(await page.locator('body').getAttribute('data-preview-escaped')).toBeNull();
   const webPayload = sent.slice(webRequestsBefore).find(item => JSON.stringify(item.messages).includes('web-design-spec.json'));
   expect(webPayload).toBeTruthy();
   const webMessage = webPayload.messages[1].content;
@@ -408,6 +470,22 @@ try {
   expect(requests.filter(url => url.includes('/private-models/account/complete'))).toHaveLength(3);
   expect(sent).toHaveLength(3);
   expect(errors).toEqual([]);
-  await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic',
-  checks: ['explicit cloud consent', 'encrypted reusable reference save/load without reopening the source file', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLS/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'six scroll-animation examples including reveal, linked progress, parallax, sticky, snap, and horizontal scrolling', 'local image attachment and HTML embedding', 'sandboxed preview CSP and zero external requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
-} finally { releaseSecond?.(); await context.close(); }
+  await writeFile(path.join(output, liveProvider ? 'live-result.json' : 'result.json'), JSON.stringify({ passed: true, runtime: native ? 'Windows packaged WebView2' : 'Chromium with production response CSP', webview: browser?.version(), binary,
+  generation: liveProvider ? 'live provider through backend complete_private' : 'mocked', accountAuth: 'synthetic', errors, externalAttempts,
+  checks: ['explicit cloud consent', 'encrypted reusable reference save/load without reopening the source file', 'encrypted task/input/artifact', 'immutable edited versions', 'directional version diff', 'cancel restoration', 'restore as new version with provenance', 'identical restoration disabled', 'original markdown preserved', 'local DOCX/PPTX/XLS/XLSX exports with text-only formula safety', 'local CSV chart checks', 'safe SVG and PNG download', 'encrypted chart restore and reuse', 'web design layout/color/effect controls', 'six scroll-animation examples including reveal, linked progress, parallax, sticky, snap, and horizontal scrolling', 'local image attachment and HTML embedding', 'opaque sandbox denies parent/storage access and Tauri commands; preview CSP blocks network requests', 'reload/unlock version and export history', 'cancel without artifact', '390px layout'], docxLayout: 'native Word/LibreOffice pagination not validated', providerRequests: liveProvider ? 1 : 0 }, null, 2));
+  console.log(JSON.stringify({ passed: true, runtime: native ? 'WebView2' : 'Chromium', report: path.join(output, 'result.json') }));
+} catch (error) {
+  const preview = page.frames().find(frame => frame.url().includes('geiit-preview'));
+  if (preview) await writeFile(path.join(output, 'bridge-diagnostics.json'), JSON.stringify(await preview.evaluate(() => {
+    const inspect = (object, key) => {
+      const d = Object.getOwnPropertyDescriptor(object, key);
+      return { type: typeof object[key], writable: d?.writable, configurable: d?.configurable, getter: !!d?.get };
+    };
+    return { top: window.top === window, origin: location.origin,
+      bridges: Object.fromEntries(['__TAURI_INTERNALS__', '__TAURI__', 'ipc'].map(key => [key, inspect(window, key)])),
+      methods: Object.fromEntries(['invoke', 'ipc', 'postMessage'].map(key => [key, window.__TAURI_INTERNALS__ ? inspect(window.__TAURI_INTERNALS__, key) : null])) };
+  }), null, 2)).catch(() => {});
+  await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {});
+  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ passed: false, error: error.message, errors, externalAttempts }, null, 2));
+  throw error;
+} finally { releaseSecond?.(); await close(); }

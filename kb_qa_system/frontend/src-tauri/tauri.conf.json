@@ -12,7 +12,7 @@
   "app": {
     "windows": [{ "label": "main", "title": "GeiIt Workbench", "width": 1200, "height": 820, "minWidth": 680, "minHeight": 540, "dragDropEnabled": false }],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost https: wss: http://localhost:8000 http://127.0.0.1:8000 ws://localhost:8000 ws://127.0.0.1:8000; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost https: wss: http://localhost:8000 http://127.0.0.1:8000 ws://localhost:8000 ws://127.0.0.1:8000; object-src 'none'; frame-src 'self' http://geiit-preview.localhost geiit-preview://localhost; base-uri 'self'",
       "capabilities": ["workbench"]
     }
   },

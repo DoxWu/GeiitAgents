@@ -111,7 +111,8 @@ try {
   await page.getByRole('button', { name: '保存连接', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('连接已加密保存到本机。');
   await page.getByRole('button', { name: '测试连接' }).click();
-  await expect(page.getByText('文本调用：本次测试已验证')).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('模型文本调用成功，验证时间已加密保存。');
+  await expect(page.getByText(/^文本调用：最近测试通过/)).toBeVisible();
   }
 
   async function send(prompt) {
@@ -129,6 +130,8 @@ try {
   streams.get('Task A').response.end(data('，甲已完成。', 'stop'));
   await expect(page.getByText('甲：你好🌏，甲已完成。', { exact: true })).toHaveCount(0);
   streams.get('Task B').response.end(data('，乙已完成。') + 'data: [DONE]\r\n\r\n');
+  // The completed message is saved before the transient stream is removed.
+  await expect(page.getByRole('article', { name: '流式回答' })).toHaveCount(0);
   await expect(page.getByText('乙：进行中，乙已完成。', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Task A', exact: true }).click();
   await expect(page.getByText('甲：你好🌏，甲已完成。', { exact: true })).toBeVisible();

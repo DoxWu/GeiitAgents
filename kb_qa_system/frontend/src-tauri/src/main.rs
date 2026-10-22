@@ -7,6 +7,7 @@ use tokio::sync::oneshot;
 
 mod local_stream;
 mod local_tools;
+mod web_preview;
 #[cfg(windows)]
 mod organizer;
 
@@ -207,7 +208,9 @@ async fn complete_local_tools(request_id: String, base_url: String, api_key: Str
 }
 
 fn main() {
-    let builder = tauri::Builder::default().manage(Requests::default());
+    let builder = tauri::Builder::default().manage(Requests::default())
+        .invoke_system(include_str!("ipc-init.js"))
+        .register_uri_scheme_protocol("geiit-preview", |_context, request| web_preview::response(request));
     #[cfg(windows)]
     let builder = builder.manage(organizer::Directories::default()).invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model, organizer::organizer_pick_directory, organizer::organizer_release_directory, organizer::organizer_access]);
     #[cfg(not(windows))]

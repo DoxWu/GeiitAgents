@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/authStore';
 import { readWorkImages } from '@/services/workbenchImages';
 import type { WorkImage } from '@/types/workbench';
 import { htmlFromArtifact } from './webDesignerOutput';
+import { WebPagePreview } from './WebPagePreview';
 
 const layouts = [
   { id: 'editorial', label: '杂志纵向', description: '大标题、主视觉与章节内容' },
@@ -150,7 +151,7 @@ export function WebDesigner() {
       </form>
       <section className="grid min-w-0 content-start gap-3" aria-label="网页预览与代码">
         <div className="flex items-center gap-2 border-b border-line pb-2"><h2 className="min-w-0 flex-1 text-sm font-semibold">{generatedHtml ? '生成结果预览' : '设计预览'}</h2>{generatedHtml && <button type="button" className="work-command" onClick={() => downloadHtml(generatedHtml, `${pageName.replace(/[<>:"/\\|?*]/g, '_') || 'web-page'}.html`)}><Download size={15} />下载 HTML</button>}</div>
-        {generatedHtml ? <iframe key={task?.id} title="生成的网页预览" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={generatedHtml} className="h-[72vh] min-h-[520px] w-full border border-line bg-white" /> :
+        {generatedHtml ? <WebPagePreview key={task?.id} html={generatedHtml} /> :
           <div style={palette} className="min-h-[520px] overflow-hidden border border-line p-5 text-[var(--web-text)] sm:p-8" data-layout={layout}>
             <header className="mb-10 flex items-center justify-between border-b border-[var(--web-primary)] pb-3" style={{ color: 'var(--web-primary)' }}><strong>{pageName || '网页名称'}</strong><span className="text-xs">介绍 · 服务 · 联系</span></header>
             <div className={layout === 'split' ? 'grid gap-8 md:grid-cols-2 md:items-center' : layout === 'dashboard' ? 'grid gap-3 sm:grid-cols-2' : 'grid gap-6'}>
