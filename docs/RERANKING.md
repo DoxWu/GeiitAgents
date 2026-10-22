@@ -25,4 +25,8 @@ Qwen 重排使用现有 `providers.yaml` 中第一项主 LLM 的 API Key 和 API
 
 这次是服务层合成资料联调，关闭了 query rewrite、intent detection、conflict detection 和原有 BGE 重排，以限定检查范围；没有覆盖 HTTP 上传/登录、Celery、旧目标库跨维度迁移或业务回答质量。另一个真实 pgvector 回归验证同维度、`embedding_space=NULL` 的旧片段在显式重新生成向量后可检索，不代表已有 1536 维列会自动变成 1024 维。
 
+## 2026-10-22 供应商直连复验
+
+使用后端当前 provider 配置，向 `qwen3.7-text-rerank` 发送一次合成问题和两段合成正文。接口返回两个有效排序分数，相关候选排首位，原始检索分数保留。此次只验重排端点，没有连接 pgvector 或执行完整 RAG，也未发送邮件；逐项脱敏状态保存在 `.tools/provider-current-20261022/result.json`。
+
 2026-10-21 新增[云端向量离线迁移与回退](CLOUD_EMBEDDING_MIGRATION.md)：支持在停写副本中重建旧维度分块，事务切换并保留精确回退窗口；隔离合成 1536→1024 演练和真实主 Embedding 单条材料闭环通过。尚未迁移用户目标库，也未因此扩大上述 RAG 业务质量验收范围。
