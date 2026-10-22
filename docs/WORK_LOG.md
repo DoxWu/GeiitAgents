@@ -4,19 +4,19 @@
 
 ## 当前阶段
 
-**2026-10-22 dev.70 网页预览与原生业务：** 修复生成 HTML 的 `srcDoc` 继承 CSP 导致动画脚本无法运行的问题；Web 独立静态入口和桌面固定协议使用独立沙箱 CSP，主应用仍禁止内联脚本。WebView2 子框架仍可能有只读 Tauri 对象，自定义 IPC 仅在顶层安装 invoke key，子框架拒绝桌面命令。图片占位符展开前累计限制。最终前端 **137 文件/1303 项**、Node IPC **3 项**、Rust **22 项**、lint/类型检查、Web 与 Windows NSIS 构建通过；浏览器生产 CSP 和真实 dev.70 WebView2 的完整文档任务、九个原生流式请求均通过。构建未签名/未安装/未发布；旧 CI `39723490636` 只覆盖 `1802bdb`，不覆盖这些新改动。详见 [工作台原生验收](NATIVE_WORKBENCH_ACCEPTANCE_2026-10-22.md)。本轮测试进程及预览服务已退出，Docker 未启动，无新增镜像/容器待清理。
+**2026-10-22 dev.70 网页预览与原生业务：** 修复生成 HTML 的 `srcDoc` 继承 CSP 导致动画脚本无法运行的问题；Web 独立静态入口和桌面固定协议使用独立沙箱 CSP，主应用仍禁止内联脚本。WebView2 子框架仍可能有只读 Tauri 对象，自定义 IPC 仅在顶层安装 invoke key，子框架拒绝桌面命令。图片占位符展开前累计限制。最终前端 **137 文件/1303 项**、Node IPC **3 项**、Rust **22 项**、lint/类型检查、Web 与 Windows NSIS 构建通过；浏览器生产 CSP 和真实 dev.70 WebView2 的完整文档任务、九个原生流式请求均通过。CI `39732223721`/`39733791282` 已覆盖当前代码和报告归档修正，各七个 job 全部成功。构建未签名/未安装/未发布；原生证据见 [工作台原生验收](NATIVE_WORKBENCH_ACCEPTANCE_2026-10-22.md)。测试进程及预览服务已退出，后续本机 Nginx 合成验收镜像/容器已删、Docker 已停止；没有新增待清理资源。
 
 **2026-10-22 实际生产 Nginx 验收：** 在本机 Docker 以当前工作树构建未发布临时前端镜像，Nginx 实际响应的主应用 CSP/preview CSP、MIME、缓存、nosniff、运行配置、source map 404 均通过；Chromium 完整文档任务直接使用 Nginx 返回头通过，生成脚本正常运行且没有外网尝试。新增响应检查器 3 项 unittest 与 context 边界回归通过。首次构建发现 `src-tauri/target*` 导致 context 超过 2 GB；中止后补充 Docker 忽略项并实测 context **95.33 MB**，生产构建完成。镜像及唯一合成验收容器已按本轮 tag/name 删除，Docker Desktop 停回开始前状态；原有三张镜像和四个卷未变，没有全局 prune。报告在 `.tools/frontend-preview-qa-20261022/`，本机结果不替代 GitHub 新 SHA 的 Trivy/Redis/后端 CI。
 
 **2026-10-22 原生容量与进程恢复：** 本轮新增 `verify-native-vault-recovery.mjs`，在现有 dev.69/WebView2 155.0.4283.62 全新 profile 中验证 500 记录、100 初始草稿、五条长会话（16,662,903 字节明文快照）和实际加密备份下载（22,190,650 字节）。正式写入配额错误后草稿/旧记录保留，重试不重复建记录；真实应用最终事务未提交时强杀宿主及 WebView2 子树，重启完整恢复原快照与草稿；保存成功后第二次强杀重启密文逐字节不变。最终四次启动、五项检查通过，无页面异常/外网尝试/测试进程残留。没有重建或安装应用；不是 8 GB、物理断电、实际磁盘满、安装器中断或目标部署验收。详见 [原生恢复验收](NATIVE_VAULT_RECOVERY_ACCEPTANCE_2026-10-22.md)。
 
-**2026-10-22 Git 同步状态：** dev.70 修复、生产 Nginx CI 门禁及验收文档共六个提交已通过 GitHub Git Data API 同步至开发分支 `d0ec2376d61f4261d8250d4d91fd0912add90840`；每个 blob/tree/commit SHA 均与本地一致，更新分支使用 `force:false`，远端与本地跟踪引用一致。普通 Git smart HTTP 此前持续超时；没有覆盖远端独有历史。新 CI `39732223721` 对该 SHA 七个 job 全部通过；旧 main 仍 `ea4917e`，没有发布或部署。收尾发现响应检查报告上传路径被当作字面变量，正在修正并另跑验证。
+**2026-10-22 Git 同步状态：** dev.70 修复、生产 Nginx CI 门禁、验收文档及报告归档修正已同步至开发分支 `d1f91e9206cf8360375e59d88a7ffd22cc032902`；远端与本地跟踪引用一致，两个新 SHA 的 CI `39732223721`/`39733791282` 均七个 job 通过。报告路径修正 CI 已将前端验收 JSON 归档并验证容器清理。普通 Git smart HTTP 此前持续超时，使用核验 blob/tree/commit 对象 SHA 的 GitHub API `force:false` 更新；旧 main 仍 `ea4917e`，没有发布或部署。
 
 **2026-10-22 许可证清单修正：** 补充无具体 classifier 的长许可证声明，以 CycloneDX `license.text` 保留完整 UTF-8 原文和来源，不推断 SPDX 标识，不覆盖已有许可证。本机 SBOM 回归 11 项、连同 Trivy 门禁共 19 项通过；离线 160 包复放/格式验证通过。新 CI `39723490636` 已实际运行 11 项回归并重新生成 160 包清单，下载的 CycloneDX 1.4 校验通过；tiktoken 1078 字节完整声明与 publisher inventory 相同，unknown 实际从 6 项降为 5 项 CUDA/NVIDIA 空元数据。分发许可证审阅仍开放。
 
 **2026-10-22 本次状态：** A12 selected-30 已获用户定性人工验收通过，不推算逐题分数或准确率；完整 OCR/Trivy/Redis/恢复 CI 结果见下段。本轮构建 `0.1.0-dev.69` 未签名 Windows 开发包，在隔离目录用真实 NSIS 完成 dev.68 安装→dev.69 升级→dev.68 回退、共有格式旧库/旧备份迁移和卸载；七项 WebView2 跨版本数据检查、回退后独立读库通过。临时安装目录已清理，原 dev.68 程序、注册项和两条快捷方式已还原。新增脚本语法/ESLint、TypeScript/Vite/Rust/NSIS 构建通过；没有重跑后端/前端全量。安装中断、独有格式降级和物理断电仍未验证。详见 [Windows 原生升级验收](NATIVE_UPGRADE_ACCEPTANCE_2026-10-22.md)。没有线上部署、真实模型/邮件/数据库请求或本机 Docker 资源创建。
 
-**2026-10-22 最新完整成功 CI：** `39723490636` 对 `1802bdb` 七个 job 全部成功：npm/Python/Windows Rust 依赖审计、后端 **895 passed/7 skipped/2 warnings，coverage 54%**、前端 **136 文件/1300 项**、构建、LangChain 合约、secret scan、生产镜像扫描与验收均通过；镜像恢复/维护/联合恢复/迁移/OCR **126 passed/1 skipped/5 warnings**，六项 OCR 实际执行通过，真实 Redis 撤销/停用/客户端退出三路也通过。本次 Trivy JSON 已下载解析：后端 76 项 HIGH/CRITICAL（75 HIGH、1 CRITICAL），全部无修复版本，前端 0；Python 160 包清单剩 5 项 CUDA/NVIDIA 空元数据，tiktoken 长声明已保留。完整日志/报告和结构化核验位于 `.tools/ci-39723490636/`。日志确认按本 SHA 删除两张测试镜像及 PG/Redis 服务容器和网络；这不是发布或部署。
+**2026-10-22 最新完整成功 CI：** `39733791282` 对 `d1f91e9` 七个 job 全部成功：npm/Python/Windows Rust 依赖审计、后端 **895 passed/7 skipped/2 warnings，coverage 54%**、前端 **137 文件/1303 项**、构建、LangChain 合约、secret scan、生产镜像扫描与验收均通过；镜像恢复/维护/联合恢复/迁移/OCR **126 passed/1 skipped/5 warnings**，六项 OCR、真实 Redis 撤销/停用/客户端退出三路均实际通过。下载并结构化核对本 SHA Trivy JSON：后端 **75 HIGH + 1 CRITICAL，均无 FixedVersion**，前端 0；响应验收 JSON 已实际归档、通过且临时容器已删除。Python 160 包 CycloneDX 1.4 校验/许可原文复核来自前一 `39732223721`（`d0ec2376`）artifact，剩 5 项 CUDA/NVIDIA 空元数据。两轮报告、日志及核验分别位于 `.tools/ci-39732223721/`、`.tools/ci-39733791282/`。日志确认按 SHA 删除两张镜像及 PG/Redis 服务容器和网络；这不是发布或部署。
 
 **2026-10-21 A28 配置与验收修正：** 对齐验收脚本、业务 SMTP 与独立运维 SMTP 的密钥回退优先级；HTTP 接收只认 2xx 加有效邮件 ID，重定向不再误报成功；工具探测核对唯一调用及固定参数，向量探测拒绝多条、零、非有限和布尔向量。定向回归 **108 passed/5 个 PG live 排除/1 warning**。代码 `50c57a1` 与工作记录 `5a37d94` 已普通推送；GitHub API 核对开发分支为 `5a37d94`、旧 main 为 `ea4917e`。用户已确认收到的 SMTP 验收邮件不重发；本批没有新发邮件或部署。
 
@@ -24,7 +24,7 @@
 
 **2026-10-21 A12 运行时保护：** 新增有限词法规则识别常见个人症状和药品剂型/疗效查询；命中者使用原问题直接检索，避免无检索意图分流及 Query 改写绕过边界。个人问题命中历史病例/诊疗问答或检索为空、药品疗效问题未完整匹配所问名称时，在冲突分析和答复 LLM 之前返回固定答复。病例引用使用实际命中编号，资料缺失不硬配来源；流式与非流式保持相同答复和零答复模型指标。一般指南、非医疗问题和明确历史事实保留正常生成。规则不建立个体适用性或临床正确性，未覆盖的问法继续走现有提示词。本批验证结果与 Git 同步状态见末尾；没有重新调用真实模型/Embedding/邮件，没有启动 Docker 或部署。
 
-**2026-10-22 当前未完成与下一步：** A12 selected-30 定性人工验收通过，后续企业金标和医疗/品牌误拒漏拒作为质量跟踪，不要求本批补分。dev.70 完整文档/网页任务、原生流式和当前前端生产 Nginx 镜像任务已通过；本批加上的 image-response CI 门禁/单测及 Docker context 排除还要提交、同步，之后按新 SHA 等待完整后端/前端/Trivy/Redis/清理 CI。A19 安装器中断、独有格式降级、签名和正式更新仍开放。A13 目标卷/Secret/队列、RPO/RTO、回滚、真实 8 GB/磁盘满/物理断电仍未验；不以目标部署准备阻塞本地开发。A28 用户确认收件的 SMTP 邮件不重发，Resend HTTP（若采用）、目标投递链和运营/区域/保留/跨境事实待部署者核实。目标向量库迁移、Safari/移动真机、其他原生业务和复杂模板、后端无修复漏洞及空许可元数据/分发义务继续开放。本机测试树/容器/image 已清理、Docker 停止，无全局 prune 或线上操作。
+**2026-10-22 当前未完成与下一步：** A12 selected-30 定性人工验收通过，后续企业金标和医疗/品牌误拒漏拒作为质量跟踪，不要求本批补分。dev.70 完整文档/网页任务、原生流式、生产 Nginx 验收与响应门禁、Docker context 排除均已提交并通过两轮完整 CI，报告归档及清理已核验。A19 安装器中断、独有格式降级、签名和正式更新仍开放。A13 目标卷/Secret/队列、RPO/RTO、回滚、真实 8 GB/磁盘满/物理断电仍未验；不以目标部署准备阻塞本地开发。A28 用户确认收件的 SMTP 邮件不重发，Resend HTTP（若采用）、目标投递链和运营/区域/保留/跨境事实待部署者核实。目标向量库迁移、Safari/移动真机、其他原生业务和复杂模板、后端无修复漏洞及空许可元数据/分发义务继续开放。本机测试树/容器/image 已清理、Docker 停止，无全局 prune 或线上操作。
 
 **2026-10-22 A28 合成供应商联调：** 使用项目后端 `.env` 及当前供应商配置，对主阿里云 MAAS LLM、DeepSeek 备用 LLM、主 Embedding 和主端点重排各做一次禁重试直接请求。主/备聊天与工具调用均通过，Embedding 返回有限非零 1024 维向量，`qwen3.7-text-rerank` 对两段合成文本返回完整分数、将相关段排前并保留检索分数，六项全通过；模型名、状态和耗时记录在忽略目录 `.tools/provider-current-20261022/result.json`，不含密钥或正文。该脚本未发送邮件、访问 `DATABASE_URL`、运行完整 RAG 或使用业务资料；旧供应商验收脚本 `--live` 会连带发信和查数据库，因此没有调用。此前 SMTP 单封邮件用户已确认收到，本轮未重发。该次配置实际区域、供应商数据处理/保留、目标部署投递链仍须部署者核实。
 
@@ -1348,3 +1348,10 @@
 - 下载并结构化核对本次 Trivy JSON：后端 **75 HIGH + 1 CRITICAL**，全部无 FixedVersion；前端 **0**。本次 Python 160 包 CycloneDX 1.4 校验通过，tiktoken 原文与发布方 inventory 一致，5 项 CUDA/NVIDIA 空许可元数据及分发义务仍开放。证据在忽略目录 `.tools/ci-39732223721/`，不是历史 CI 复用结论。
 - 新 Nginx 响应检查在 CI 实际成功，日志 JSON 确认严格主应用 CSP、独立 opaque preview CSP、运行配置、source map 404 与 `containerRemoved:true`；但 upload-artifact 的输入不会展开 `$RUNNER_TEMP`，本次 artifact 只有扫描 JSON，没有该检查报告。将上传路径改为 Actions 的 `runner.temp` 表达式；该修正未改变应用功能，新 SHA 的归档验证仍待运行。首次下载全部 artifact 遇 Docker build record 的 ZIP 格式错误，随后按名称下载 SBOM 成功；两份 Trivy JSON 与日志完整，未把下载错误写成扫描失败。
 - 清理日志确认按本 SHA 删除两张临时镜像、后端 PostgreSQL/Redis 和容器 job 的 PostgreSQL 容器及两个 job 网络，预览容器精确删除。本机 Docker 服务仍 Stopped，本轮未创建本机 Docker 资源、未全局 prune、发邮件、调用真实供应商/目标数据库或操作线上部署；原有未跟踪文件保留。其余部署恢复/隐私、目标库迁移、真机/低配/断电/签名更新、无修复漏洞和分发许可仍开放。
+
+### 2026-10-22：CI 报告归档修正验收完成
+
+- 修改 `.github/workflows/ci.yml` 中 artifact 路径，使用 `${{ runner.temp }}` 展开生产前端响应验收 JSON；提交 `d1f91e9` 已通过 GitHub API non-force fast-forward 同步至 `develop/geiit-agents`。
+- CI `39733791282` 对 SHA `d1f91e9206cf8360375e59d88a7ffd22cc032902` 七个 job 全部 success。前端响应 JSON 已从 artifact 实际下载，`passed:true`，检查严格主应用 CSP、独立 preview CSP/sandbox、runtime config/source-map 404，且 `containerRemoved:true`。backend 895 passed/7 skipped/2 warnings，frontend 137 文件/1303 项，生产镜像恢复/迁移/OCR 126 passed/1 skipped/5 warnings，六项 OCR 实际通过。依赖/SBOM、secret scan、LangChain、Trivy、镜像构建与 fixable 漏洞门禁均通过。
+- 两轮 Trivy artifact 分别解析均为 backend 75 HIGH + 1 CRITICAL、全部无 FixedVersion，frontend 0；最新 `39733791282` 的扫描/响应报告、六项 OCR、真实 Redis 三路及五条服务清理命令已由本机脚本结构化核验，报告 `.tools/ci-39733791282/verification.json`。Python 160 包 CycloneDX 1.4 校验与 tiktoken 声明复核来自 `39732223721` artifact，5 项 CUDA/NVIDIA 空许可元数据仍待核实。两轮日志均确认按 SHA 删除临时镜像及 PG/Redis 服务容器/网络；本机 Docker 为 Stopped。A12 人工 selected-30 定性验收通过、逐题分数为空。A13/目标部署、目标向量库迁移、邮件/隐私运营事实、8 GB/断电/真机、许可证审阅和无修复容器漏洞跟踪未完成；没有生产部署或邮件/供应商/目标数据库调用。
+- 文档矩阵与整改跟踪已同步最新 CI/归档状态。只提交工作记录/矩阵/整改文档，不把用户原有 `.vscode/`、`docs/PROJECT_OVERVIEW.md`、`output/`、`tmp/` 纳入版本。

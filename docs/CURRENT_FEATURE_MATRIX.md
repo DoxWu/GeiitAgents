@@ -2,9 +2,9 @@
 
 更新日期：2026-10-22。本矩阵按当前路由、界面组件、服务实现和测试入口整理。代码存在或本地测试通过，不等于目标部署已启用，也不等于真实供应商、数据恢复或业务质量验收通过。
 
-本轮 dev.70 预览/IPC 修复后的前端 **137 文件/1303 项**、Node IPC **3 项**、Rust **22 项**及 lint/类型/Web/Windows NSIS 构建通过。浏览器生产 CSP 与 dev.70 WebView2 的完整任务、九个原生流式请求通过，详见 [工作台原生验收](NATIVE_WORKBENCH_ACCEPTANCE_2026-10-22.md)。下表 CI `39723490636` 对应此前 `1802bdb`，不覆盖本轮新代码。
+本轮 dev.70 预览/IPC 修复后的前端 **137 文件/1303 项**、Node IPC **3 项**、Rust **22 项**及 lint/类型/Web/Windows NSIS 构建通过。浏览器生产 CSP 与 dev.70 WebView2 的完整任务、九个原生流式请求通过，详见 [工作台原生验收](NATIVE_WORKBENCH_ACCEPTANCE_2026-10-22.md)。CI `39732223721` 对 SHA `d0ec2376` 和 artifact 路径修正 SHA `d1f91e9` 的 CI `39733791282` 均七个 job 全部通过。
 
-本轮另外实际构建当前工作树的生产前端 Docker 镜像，并在运行镜像中经 Nginx 验证主应用/网页预览的 CSP、安全头、静态路由和运行配置；完整合成浏览器任务直接接收真实 Nginx CSP 通过。新增验证门禁将加入下次 GitHub CI；本地镜像及唯一测试容器已清除。Rust `target*` 排除规则把本机 context 从首次发现的 2.24 GB 降至 **95.33 MB**，本地边界检查和 CI 单测通过。
+本轮另外实际构建当前工作树的生产前端 Docker 镜像，并在运行镜像中经 Nginx 验证主应用/网页预览的 CSP、安全头、静态路由和运行配置；完整合成浏览器任务直接接收真实 Nginx CSP 通过。CI `39732223721` 也在实际镜像中通过同一响应检查；修正为 `${{ runner.temp }}` 的 artifact 路径后，CI `39733791282` 已将 JSON 实际归档，内容确认通过且临时容器已删除。Rust `target*` 排除规则把本机 context 从首次发现的 2.24 GB 降至 **95.33 MB**，本地边界检查和 CI 单测通过。
 
 | 功能域 | 用户入口与实现 | 当前验证证据 | 限制与未验收项 |
 | --- | --- | --- | --- |
@@ -24,12 +24,12 @@
 | 笔记、待办与提醒 | 工作台「笔记与待办」；`PersonalItems.tsx`、`ServerReminders.tsx`；后端 `personal.py` | `test_personal.py`；历史单封合成 SMTP 已由用户确认收件；2026-10-21 新镜像真实 Beat→Redis→prefork Worker→回环认证 SMTP 通过，一次投递、重复两条消息不重发 | 隔离合成链不代表 Resend HTTP、真实收件箱或目标部署调度/持久卷/重启验收；本批未向外部发信。 |
 | 本机文件整理 | 工作台「文件整理」；`FileOrganizer.tsx`、文件历史与 Rust 文件桥 | `FileOrganizer.test.tsx`、`FileHistory.test.tsx`、文本编辑/批量编辑测试 | 仅在用户选择和授权的目录执行受限操作；跨卷、进程中断、原生 WebView2 和低配设备需目标机器验收。 |
 | 可视化工作流 | 工作台任务中的工作流页；`Workflows.tsx`、`workflows/`、加密任务存储 | `Workflows.test.tsx`、workflow 定义/布局/便携备份及全量前端回归；2026-10-21 真实主模型两轮合成联调通过故障重载/授权续跑、复用上轮和停止标记 | 支持 DAG、条件、触发和最多 5 轮有界模型循环；每个工作流模型请求预算最多 30 次，成功轮次可加密检查点续跑。没有后台常驻执行或任意插件；多进程及生产调度长时运行仍待验。 |
-| 监控、部署与供应商 | 后端 `/health`、`/ready`、可配置 `/metrics`；部署模板和 GitHub Actions | CI `39723490636` 对 `1802bdb` 七个 job 全部成功：backend 895 passed/7 skipped，frontend 136 文件/1300 项，生产镜像 PG16 恢复/维护/联合恢复/向量迁移/OCR 126 passed/1 skipped，六项 OCR 均实际通过。npm/Python/Rust audit、160 项 Python SBOM、镜像构建/扫描和真实 Redis 三路通过。Python 长声明修正经 11 项回归及本次 artifact 的 CycloneDX 1.4 校验通过，tiktoken 全文保留。2026-10-22 `.env` 真实合成主备 LLM/工具、1024 维 Embedding 和 Qwen 重排六项另有通过记录，CI 不调用真实供应商 | 本次 Trivy JSON 核对后端 76 项 HIGH/CRITICAL（75 HIGH、1 CRITICAL），全部无修复版本，前端 0。Python SBOM 剩 5 项 CUDA/NVIDIA 空许可元数据，分发义务仍需审阅。目标库迁移、Resend HTTP（若采用）/目标邮件链及部署隐私待验。PG 客户端须匹配源库/目标库版本。CI 日志确认删除本 SHA 两张镜像及 PG/Redis 容器/网络；没有部署。 |
+| 监控、部署与供应商 | 后端 `/health`、`/ready`、可配置 `/metrics`；部署模板和 GitHub Actions | CI `39732223721` 对 `d0ec2376` 七个 job 全部成功：backend 895 passed/7 skipped/2 warnings，frontend 137 文件/1303 项，生产镜像 PG16 恢复/维护/联合恢复/向量迁移/OCR 126 passed/1 skipped/5 warnings，六项 OCR 均实际通过。artifact 路径修正提交 `d1f91e9` 的 CI `39733791282` 对应七个 job 也全部成功；生产响应验收 JSON 已包含于 artifact 并确认通过、临时容器已删除。npm/Python/Windows Rust audit、160 项 Python SBOM、镜像构建/扫描和真实 Redis 三路通过。2026-10-22 `.env` 真实合成主备 LLM/工具、1024 维 Embedding 和 Qwen 重排六项另有通过记录，CI 不调用真实供应商 | `39732223721` Trivy JSON 核对后端 76 项 HIGH/CRITICAL（75 HIGH、1 CRITICAL），全部无修复版本，前端 0；artifact 门禁通过不代表镜像零漏洞。Python SBOM 剩 5 项 CUDA/NVIDIA 空许可元数据，分发义务仍需审阅。目标库迁移、Resend HTTP（若采用）/目标邮件链及部署隐私待验。PG 客户端须匹配源库/目标库版本。CI 按 SHA 删除两张临时镜像及 PG/Redis 容器/网络；没有部署。 |
 | FAQ 答案缓存 | 无用户入口或问答读写路径；旧 `FAQ_CACHE_TTL` 配置不启用功能 | 代码接线检查；管理员操作文档已明确未接入 | 未实现，不应描述为命中缓存、减少模型调用或可用功能。 |
 
 ## 证据口径
 
-2026-10-22 许可证清单补正已由 CI `39723490636` 验证：长文本声明附来源保留，11 项回归与本次 160 包 artifact 的 CycloneDX 1.4 校验通过，tiktoken 全文可精确还原，剩余 5 项 CUDA/NVIDIA 空元数据。旧 CI 六项 unknown 是其历史结果；分发义务审阅仍未完成。Windows 原生容量/恢复和升级证据来自对应本机实验，Linux CI 不代替原生验收。
+2026-10-22 许可证清单补正由 CI `39732223721` 对应的 160 包 artifact 再次验证：CycloneDX 1.4 校验通过，tiktoken 全文可精确还原，剩余 5 项 CUDA/NVIDIA 空元数据。当前 Trivy 报告和结构化核验位于忽略目录 `.tools/ci-39732223721/`；artifact 路径修正后的生产响应报告位于 `.tools/ci-39733791282/container-reports/`，并已确认通过。分发义务审阅仍未完成。Windows 原生容量/恢复和升级证据来自对应本机实验，Linux CI 不代替原生验收。
 
 - “测试通过”只适用于工作记录中标注的日期、命令和隔离条件；历史全量测试不代表本次重跑。
 - 浏览器模拟模型、SQLite/合成数据及隔离 PostgreSQL 不能替代真实 provider、生产数据库、Redis 部署、真实收件箱或桌面 WebView2 验收。
