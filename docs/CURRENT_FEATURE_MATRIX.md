@@ -25,6 +25,8 @@
 
 ## 证据口径
 
+2026-10-22 许可证清单补正：长文本声明现可附来源保留；本机 SBOM 11 项回归及 160 包离线复放/CycloneDX 1.4 校验通过，tiktoken 不再被误标 unknown，剩余 5 项 CUDA/NVIDIA 空元数据。上表六项 unknown 是原 CI 原始结果，修正尚待新 CI；分发义务审阅仍未完成。
+
 - “测试通过”只适用于工作记录中标注的日期、命令和隔离条件；历史全量测试不代表本次重跑。
 - 浏览器模拟模型、SQLite/合成数据及隔离 PostgreSQL 不能替代真实 provider、生产数据库、Redis 部署、真实收件箱或桌面 WebView2 验收。
 - 逐项整改状态与最新待办以 [修复跟踪](REVIEW_REMEDIATION_2026-10-10.md) 和 [工作记录](WORK_LOG.md) 为准；网页/Office 的格式边界见 [AI 办公工作台说明](AI_OFFICE_WORKBENCH.md)。

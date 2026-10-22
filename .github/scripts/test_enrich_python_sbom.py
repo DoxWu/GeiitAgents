@@ -1,3 +1,4 @@
+import base64
 import copy
 import unittest
 
@@ -75,6 +76,38 @@ class PythonSbomTests(unittest.TestCase):
         )
         self.assertNotIn("licenses", doc["components"][0])
         self.assertEqual(report["unknown_licenses"], ["pkg:pypi/example-package@1.2.3"])
+
+    def test_long_unclassified_terms_are_preserved_as_a_publisher_declaration(self):
+        for classifiers in ([], ["License :: OSI Approved"]):
+            with self.subTest(classifiers=classifiers):
+                doc = self.document()
+                terms = "  Publisher terms / \u53d1\u5e03\u8005\u6761\u6b3e\r\n" * 100
+                report = enrich(
+                    doc, self.loader(license=terms, classifiers=classifiers)
+                )
+                license = doc["components"][0]["licenses"][0]["license"]
+                self.assertEqual(license["name"], "Publisher license declaration")
+                self.assertNotIn("id", license)
+                self.assertEqual(
+                    license["url"], metadata_url("Example_Package", "1.2.3")
+                )
+                self.assertEqual(license["text"]["contentType"], "text/plain")
+                self.assertEqual(license["text"]["encoding"], "base64")
+                self.assertEqual(
+                    base64.b64decode(license["text"]["content"], validate=True).decode(
+                        "utf-8"
+                    ),
+                    terms,
+                )
+                self.assertEqual(report["unknown_licenses"], [])
+                self.assertEqual(report["components"][0]["status"], "declared")
+                self.assertEqual(report["components"][0]["license"], terms)
+
+    def test_existing_license_is_not_replaced_by_long_publisher_terms(self):
+        doc = self.document()
+        doc["components"][0]["licenses"] = [{"expression": "MIT"}]
+        enrich(doc, self.loader(license="Publisher terms " * 100))
+        self.assertEqual(doc["components"][0]["licenses"], [{"expression": "MIT"}])
 
     def test_existing_license_is_preserved(self):
         doc = self.document()

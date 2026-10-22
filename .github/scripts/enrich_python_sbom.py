@@ -5,6 +5,7 @@ installed or executed. Unknown licenses remain explicit in the sidecar inventory
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import re
@@ -149,6 +150,24 @@ def enrich(document, loader=fetch):
                 for value in classifiers
                 if value.count(" :: ") >= 2
             ]
+            if not choices and meaningful(legacy):
+                # Full publisher terms are a declaration too. Preserve them
+                # without inferring an SPDX identifier from snippets of text.
+                choices = [
+                    {
+                        "license": {
+                            "name": "Publisher license declaration",
+                            "text": {
+                                "contentType": "text/plain",
+                                "encoding": "base64",
+                                "content": base64.b64encode(
+                                    legacy.encode("utf-8")
+                                ).decode("ascii"),
+                            },
+                            "url": url,
+                        }
+                    }
+                ]
         # Do not erase a license already present in the original SBOM.
         if not component.get("licenses") and choices:
             component["licenses"] = choices
