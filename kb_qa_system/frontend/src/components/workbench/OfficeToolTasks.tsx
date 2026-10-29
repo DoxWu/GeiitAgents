@@ -1,6 +1,7 @@
 import { TaskNavigation } from './TaskNavigation';
 import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
+import { AgentSequence } from './AgentSequence';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { useAuthStore } from '@/store/authStore';
 import type { OfficeToolInput } from '@/officeTasks/toolRunner';
@@ -80,6 +81,7 @@ export function OfficeToolTasks() {
     </aside>
     <div className="min-h-0 min-w-0 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-4xl">
       <h1 className="text-xl font-semibold">多步骤办公助手</h1>
+      <AgentSequence />
       <p className="mt-2 text-sm text-ink-secondary">让模型按目标读取本次 CSV/XLSX 表格、生成图表和 Markdown 文档。文档可分别编辑、比较和恢复版本，所有成果保存到本机加密库。需要模型支持工具调用；最多 6 轮模型请求、8 次工具执行，可随时停止。</p>
       <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
       {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}

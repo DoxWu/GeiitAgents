@@ -205,7 +205,8 @@ services:
     environment:
       ROLE: worker
       ENVIRONMENT: development
-      CELERY_WORKER_CONCURRENCY: 2
+      CELERY_DOCUMENT_WORKER_CONCURRENCY: 2
+      CELERY_GENERAL_WORKER_CONCURRENCY: 1
       CELERY_MAX_TASKS_PER_CHILD: 100
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/kb_qa
       REDIS_URL: redis://redis:6379/0
@@ -233,6 +234,40 @@ services:
         limits:
           memory: 2G
           cpus: '2.0'
+
+  email-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_ML: ${INSTALL_LOCAL_ML:-false}
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-16}
+    container_name: kb_qa_email_worker
+    restart: unless-stopped
+    environment:
+      ROLE: email-worker
+      ENVIRONMENT: development
+      CELERY_EMAIL_WORKER_CONCURRENCY: 1
+      CELERY_MAX_TASKS_PER_CHILD: 100
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/kb_qa
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      TZ: Asia/Shanghai
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
 
   # Celery Beat must have exactly one active instance per broker/database.
   beat:

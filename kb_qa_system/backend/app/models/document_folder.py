@@ -20,11 +20,15 @@
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy import String, DateTime, Integer, ForeignKey, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document
+    from app.models.user import User
 
 
 class DocumentFolder(Base):
@@ -66,16 +70,18 @@ class DocumentFolder(Base):
     )
 
     # 创建时间
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
+        nullable=True,
     )
 
     # 更新时间
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
         onupdate=func.now(),
+        nullable=True,
     )
 
     # ============================================

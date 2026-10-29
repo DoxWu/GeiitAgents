@@ -16,8 +16,8 @@ class Note(Base):
     content: Mapped[str] = mapped_column(Text, default="", server_default="")
     tags: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, server_default=func.now(), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=True)
     __table_args__ = (Index("ix_notes_user_updated", "user_id", "updated_at"),)
 
 
@@ -33,8 +33,8 @@ class Todo(Base):
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, server_default=func.now(), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=True)
     __table_args__ = (Index("ix_todos_user_status_due", "user_id", "status", "due_at"),)
 
 
@@ -56,8 +56,8 @@ class Reminder(Base):
     status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", index=True)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, server_default=func.now(), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=True)
     __table_args__ = (
         Index("ix_reminders_due", "status", "next_run_at"),
         UniqueConstraint("user_id", "request_id", name="uq_reminders_user_request"),
@@ -68,7 +68,8 @@ class ReminderDelivery(Base):
     """One durable occurrence; broker retries always reuse this row and EmailLog."""
     __tablename__ = "reminder_deliveries"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    reminder_id: Mapped[int] = mapped_column(ForeignKey("reminders.id", ondelete="CASCADE"), index=True)
+    # uq_reminder_occurrence already supports lookups by its leading reminder_id.
+    reminder_id: Mapped[int] = mapped_column(ForeignKey("reminders.id", ondelete="CASCADE"))
     revision: Mapped[int] = mapped_column(Integer)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     email_log_id: Mapped[int] = mapped_column(ForeignKey("email_logs.id", ondelete="RESTRICT"), unique=True)
@@ -79,7 +80,7 @@ class ReminderDelivery(Base):
     last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     enqueued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=True)
     __table_args__ = (
         UniqueConstraint("reminder_id", "revision", "scheduled_at", name="uq_reminder_occurrence"),
         Index("ix_reminder_deliveries_due", "status", "next_attempt_at"),

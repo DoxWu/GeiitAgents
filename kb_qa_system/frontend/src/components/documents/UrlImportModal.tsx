@@ -26,6 +26,8 @@ interface UrlImportModalProps {
   onSuccess?: () => void;
   /** 所属分支ID（可选） */
   folderId?: number | null;
+  /** 指定时将网页导入组织共享知识库 */
+  organizationId?: number;
 }
 
 /** URL 格式校验正则 */
@@ -37,6 +39,7 @@ export function UrlImportModal({
   onClose,
   onSuccess,
   folderId,
+  organizationId,
 }: UrlImportModalProps) {
   const toast = useToastStore();
   const [url, setUrl] = useState("");
@@ -71,7 +74,8 @@ export function UrlImportModal({
       await importFromUrl({
         url: trimmedUrl,
         title: title.trim() || undefined,
-        visibility,
+        visibility: organizationId !== undefined ? "organization" : visibility,
+        ...(organizationId !== undefined ? { organization_id: organizationId } : {}),
       });
       toast.success("URL 导入成功", "文档正在后台处理中，请稍后查看。");
       // 重置表单
@@ -140,7 +144,7 @@ export function UrlImportModal({
         />
 
         {/* 可见性选择 */}
-        <div>
+        {organizationId !== undefined ? <p className="text-sm text-ink-secondary">此网页将导入到所选组织的共享知识库。</p> : <div>
           <label className="mb-1.5 block text-sm font-medium text-ink">
             可见性
           </label>
@@ -168,7 +172,7 @@ export function UrlImportModal({
               <span className="text-sm text-ink-secondary">公共文档库</span>
             </label>
           </div>
-        </div>
+        </div>}
 
         {/* 提示信息 */}
         <p className="text-xs text-ink-tertiary">

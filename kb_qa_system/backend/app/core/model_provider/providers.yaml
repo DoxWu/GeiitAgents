@@ -14,9 +14,8 @@
 #   3. YAML 中的 ${VAR:default} 默认值
 #   4. YAML 字面值
 #
-# 兼容性说明：
-#   ALIYUN_* 配置主 LLM 与 Embedding；DEEPSEEK_* 仅配置文本 LLM 备用。
-#   未设置新变量时仍兼容旧的 OPENAI_* / LLM_FALLBACK_* 配置。
+# 每种能力的主备模型、API Key 与 API URL 均可独立设置。
+# 新前缀为 MODEL_LANGUAGE_*, MODEL_EMBEDDING_*, MODEL_VISION_*；旧变量继续兼容。
 
 # ============================================
 # 全局默认参数（可被各 provider 覆盖）
@@ -43,9 +42,9 @@ providers:
     # 主模型
     - name: "primary"
       type: openai
-      model: "${ALIYUN_LLM_MODEL:${LLM_MODEL_NAME:gpt-3.5-turbo}}"
-      api_key: "${ALIYUN_API_KEY:${OPENAI_API_KEY}}"
-      api_base: "${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}"
+      model: "${MODEL_LANGUAGE_PRIMARY_MODEL:${ALIYUN_LLM_MODEL:${LLM_MODEL_NAME:gpt-3.5-turbo}}}"
+      api_key: "${MODEL_LANGUAGE_PRIMARY_API_KEY:${ALIYUN_API_KEY:${OPENAI_API_KEY}}}"
+      api_base: "${MODEL_LANGUAGE_PRIMARY_API_URL:${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}}"
       temperature: 0.1
       timeout: "${LLM_TIMEOUT:30}"
       max_retries: "${LLM_MAX_RETRIES:3}"
@@ -61,15 +60,15 @@ providers:
     # 降级模型（支持独立 API 配置，不设置则复用主 API）
     - name: "fallback"
       type: openai
-      model: "${DEEPSEEK_LLM_MODEL:${LLM_FALLBACK_MODEL_NAME:gpt-3.5-turbo}}"
-      api_key: "${DEEPSEEK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}"
-      api_base: "${DEEPSEEK_API_BASE:${LLM_FALLBACK_API_BASE:${OPENAI_API_BASE}}}"
+      model: "${MODEL_LANGUAGE_FALLBACK_MODEL:${DEEPSEEK_LLM_MODEL:${LLM_FALLBACK_MODEL_NAME:gpt-3.5-turbo}}}"
+      api_key: "${MODEL_LANGUAGE_FALLBACK_API_KEY:${DEEPSEEK_API_KEY:${LLM_FALLBACK_API_KEY:${OPENAI_API_KEY}}}}"
+      api_base: "${MODEL_LANGUAGE_FALLBACK_API_URL:${DEEPSEEK_API_BASE:${LLM_FALLBACK_API_BASE:${OPENAI_API_BASE}}}}"
       temperature: 0.1
       timeout: "${LLM_TIMEOUT:30}"
       max_retries: 1
       retry_base_delay: "${LLM_RETRY_BASE_DELAY:1.0}"
       stream_first_token_timeout: "${LLM_STREAM_FIRST_TOKEN_TIMEOUT:5}"
-      enabled: "${DEEPSEEK_LLM_ENABLED:${LLM_FALLBACK_ENABLED:false}}"
+      enabled: "${MODEL_LANGUAGE_FALLBACK_ENABLED:${DEEPSEEK_LLM_ENABLED:${LLM_FALLBACK_ENABLED:false}}}"
       health_check:
         enabled: true
         interval: 60
@@ -97,11 +96,12 @@ providers:
     # changing model/endpoint; equal dimensions do not imply compatible vectors.
     - name: "primary"
       type: openai
-      model: "${ALIYUN_EMBEDDING_MODEL:${EMBEDDING_MODEL_NAME:text-embedding-ada-002}}"
-      api_key: "${ALIYUN_API_KEY:${OPENAI_API_KEY}}"
-      api_base: "${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}"
-      dimension: "${EMBEDDING_DIMENSION:1536}"
-      supports_dimensions: "${EMBEDDING_SUPPORTS_DIMENSIONS:false}"
+      model: "${MODEL_EMBEDDING_PRIMARY_MODEL:${ALIYUN_EMBEDDING_MODEL:${EMBEDDING_MODEL_NAME:text-embedding-ada-002}}}"
+      api_key: "${MODEL_EMBEDDING_PRIMARY_API_KEY:${ALIYUN_API_KEY:${OPENAI_API_KEY}}}"
+      api_base: "${MODEL_EMBEDDING_PRIMARY_API_URL:${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}}"
+      dimension: "${MODEL_EMBEDDING_PRIMARY_DIMENSION:${EMBEDDING_DIMENSION:1536}}"
+      vector_space_id: "${MODEL_EMBEDDING_PRIMARY_VECTOR_SPACE:}"
+      supports_dimensions: "${MODEL_EMBEDDING_PRIMARY_SUPPORTS_DIMENSIONS:${EMBEDDING_SUPPORTS_DIMENSIONS:false}}"
       timeout: "${EMBEDDING_TIMEOUT:15}"
       max_retries: 2
       enabled: true
@@ -115,14 +115,15 @@ providers:
     # and dimension as the primary endpoint; never reuse the DeepSeek LLM endpoint.
     - name: "cloud_fallback"
       type: openai
-      model: "${EMBEDDING_FALLBACK_MODEL_NAME:}"
-      api_key: "${EMBEDDING_FALLBACK_API_KEY:}"
-      api_base: "${EMBEDDING_FALLBACK_API_BASE:}"
-      dimension: "${EMBEDDING_DIMENSION:1536}"
-      supports_dimensions: "${EMBEDDING_FALLBACK_SUPPORTS_DIMENSIONS:false}"
+      model: "${MODEL_EMBEDDING_FALLBACK_MODEL:${EMBEDDING_FALLBACK_MODEL_NAME:}}"
+      api_key: "${MODEL_EMBEDDING_FALLBACK_API_KEY:${EMBEDDING_FALLBACK_API_KEY:}}"
+      api_base: "${MODEL_EMBEDDING_FALLBACK_API_URL:${EMBEDDING_FALLBACK_API_BASE:}}"
+      dimension: "${MODEL_EMBEDDING_FALLBACK_DIMENSION:${MODEL_EMBEDDING_PRIMARY_DIMENSION:${EMBEDDING_DIMENSION:1536}}}"
+      vector_space_id: "${MODEL_EMBEDDING_FALLBACK_VECTOR_SPACE:}"
+      supports_dimensions: "${MODEL_EMBEDDING_FALLBACK_SUPPORTS_DIMENSIONS:${EMBEDDING_FALLBACK_SUPPORTS_DIMENSIONS:false}}"
       timeout: "${EMBEDDING_TIMEOUT:15}"
       max_retries: 2
-      enabled: "${EMBEDDING_FALLBACK_ENABLED:false}"
+      enabled: "${MODEL_EMBEDDING_FALLBACK_ENABLED:${EMBEDDING_FALLBACK_ENABLED:false}}"
       health_check:
         enabled: true
         interval: 60
@@ -147,14 +148,14 @@ providers:
     # 主模型
     - name: "primary"
       type: openai
-      model: "${ALIYUN_VISION_MODEL:}"
-      api_key: "${ALIYUN_API_KEY:${OPENAI_API_KEY}}"
-      api_base: "${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}"
+      model: "${MODEL_VISION_PRIMARY_MODEL:${ALIYUN_VISION_MODEL:}}"
+      api_key: "${MODEL_VISION_PRIMARY_API_KEY:${ALIYUN_API_KEY:${OPENAI_API_KEY}}}"
+      api_base: "${MODEL_VISION_PRIMARY_API_URL:${ALIYUN_API_BASE:${OPENAI_API_BASE:https://api.openai.com/v1}}}"
       timeout: 30
       max_retries: 2
       max_tokens: 500
       temperature: 0.3
-      enabled: "${ALIYUN_VISION_ENABLED:false}"
+      enabled: "${MODEL_VISION_PRIMARY_ENABLED:${ALIYUN_VISION_ENABLED:false}}"
       health_check:
         enabled: true
         interval: 120
@@ -164,14 +165,59 @@ providers:
     # 可选：降级 Vision API
     - name: "fallback"
       type: openai
-      model: "${VISION_FALLBACK_MODEL:gpt-4o-mini}"
-      api_key: "${VISION_FALLBACK_API_KEY:${OPENAI_API_KEY}}"
-      api_base: "${VISION_FALLBACK_API_BASE:${OPENAI_API_BASE}}"
+      model: "${MODEL_VISION_FALLBACK_MODEL:${VISION_FALLBACK_MODEL:gpt-4o-mini}}"
+      api_key: "${MODEL_VISION_FALLBACK_API_KEY:${VISION_FALLBACK_API_KEY:${OPENAI_API_KEY}}}"
+      api_base: "${MODEL_VISION_FALLBACK_API_URL:${VISION_FALLBACK_API_BASE:${OPENAI_API_BASE}}}"
       timeout: 30
       max_retries: 1
       max_tokens: 500
       temperature: 0.3
-      enabled: "${VISION_FALLBACK_ENABLED:false}"
+      enabled: "${MODEL_VISION_FALLBACK_ENABLED:${VISION_FALLBACK_ENABLED:false}}"
       health_check:
         enabled: false
+      tags: ["fallback", "cloud"]
+
+  # Rerank and image-generation secrets stay on the server.
+  reranker:
+    - name: "primary"
+      type: dashscope_rerank
+      model: "${MODEL_RERANK_PRIMARY_MODEL:qwen3.7-text-rerank}"
+      api_key: "${MODEL_RERANK_PRIMARY_API_KEY:${ALIYUN_API_KEY:}}"
+      api_base: "${MODEL_RERANK_PRIMARY_API_URL:${ALIYUN_API_BASE:}}"
+      enabled: "${MODEL_RERANK_PRIMARY_ENABLED:true}"
+      timeout: 8
+      max_retries: 0
+      health_check: { enabled: false }
+      tags: ["primary", "cloud"]
+    - name: "fallback"
+      type: dashscope_rerank
+      model: "${MODEL_RERANK_FALLBACK_MODEL:}"
+      api_key: "${MODEL_RERANK_FALLBACK_API_KEY:}"
+      api_base: "${MODEL_RERANK_FALLBACK_API_URL:}"
+      enabled: "${MODEL_RERANK_FALLBACK_ENABLED:false}"
+      timeout: 8
+      max_retries: 0
+      health_check: { enabled: false }
+      tags: ["fallback", "cloud"]
+
+  image_generation:
+    - name: "primary"
+      type: openai_images
+      model: "${MODEL_IMAGE_GENERATION_PRIMARY_MODEL:}"
+      api_key: "${MODEL_IMAGE_GENERATION_PRIMARY_API_KEY:}"
+      api_base: "${MODEL_IMAGE_GENERATION_PRIMARY_API_URL:}"
+      enabled: "${MODEL_IMAGE_GENERATION_PRIMARY_ENABLED:false}"
+      timeout: 60
+      max_retries: 0
+      health_check: { enabled: false }
+      tags: ["primary", "cloud"]
+    - name: "fallback"
+      type: openai_images
+      model: "${MODEL_IMAGE_GENERATION_FALLBACK_MODEL:}"
+      api_key: "${MODEL_IMAGE_GENERATION_FALLBACK_API_KEY:}"
+      api_base: "${MODEL_IMAGE_GENERATION_FALLBACK_API_URL:}"
+      enabled: "${MODEL_IMAGE_GENERATION_FALLBACK_ENABLED:false}"
+      timeout: 60
+      max_retries: 0
+      health_check: { enabled: false }
       tags: ["fallback", "cloud"]

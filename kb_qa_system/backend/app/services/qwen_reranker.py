@@ -64,56 +64,67 @@ def rerank_with_primary(query: str, documents: list[dict], top_k: int) -> list[d
             or len(query) + sum(map(len, texts)) > MAX_TOTAL_CHARACTERS
         ):
             raise ValueError("rerank_input_budget")
-        endpoints = ConfigLoader.load().providers.get("llm", [])
-        if not endpoints or not endpoints[0].enabled or not endpoints[0].api_key:
-            raise ValueError("primary_unavailable")
-        primary = endpoints[0]
-        url = rerank_url(primary.api_base)
+        endpoints = ConfigLoader.load().providers.get("reranker", [])
         count = min(top_k, len(candidates))
         deadline = time.monotonic() + TIMEOUT_SECONDS
-        with httpx.Client(
-            timeout=TIMEOUT_SECONDS, follow_redirects=False, trust_env=False
-        ) as client:
-            with client.stream(
-                "POST",
-                url,
-                headers={"Authorization": f"Bearer {primary.api_key}"},
-                json={
-                    "model": MODEL,
-                    "input": {"query": query, "documents": texts},
-                    "parameters": {"top_n": count},
-                },
-            ) as response:
-                response.raise_for_status()
-                body = bytearray()
-                for part in response.iter_bytes(chunk_size=4096):
-                    if time.monotonic() > deadline or len(body) + len(part) > MAX_RESPONSE_BYTES:
-                        raise ValueError("rerank_response_budget")
-                    body.extend(part)
-        if time.monotonic() > deadline:
-            raise TimeoutError("rerank_deadline")
-        payload = json.loads(body)
-        if payload.get("code"):
-            raise ValueError("rerank_provider_rejected")
-        results = payload["output"]["results"]
-        if not isinstance(results, list) or len(results) != count:
-            raise ValueError("rerank_result_count")
-        seen = set()
-        ranked = []
-        for item in results:
-            index, score = item["index"], item["relevance_score"]
-            if (
-                type(index) is not int
-                or not 0 <= index < len(candidates)
-                or index in seen
-                or type(score) not in {int, float}
-                or not math.isfinite(score)
-                or not 0 <= score <= 1
-            ):
-                raise ValueError("invalid_rerank_result")
-            seen.add(index)
-            ranked.append({**candidates[index], "rerank_score": float(score)})
-        return sorted(ranked, key=lambda doc: doc["rerank_score"], reverse=True)
+        last_error = None
+        for endpoint in endpoints:
+            if not endpoint.enabled or not endpoint.api_key or not endpoint.api_base:
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = TimeoutError("rerank_deadline")
+                break
+            try:
+                url = rerank_url(endpoint.api_base)
+                with httpx.Client(
+                    timeout=remaining, follow_redirects=False, trust_env=False
+                ) as client:
+                    with client.stream(
+                        "POST",
+                        url,
+                        headers={"Authorization": f"Bearer {endpoint.api_key}"},
+                        json={
+                            "model": endpoint.model or MODEL,
+                            "input": {"query": query, "documents": texts},
+                            "parameters": {"top_n": count},
+                        },
+                    ) as response:
+                        response.raise_for_status()
+                        body = bytearray()
+                        for part in response.iter_bytes(chunk_size=4096):
+                            if time.monotonic() > deadline or len(body) + len(part) > MAX_RESPONSE_BYTES:
+                                raise ValueError("rerank_response_budget")
+                            body.extend(part)
+                if time.monotonic() > deadline:
+                    raise TimeoutError("rerank_deadline")
+                payload = json.loads(body)
+                if payload.get("code"):
+                    raise ValueError("rerank_provider_rejected")
+                results = payload["output"]["results"]
+                if not isinstance(results, list) or len(results) != count:
+                    raise ValueError("rerank_result_count")
+                seen = set()
+                ranked = []
+                for item in results:
+                    index, score = item["index"], item["relevance_score"]
+                    if (
+                        type(index) is not int
+                        or not 0 <= index < len(candidates)
+                        or index in seen
+                        or type(score) not in {int, float}
+                        or not math.isfinite(score)
+                        or not 0 <= score <= 1
+                    ):
+                        raise ValueError("invalid_rerank_result")
+                    seen.add(index)
+                    ranked.append({**candidates[index], "rerank_score": float(score)})
+                return sorted(ranked, key=lambda doc: doc["rerank_score"], reverse=True)
+            except Exception as error:
+                last_error = error
+        if last_error is None:
+            last_error = ValueError("rerank_unavailable")
+        raise last_error
     except Exception as error:
         # Provider bodies, source text and credentials must not enter logs.
         logger.warning("Qwen reranking skipped; using retrieval order (%s)", type(error).__name__)

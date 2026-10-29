@@ -8,6 +8,8 @@ import { documentExportContent } from '@/officeTasks/document';
 import { finishLabel } from '@/services/modelStream';
 import { DEFAULT_DOCX_FORMAT, type DocxFormatOptions, type DocxStyle } from '@/officeTasks/docxStyles';
 import { DocxStyleSelect } from './DocxStyleSelect';
+import type { DocumentOutputFormat } from '@/officeTasks/document';
+import { generatedHtmlDocument } from '@/officeTasks/html';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -15,7 +17,7 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
+export function DocumentArtifact({ versions, preferredFormat }: { versions: WorkArtifact[]; preferredFormat?: DocumentOutputFormat }) {
   const store = useWorkbenchStore();
   const ordered = [...versions].sort((a, b) => b.version - a.version);
   const [selected, setSelected] = useState('');
@@ -58,11 +60,12 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
   async function exportHtml() {
     setBusy(true); setError(''); setNotice('');
     try {
-      const { markdownToHtml } = await import('@/officeTasks/html');
-      const result = markdownToHtml(documentExportContent(artifact), artifact.name.replace(/\.md$/i, ''));
+      const html = preferredFormat === 'html'
+        ? generatedHtmlDocument(artifact.content)
+        : (await import('@/officeTasks/html')).markdownToHtml(documentExportContent(artifact), artifact.name.replace(/\.md$/i, '')).html;
       if (mounted.current && useWorkbenchStore.getState().unlocked) {
-        download(new Blob([result.html], { type: 'text/html;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.html`);
-        setNotice(['已生成所选版本的 HTML。', ...result.warnings].join(' '));
+        download(new Blob([html], { type: 'text/html;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.html`);
+        setNotice('已生成所选版本的 HTML。下载后请在隔离环境检查脚本和页面内容。');
       }
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '导出失败。'); }
     finally { if (mounted.current) setBusy(false); }
@@ -78,6 +81,13 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
       }
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : '导出失败。'); }
     finally { if (mounted.current) setBusy(false); }
+  }
+  function exportPreferred() {
+    if (preferredFormat === 'markdown') {
+      download(new Blob([documentExportContent(artifact)], { type: 'text/markdown;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.md`);
+    } else if (preferredFormat === 'html') void exportHtml();
+    else if (preferredFormat === 'docx') void exportWord();
+    else if (preferredFormat === 'pptx' || preferredFormat === 'xlsx' || preferredFormat === 'xls') void exportOffice(preferredFormat);
   }
   async function restore() {
     if (!restorePlan) return;
@@ -96,6 +106,7 @@ export function DocumentArtifact({ versions }: { versions: WorkArtifact[] }) {
     </div>
     <div className="mt-5 max-h-[50vh] overflow-auto rounded border border-line p-3" tabIndex={0} role="region" aria-label="文档内容预览"><PrivateMarkdown content={editing ? draft : artifact.content} /></div>
     <div className="mt-3 flex flex-wrap gap-2">
+      {preferredFormat && <button className="work-command bg-brand text-white" disabled={busy || editing} onClick={exportPreferred}><Download size={16} />导出所选格式</button>}
       <button className="work-command" disabled={busy || editing} onClick={() => download(new Blob([documentExportContent(artifact)], { type: 'text/markdown;charset=utf-8' }), `${artifact.name.replace(/\.md$/i, '')}-v${artifact.version}.md`)}><Download size={16} />下载 Markdown</button>
       <DocxStyleSelect value={docxStyle} onChange={setDocxStyle} format={docxFormat} onFormatChange={setDocxFormat} disabled={busy || editing} />
       <button className="work-command" disabled={busy || editing} onClick={() => void exportWord()}><Download size={16} />{busy && !editing ? '正在导出…' : '导出 DOCX'}</button>

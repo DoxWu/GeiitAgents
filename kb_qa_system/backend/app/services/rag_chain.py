@@ -23,6 +23,7 @@ RAG 检索链路模块
 import logging
 import re
 import threading
+import asyncio
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -33,6 +34,18 @@ from app.services.rag_answer_guard import medical_answer_boundary, requires_medi
 from app.services.vector_store import get_vector_store
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_blocking(function, *args, **kwargs):
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            pass
+        raise
 
 
 class RAGChainService:
@@ -1634,7 +1647,9 @@ class RAGChainService:
         # 原因：闲聊/追问不需要检索文档，如果走 RAG 会被预生成校验误拦截
         # Apply the same evidence requirement before retrieval-free streaming routes.
         medical_query = requires_medical_evidence(question)
-        intent = None if medical_query else self._classify_intent(question, conversation_history)
+        intent = None if medical_query else await _run_blocking(
+            self._classify_intent, question, conversation_history
+        )
         if intent is not None and not intent.needs_retrieval:
             # 非知识库提问，走流式无检索生成路径
             # 作用：闲聊/追问/元问题直接用 LLM 流式回复，不检索文档，不做预生成校验
@@ -1656,7 +1671,8 @@ class RAGChainService:
         # 意图切换时不用历史改写，避免旧话题的指代消解污染当前 query
         # 降级策略：LLM 不可用或超时返回原始 query（query_rewrite_service 内部处理）
         search_query = (
-            question if medical_query else self._rewrite_query_for_search(
+            question if medical_query else await _run_blocking(
+                self._rewrite_query_for_search,
                 question, conversation_history, intent_switched=intent_switched
             )
         )
@@ -1664,7 +1680,8 @@ class RAGChainService:
         # 1. 检索相关文档（限定在用户可访问范围）
         # 作用：用改写后的 query 检索，同时计时用于检索耗时指标
         retrieval_start = _time.time()
-        search_results = self.retrieve_context(
+        search_results = await _run_blocking(
+            self.retrieve_context,
             search_query,
             top_k=top_k,
             user_id=user_id,
@@ -1693,14 +1710,14 @@ class RAGChainService:
         # 作用：检测多个文档片段之间是否存在内容矛盾
         #   - 检测到矛盾时，在上下文中标记冲突片段，提示 LLM 谨慎处理
         #   - LLM 不可用或结果少于2条时跳过检测（conflict_detector 内部处理）
-        conflict_result = self._detect_conflicts(question, search_results)
+        conflict_result = await _run_blocking(self._detect_conflicts, question, search_results)
 
         # 1.6 预生成校验（检索质量检查）
         # 作用：在 LLM 生成前校验检索结果质量
         #   - 结果为空/内容过短/分数过低 → 跳过生成，直接 yield 兜底回答
         #   - 分数接近阈值 → 标记低置信度，生成但附加提示
         #   - 正常 → 继续生成
-        validation = self._validate_before_generation(question, search_results)
+        validation = await _run_blocking(self._validate_before_generation, question, search_results)
         conflict_info = self._format_conflict_info(conflict_result)
 
         no_citation_mode = False

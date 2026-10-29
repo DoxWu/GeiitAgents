@@ -29,6 +29,7 @@ import { Button } from "@/components/common/Button";
 import { useDocumentStore } from "@/store/documentStore";
 import { useAuthStore } from "@/store/authStore";
 import { cn } from "@/lib/utils";
+import { useOrganizationOptions } from "@/hooks/useOrganizationOptions";
 
 /** DocumentsPage 组件 */
 export default function DocumentsPage() {
@@ -55,6 +56,9 @@ export default function DocumentsPage() {
   // 作用：guest 用户无权上传/导入文档，需隐藏上传入口并提示
   const { user } = useAuthStore();
   const isGuest = user?.user_type === "guest";
+  const organizations = useOrganizationOptions();
+  const [uploadOrganizationId, setUploadOrganizationId] = useState("");
+  const targetOrganizationId = uploadOrganizationId ? Number(uploadOrganizationId) : undefined;
 
   // 从 URL 读取 folderId 参数（支持 /documents/:folderId 路由）
   const { folderId } = useParams<{ folderId: string }>();
@@ -75,6 +79,12 @@ export default function DocumentsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  useEffect(() => {
+    if (uploadOrganizationId && !organizations.some(item => item.id === Number(uploadOrganizationId))) {
+      setUploadOrganizationId("");
+    }
+  }, [organizations, uploadOrganizationId]);
 
   // URL folderId 变化时，同步选中分支并加载文档
   // E3-03: 仅依赖 URL 参数 folderId 变化触发。
@@ -186,6 +196,16 @@ export default function DocumentsPage() {
             {/* 排序 */}
             <SortDropdown />
 
+            {!isGuest && organizations.length > 0 && (
+              <label className="work-label min-w-40 text-xs">
+                上传目标
+                <select aria-label="组织共享上传目标" className="work-input" value={uploadOrganizationId} onChange={event => setUploadOrganizationId(event.target.value)}>
+                  <option value="">按当前文档范围</option>
+                  {organizations.map(item => <option key={item.id} value={item.id}>{item.name} · 组织共享</option>)}
+                </select>
+              </label>
+            )}
+
             {/* 多选按钮（有文档时显示，多选模式下隐藏） */}
             {!selectionMode && documents.length > 0 && (
               <Button
@@ -211,6 +231,7 @@ export default function DocumentsPage() {
               <UploadZone
                 folderId={currentFolderId}
                 scope={currentScope}
+                organizationId={targetOrganizationId}
                 compact
               />
             )}
@@ -263,6 +284,7 @@ export default function DocumentsPage() {
                 <UploadZone
                   folderId={currentFolderId}
                   scope={currentScope}
+                  organizationId={targetOrganizationId}
                 />
               </div>
             )
@@ -295,6 +317,7 @@ export default function DocumentsPage() {
         open={urlImportOpen}
         onClose={() => setUrlImportOpen(false)}
         folderId={currentFolderId}
+        organizationId={targetOrganizationId}
         onSuccess={() => loadDocuments()}
       />
     </div>

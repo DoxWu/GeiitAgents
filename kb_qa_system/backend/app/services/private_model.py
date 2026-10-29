@@ -1,6 +1,8 @@
 """Request-scoped BYOK relay. No provider registry, cache, queue, or persistence."""
 
 import asyncio
+import base64
+import binascii
 import ipaddress
 import json
 import socket
@@ -9,7 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from app.schemas.private_model import PrivateCompletion, PrivateModelList
+from app.schemas.private_model import PrivateCompletion, PrivateImageGeneration, PrivateModelList
 from app.core.model_text_stream import read_text_response
 
 
@@ -44,7 +46,7 @@ async def public_endpoint(base_url: str, resource: str = "chat/completions") -> 
             raise ValueError
         ip = ips[0]
         authority = f"[{ip}]" if ip.version == 6 else str(ip)
-        if resource not in ("chat/completions", "models"):
+        if resource not in ("chat/completions", "models", "images/generations"):
             raise ValueError
         path = parsed.path.rstrip("/") + "/" + resource
         return f"https://{authority}{path}", hostname, hostname
@@ -99,6 +101,42 @@ async def complete_private(request: PrivateCompletion, api_key: str) -> dict:
 def _validate_api_key(api_key: str) -> None:
     if not api_key or len(api_key) > 4096 or not api_key.isascii() or any(ord(c) < 33 for c in api_key):
         raise PrivateModelError(400, "API Key 格式无效。")
+
+
+async def generate_private_image(request: PrivateImageGeneration, api_key: str) -> dict:
+    """Request one embedded image; provider URLs are never fetched by the relay."""
+    _validate_api_key(api_key)
+    url, host, tls_name = await public_endpoint(request.base_url, "images/generations")
+    body = {"model": request.model, "prompt": request.prompt, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
+    try:
+        async with asyncio.timeout(120):
+            async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=httpx.Timeout(90, connect=10)) as client:
+                async with client.stream("POST", url, headers={"Authorization": f"Bearer {api_key}", "Host": host},
+                                         json=body, extensions={"sni_hostname": tls_name}) as response:
+                    if response.status_code != 200:
+                        code = response.status_code
+                        if code in (401, 403): raise PrivateModelError(502, "图像服务拒绝认证，请检查 API Key 和模型权限。")
+                        if code == 429: raise PrivateModelError(429, "图像服务额度或速率已达上限。")
+                        raise PrivateModelError(502, "图像服务请求失败，请检查接口地址和生图模型名称。")
+                    chunks = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        chunks.extend(chunk)
+                        if len(chunks) > 3 * 1024 * 1024: raise PrivateModelError(502, "图像服务响应超过大小限制。")
+                    data = json.loads(chunks)
+                    encoded = data["data"][0]["b64_json"]
+                    raw = base64.b64decode(encoded, validate=True)
+                    if len(raw) > 1_500_000: raise PrivateModelError(413, "生成图片超过本机附件的 1.5 MiB 限制。")
+                    if raw.startswith(b"\x89PNG\r\n\x1a\n"): mime = "image/png"
+                    elif raw.startswith(b"\xff\xd8\xff"): mime = "image/jpeg"
+                    elif len(raw) >= 12 and raw.startswith(b"RIFF") and raw[8:12] == b"WEBP": mime = "image/webp"
+                    else: raise ValueError
+                    return {"data_url": f"data:{mime};base64,{encoded}"}
+    except PrivateModelError:
+        raise
+    except (KeyError, IndexError, TypeError, ValueError, binascii.Error, json.JSONDecodeError):
+        raise PrivateModelError(502, "图像服务未返回有效的内嵌 PNG、JPEG 或 WebP 图片。") from None
+    except Exception:
+        raise PrivateModelError(502, "图像生成请求超时或返回格式无效。") from None
 
 
 def normalize_model_list(data: object) -> dict:

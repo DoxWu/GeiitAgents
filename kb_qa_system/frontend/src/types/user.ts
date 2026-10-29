@@ -69,6 +69,7 @@ export interface RegisterApplyRequest {
   email: string;
   /** 申请用户名 */
   username: string;
+  organization_id?: number;
 }
 
 /** 注册申请状态 */
@@ -126,6 +127,7 @@ export interface ApplicationListItem {
   reviewed_at: string | null;
   /** 审批管理员 ID */
   reviewed_by: number | null;
+  organization_id?: number | null;
   /** 拒绝原因 */
   reject_reason: string | null;
 }

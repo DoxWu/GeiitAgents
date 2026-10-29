@@ -115,6 +115,20 @@ class Settings(BaseSettings):
     # 任务最大重试次数
     CELERY_TASK_MAX_RETRIES: int = 3
 
+    # Outstanding document work is counted from pending/processing database rows.
+    DOCUMENT_ADMISSION_LOCK_TTL_SECONDS: int = 60
+    DOCUMENT_MAX_OUTSTANDING_PER_USER: int = 2
+    DOCUMENT_MAX_OUTSTANDING_GLOBAL: int = 4
+
+    # Redis-backed in-flight provider/chat limits are shared by API replicas.
+    REQUEST_CONCURRENCY_LEASE_SECONDS: int = 90
+    CHAT_MAX_CONCURRENT_PER_USER: int = 2
+    CHAT_MAX_CONCURRENT_GLOBAL: int = 8
+    MODEL_MAX_CONCURRENT_PER_USER: int = 2
+    MODEL_MAX_CONCURRENT_GLOBAL: int = 8
+    IMAGE_MAX_CONCURRENT_PER_USER: int = 1
+    IMAGE_MAX_CONCURRENT_GLOBAL: int = 2
+
     # ============================================
     # JWT 认证配置
     # ============================================

@@ -390,6 +390,14 @@ else
 end
 """
 
+    _RENEW_LOCK_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("expire", KEYS[1], tonumber(ARGV[2]))
+else
+    return 0
+end
+"""
+
     @staticmethod
     def set_once_strict(key: str, value: str, ttl: int) -> bool:
         """Security writes: NX rejects replay; connection failures must propagate."""
@@ -472,6 +480,18 @@ end
             return bool(result)
         except Exception as e:
             logger.error(f"Redis release_lock 失败: {key}, 错误: {e}")
+            return False
+
+    @staticmethod
+    def renew_lock(key: str, token: str, ttl: int) -> bool:
+        """Extend a lock only while its owner token is still current."""
+        try:
+            full_key = RedisManager.make_key(key)
+            return bool(redis_client.eval(
+                RedisManager._RENEW_LOCK_SCRIPT, 1, full_key, token, ttl
+            ))
+        except Exception as e:
+            logger.error(f"Redis renew_lock 失败: {key}, 错误: {e}")
             return False
 
     # ============================================

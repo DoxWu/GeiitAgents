@@ -30,7 +30,7 @@ it('separates continuation consent from new runs and invalidates it on history o
   await user.click(screen.getByLabelText(/允许本次按已保存工作流/));
   const resume = screen.getByRole('button', { name: '从失败步骤继续' });
   await user.click(resume); expect(store.getState().resumeWorkflow).not.toHaveBeenCalled();
-  const consent = screen.getByLabelText('确认续跑时重新向云端模型发送步骤内容');
+  const consent = screen.getByLabelText(/确认续跑时重新向云端模型发送步骤内容/);
   await user.click(consent); await user.selectOptions(screen.getByLabelText('选择工作流运行'), 'other'); expect(consent).not.toBeChecked();
   await user.click(consent);
   act(() => store.setState(state => ({ profiles: state.profiles.map(p => ({ ...p, model: 'changed' })) })));
@@ -42,6 +42,21 @@ it('separates continuation consent from new runs and invalidates it on history o
   expect(store.getState().resumeWorkflow).toHaveBeenCalledWith('failed', node.id, true);
   expect(consent).not.toBeChecked();
   expect(await screen.findByRole('alert')).toHaveTextContent('fixture failure');
+});
+it('allows authorizing a retry of a truncated step in a completed run', async () => {
+  const node = newWorkflowNode('generate_document', 0), definition = { ...newWorkflow(), revision: 1, nodes: [node] };
+  const timestamp = new Date().toISOString();
+  store.setState({
+    profiles: [{ id: 'relay', name: 'cloud', mode: 'relay', baseUrl: 'https://example.test/v1', model: 'fixture', hasKey: true }],
+    taskRuns: [{ id: 'completed', type: 'workflow.run', workflow: { definition, input: { reference: '', csv: '' } }, title: 'completed', profileId: 'relay', instruction: '', status: 'succeeded', createdAt: timestamp, updatedAt: timestamp, toolRunIds: ['truncated'], artifactIds: [] }],
+    toolRuns: [{ id: 'truncated', taskId: 'completed', workflowNodeId: node.id, tool: 'model.complete', status: 'succeeded', finishReason: 'length', startedAt: timestamp }],
+  });
+  const user = userEvent.setup(); render(<Workflows />);
+  const retry = screen.getByRole('button', { name: '重试此步骤并继续' });
+  await user.click(retry); expect(store.getState().resumeWorkflow).not.toHaveBeenCalled();
+  await user.click(screen.getByLabelText(/确认续跑时重新向云端模型发送步骤内容/));
+  await user.click(retry);
+  expect(store.getState().resumeWorkflow).toHaveBeenCalledWith('completed', node.id, true);
 });
 it('edits nodes, connects them, rejects a cycle, and persists keyboard layout changes', async () => {
   const user = userEvent.setup(); render(<Workflows />);

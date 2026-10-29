@@ -111,6 +111,8 @@ class ModelProviderManager:
 
             # 注册所有端点
             for model_type, endpoints in config.providers.items():
+                if model_type not in {"llm", "embedding", "vision"}:
+                    continue
                 for endpoint_config in endpoints:
                     try:
                         self._registry.register(model_type, endpoint_config)

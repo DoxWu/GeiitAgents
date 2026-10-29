@@ -402,17 +402,18 @@ class TestEmailServiceBehavior:
         """验证 EMAIL_ENABLED=False 时不连接任何邮件服务"""
         import sys
         sys.path.insert(0, str(BACKEND_DIR))
+        from app.services import email_service
 
-        with patch("app.core.config.settings") as mock_settings:
+        with patch.object(email_service, "settings") as mock_settings:
             mock_settings.EMAIL_ENABLED = False  # 关键：邮件禁用
             mock_settings.EMAIL_FROM = "test@test.com"
             mock_settings.EMAIL_PROVIDER = "http"
-
-            from app.services.email_service import send_email_sync
-
-            # 即使未配置 API Key 也不应报错（EMAIL_ENABLED=False 时直接返回）
-            send_email_sync("to@test.com", "主题", "<h1>内容</h1>")
-            # 到这里说明未抛异常，降级成功
+            with patch.object(email_service, "_send_via_http_api") as send_http, patch.object(
+                email_service, "_send_via_smtp_sync"
+            ) as send_smtp:
+                email_service.send_email_sync("to@test.com", "主题", "<h1>内容</h1>")
+                send_http.assert_not_called()
+                send_smtp.assert_not_called()
 
 
 # ============================================

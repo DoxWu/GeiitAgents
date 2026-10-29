@@ -7,6 +7,7 @@ use tokio::sync::oneshot;
 
 mod local_stream;
 mod local_tools;
+mod local_images;
 mod web_preview;
 #[cfg(windows)]
 mod organizer;
@@ -53,7 +54,7 @@ struct TextDelta { content: String }
 
 fn local_endpoint(base_url: &str, resource: &str) -> Result<reqwest::Url, String> {
     if base_url.len() > 8192 || base_url.chars().any(|c| c <= ' ' || c == '\u{7f}')
-        || !["chat/completions", "models"].contains(&resource)
+        || !["chat/completions", "models", "images/generations"].contains(&resource)
     { return Err("Invalid URL".into()); }
     let mut url = reqwest::Url::parse(base_url).map_err(|_| "Invalid URL")?;
     if !["http", "https"].contains(&url.scheme())
@@ -70,7 +71,7 @@ fn local_endpoint(base_url: &str, resource: &str) -> Result<reqwest::Url, String
 fn model_endpoint(base_url: &str, resource: &str, direct: bool) -> Result<reqwest::Url, String> {
     if !direct { return local_endpoint(base_url, resource); }
     if base_url.len() > 2048 || base_url.chars().any(|c| c <= ' ' || c == '\u{7f}')
-        || !["chat/completions", "models"].contains(&resource) { return Err("Invalid URL".into()); }
+        || !["chat/completions", "models", "images/generations"].contains(&resource) { return Err("Invalid URL".into()); }
     let mut url = reqwest::Url::parse(base_url).map_err(|_| "Invalid URL")?;
     if url.scheme() != "https" || url.port_or_known_default() != Some(443)
         || [Some("localhost"), Some("127.0.0.1"), Some("[::1]")].contains(&url.host_str())
@@ -191,6 +192,23 @@ fn cancel_local_model(request_id: String, state: State<'_, Requests>) {
 }
 
 #[tauri::command]
+async fn generate_local_image(request_id: String, base_url: String, api_key: String, model: String, prompt: String, direct: Option<bool>, state: State<'_, Requests>) -> Result<String, String> {
+    let url = model_endpoint(&base_url, "images/generations", direct.unwrap_or(false))?;
+    if request_id.is_empty() || request_id.len() > 100 || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c))
+        || model.trim().is_empty() || model.chars().count() > 200 || model.chars().any(|c| c.is_control())
+        || prompt.trim().is_empty() || prompt.chars().count() > 1000 || prompt.contains('\0') { return Err("Invalid image request".into()); }
+    let (cancel, cancelled) = oneshot::channel();
+    {
+        let mut active = state.0.lock().map_err(|_| "Request state unavailable")?;
+        if active.len() >= 4 || active.contains_key(&request_id) { return Err("Too many active requests".into()); }
+        active.insert(request_id.clone(), cancel);
+    }
+    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = local_images::generate(url, api_key, model, prompt) => result };
+    if let Ok(mut active) = state.0.lock() { active.remove(&request_id); }
+    result
+}
+
+#[tauri::command]
 async fn complete_local_tools(request_id: String, base_url: String, api_key: String, body: String, direct: Option<bool>, state: State<'_, Requests>) -> Result<serde_json::Value, String> {
     let url = model_endpoint(&base_url, "chat/completions", direct.unwrap_or(false))?;
     if request_id.is_empty() || request_id.len() > 100 || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c)) {
@@ -212,9 +230,9 @@ fn main() {
         .invoke_system(include_str!("ipc-init.js"))
         .register_uri_scheme_protocol("geiit-preview", |_context, request| web_preview::response(request));
     #[cfg(windows)]
-    let builder = builder.manage(organizer::Directories::default()).invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model, organizer::organizer_pick_directory, organizer::organizer_release_directory, organizer::organizer_access]);
+    let builder = builder.manage(organizer::Directories::default()).invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, generate_local_image, cancel_local_model, organizer::organizer_pick_directory, organizer::organizer_release_directory, organizer::organizer_access]);
     #[cfg(not(windows))]
-    let builder = builder.invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, cancel_local_model]);
+    let builder = builder.invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, generate_local_image, cancel_local_model]);
     builder.run(tauri::generate_context!()).expect("Desktop runtime failed");
 }
 
@@ -225,6 +243,7 @@ mod tests {
     fn endpoints_are_loopback_only() {
         assert_eq!(local_endpoint("http://localhost:11434/v1", "chat/completions").unwrap().as_str(), "http://127.0.0.1:11434/v1/chat/completions");
         assert_eq!(local_endpoint("http://localhost:11434/v1/", "models").unwrap().as_str(), "http://127.0.0.1:11434/v1/models");
+        assert_eq!(local_endpoint("http://127.0.0.1:11434/v1", "images/generations").unwrap().as_str(), "http://127.0.0.1:11434/v1/images/generations");
         for url in ["http://192.168.1.1/v1", "https://example.com/v1", "http://user:secret@127.0.0.1/v1", "http://localhost/v1?key=secret", "file:///etc/passwd"] {
             assert!(local_endpoint(url, "models").is_err());
         }
@@ -234,6 +253,7 @@ mod tests {
     fn direct_providers_require_explicit_https_mode() {
         assert!(model_endpoint("https://provider.example/v1", "models", false).is_err());
         assert_eq!(model_endpoint("https://provider.example/v1", "models", true).unwrap().as_str(), "https://provider.example/v1/models");
+        assert_eq!(model_endpoint("https://provider.example/v1", "images/generations", true).unwrap().as_str(), "https://provider.example/v1/images/generations");
         for url in ["http://provider.example/v1", "https://localhost/v1", "https://provider.example:8443/v1", "https://key@provider.example/v1", "https://provider.example/v1?key=value"] {
             assert!(model_endpoint(url, "models", true).is_err());
         }

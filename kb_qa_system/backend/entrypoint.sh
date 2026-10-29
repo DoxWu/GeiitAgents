@@ -5,7 +5,8 @@
 # 作用：
 #     根据 ROLE 环境变量启动不同的服务角色：
 #     - ROLE=api:    检查数据库并按开关执行迁移，启动 FastAPI（uvicorn）
-#     - ROLE=worker: 启动 Celery Worker（处理异步文档处理任务）
+#     - ROLE=worker: 启动文档与通用 Celery Worker
+#     - ROLE=email-worker: 启动隔离的邮件 Celery Worker
 #     - ROLE=flower: 启动 Flower（Celery 任务监控面板）
 #
 # 使用方式：
@@ -67,12 +68,32 @@ start_api_with_worker() {
 
     WORKERS="${UVICORN_WORKERS:-1}"
 
-    echo "🔧 启动 Celery Worker（后台）..."
+    echo "🔧 启动文档 Celery Worker（后台）..."
     celery -A app.core.celery_app:celery_app worker \
+        --queues=document \
         --loglevel=info \
-        --concurrency="${CELERY_WORKER_CONCURRENCY:-2}" \
+        --concurrency="${CELERY_DOCUMENT_WORKER_CONCURRENCY:-${CELERY_WORKER_CONCURRENCY:-2}}" \
         --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}" &
-    WORKER_PID=$!
+    DOCUMENT_WORKER_PID=$!
+
+    echo "🔧 启动通用 Celery Worker（后台）..."
+    celery -A app.core.celery_app:celery_app worker \
+        --queues=default,embedding,dead_letter \
+        --loglevel=info \
+        --concurrency="${CELERY_GENERAL_WORKER_CONCURRENCY:-1}" \
+        --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}" &
+    GENERAL_WORKER_PID=$!
+
+    EMAIL_WORKER_PID=""
+    if [ "${CELERY_EMAIL_WORKER_CONCURRENCY:-1}" -gt 0 ]; then
+        echo "🔧 启动邮件 Celery Worker（后台）..."
+        celery -A app.core.celery_app:celery_app worker \
+            --queues=email \
+            --loglevel=info \
+            --concurrency="${CELERY_EMAIL_WORKER_CONCURRENCY:-1}" \
+            --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}" &
+        EMAIL_WORKER_PID=$!
+    fi
 
     mkdir -p "$(dirname "${CELERY_BEAT_SCHEDULE_FILE:-/app/data/celerybeat-schedule}")"
     echo "🕒 启动 Celery Beat（持久化调度状态）..."
@@ -94,10 +115,10 @@ start_api_with_worker() {
 
 stop_api_worker_children() {
     trap - INT TERM
-    for child_pid in "${WORKER_PID:-}" "${BEAT_PID:-}" "${API_PID:-}"; do
+    for child_pid in "${DOCUMENT_WORKER_PID:-}" "${GENERAL_WORKER_PID:-}" "${EMAIL_WORKER_PID:-}" "${BEAT_PID:-}" "${API_PID:-}"; do
         if [ -n "$child_pid" ]; then kill -TERM "$child_pid" 2>/dev/null || true; fi
     done
-    for child_pid in "${WORKER_PID:-}" "${BEAT_PID:-}" "${API_PID:-}"; do
+    for child_pid in "${DOCUMENT_WORKER_PID:-}" "${GENERAL_WORKER_PID:-}" "${EMAIL_WORKER_PID:-}" "${BEAT_PID:-}" "${API_PID:-}"; do
         if [ -n "$child_pid" ]; then wait "$child_pid" 2>/dev/null || true; fi
     done
 }
@@ -106,7 +127,9 @@ supervise_api_worker() {
     trap 'stop_api_worker_children; exit 143' TERM
     trap 'stop_api_worker_children; exit 130' INT
     set +e
-    wait -n "$WORKER_PID" "$BEAT_PID" "$API_PID"
+    CHILD_PIDS=("$DOCUMENT_WORKER_PID" "$GENERAL_WORKER_PID" "$BEAT_PID" "$API_PID")
+    if [ -n "${EMAIL_WORKER_PID:-}" ]; then CHILD_PIDS+=("$EMAIL_WORKER_PID"); fi
+    wait -n "${CHILD_PIDS[@]}"
     CHILD_STATUS=$?
     set -e
     echo "A required worker/scheduler process exited with status ${CHILD_STATUS}; stopping the API container."
@@ -135,10 +158,51 @@ start_api() {
 }
 
 # --------------------------------------------
-# 启动 Celery Worker
+# 启动隔离的文档与通用队列消费者
 # --------------------------------------------
+start_celery_workers() {
+    echo "🔧 启动文档 Celery Worker..."
+    celery -A app.core.celery_app:celery_app worker \
+        --queues=document \
+        --loglevel=info \
+        --concurrency="${CELERY_DOCUMENT_WORKER_CONCURRENCY:-${CELERY_WORKER_CONCURRENCY:-2}}" \
+        --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}" &
+    DOCUMENT_WORKER_PID=$!
+
+    echo "🔧 启动通用 Celery Worker..."
+    celery -A app.core.celery_app:celery_app worker \
+        --queues=default,embedding,dead_letter \
+        --loglevel=info \
+        --concurrency="${CELERY_GENERAL_WORKER_CONCURRENCY:-1}" \
+        --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}" &
+    GENERAL_WORKER_PID=$!
+
+}
+
+stop_worker_children() {
+    trap - INT TERM
+    for child_pid in "${DOCUMENT_WORKER_PID:-}" "${GENERAL_WORKER_PID:-}" "${HEALTH_PID:-}"; do
+        if [ -n "$child_pid" ]; then kill -TERM "$child_pid" 2>/dev/null || true; fi
+    done
+    for child_pid in "${DOCUMENT_WORKER_PID:-}" "${GENERAL_WORKER_PID:-}" "${HEALTH_PID:-}"; do
+        if [ -n "$child_pid" ]; then wait "$child_pid" 2>/dev/null || true; fi
+    done
+}
+
+supervise_worker() {
+    trap 'stop_worker_children; exit 143' TERM
+    trap 'stop_worker_children; exit 130' INT
+    set +e
+    wait -n "$DOCUMENT_WORKER_PID" "$GENERAL_WORKER_PID" "$HEALTH_PID"
+    CHILD_STATUS=$?
+    set -e
+    echo "A required worker process exited with status ${CHILD_STATUS}; stopping the worker container."
+    stop_worker_children
+    return 1
+}
+
 start_worker() {
-    echo "🔧 启动 Celery Worker..."
+    echo "🔧 Starting isolated Celery workers..."
 
     # 启动简单的健康检查 HTTP 服务（后台运行）
     # Railway 健康检查需要 HTTP 端点，Worker 本身没有，所以启动一个轻量的 HTTP 服务
@@ -158,12 +222,8 @@ with socketserver.TCPServer(('', 8000), Handler) as httpd:
 " &
     HEALTH_PID=$!
 
-    # 启动 Celery Worker
-    # 注意：使用显式 :celery_app 语法指定应用对象，避免 Celery 自动查找歧义
-    exec celery -A app.core.celery_app:celery_app worker \
-        --loglevel=info \
-        --concurrency="${CELERY_WORKER_CONCURRENCY:-2}" \
-        --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}"
+    start_celery_workers
+    supervise_worker
 }
 
 # --------------------------------------------
@@ -176,6 +236,14 @@ start_flower() {
         --host=0.0.0.0
 }
 
+start_email_worker() {
+    exec celery -A app.core.celery_app:celery_app worker \
+        --queues=email \
+        --loglevel=info \
+        --concurrency="${CELERY_EMAIL_WORKER_CONCURRENCY:-1}" \
+        --max-tasks-per-child="${CELERY_MAX_TASKS_PER_CHILD:-100}"
+}
+
 # 根据角色分发
 case "${ROLE}" in
     api)
@@ -186,6 +254,9 @@ case "${ROLE}" in
         ;;
     worker)
         start_worker
+        ;;
+    email-worker)
+        start_email_worker
         ;;
     beat)
         mkdir -p "$(dirname "${CELERY_BEAT_SCHEDULE_FILE:-/app/data/celerybeat-schedule}")"
@@ -200,7 +271,7 @@ case "${ROLE}" in
         exec python -m app.ops.cli monitor
         ;;
     *)
-        echo "❌ 未知角色: ${ROLE}，可选值: api / api+worker / worker / beat / flower / ops"
+        echo "❌ 未知角色: ${ROLE}，可选值: api / api+worker / worker / email-worker / beat / flower / ops"
         exit 1
         ;;
 esac

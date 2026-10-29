@@ -27,6 +27,7 @@ from datetime import datetime
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.rate_limit import rate_limit
+from app.services.request_concurrency import concurrency_limit
 from app.core.redis import RedisManager, RedisKeys
 from app.api.deps import get_current_active_user
 from app.models.user import User
@@ -55,7 +56,13 @@ router = APIRouter(prefix="/chat", tags=["对话问答"])
     summary="提问（非流式）",
     # 限流：每分钟最多 RATE_LIMIT_ASK_PER_MINUTE 次提问
     # 作用：防止单用户高频调用 LLM，控制成本和资源消耗
-    dependencies=[Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE))],
+    dependencies=[
+        Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE)),
+        Depends(concurrency_limit("chat", per_user=settings.CHAT_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.CHAT_MAX_CONCURRENT_GLOBAL), scope="request"),
+        Depends(concurrency_limit("provider", per_user=settings.MODEL_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.MODEL_MAX_CONCURRENT_GLOBAL), scope="request"),
+    ],
 )
 def ask_question(
     question_data: QuestionRequest,
@@ -324,9 +331,15 @@ def ask_question(
     summary="提问（流式输出）",
     # 限流：每分钟最多 RATE_LIMIT_ASK_PER_MINUTE 次提问
     # 作用：与非流式接口共享限流配额，防止单用户高频调用 LLM
-    dependencies=[Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE))],
+    dependencies=[
+        Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE)),
+        Depends(concurrency_limit("chat", per_user=settings.CHAT_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.CHAT_MAX_CONCURRENT_GLOBAL), scope="request"),
+        Depends(concurrency_limit("provider", per_user=settings.MODEL_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.MODEL_MAX_CONCURRENT_GLOBAL), scope="request"),
+    ],
 )
-async def ask_question_stream(
+def ask_question_stream(
     question_data: QuestionRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -445,6 +458,7 @@ async def ask_question_stream(
         history, summary = history_service.get_effective_history(
             db, conversation, exclude_message_id=user_message.id
         )
+        db.commit()
 
         # 3.5 意图切换检测
         # 作用：检测用户是否相对于最近一次提问切换了话题
@@ -668,9 +682,15 @@ async def ask_question_stream(
     "/regenerate/stream",
     summary="重新生成 AI 回答（流式输出）",
     # 限流：复用 ask 限流配额
-    dependencies=[Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE))],
+    dependencies=[
+        Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE)),
+        Depends(concurrency_limit("chat", per_user=settings.CHAT_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.CHAT_MAX_CONCURRENT_GLOBAL), scope="request"),
+        Depends(concurrency_limit("provider", per_user=settings.MODEL_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.MODEL_MAX_CONCURRENT_GLOBAL), scope="request"),
+    ],
 )
-async def regenerate_answer_stream(
+def regenerate_answer_stream(
     request_data: RegenerateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -805,6 +825,7 @@ async def regenerate_answer_stream(
         history, summary = history_service.get_effective_history(
             db, conversation, exclude_message_id=user_message.id
         )
+        db.commit()
 
         # 6. 意图切换检测
         intent_result = intent_service.detect_intent_switch(

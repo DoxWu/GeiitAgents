@@ -31,6 +31,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limit import rate_limit
+from app.services.request_concurrency import concurrency_limit
 from app.core.redis import RedisManager
 from app.api.deps import get_current_regular_user
 from app.models.user import User
@@ -51,7 +52,7 @@ from app.services.document_pipeline.cleaner import TextCleaner
 from app.services.document_pipeline.table_extractor import TableExtractor
 from app.services.document_pipeline.image_processor import ImageProcessor
 from app.services.document_pipeline.context import PipelineContext
-from app.services.permission import VISIBILITY_PUBLIC
+from app.services.permission import permission_service
 from app.services.llm_resilience import get_llm_service, LLMServiceError
 
 
@@ -347,15 +348,12 @@ async def select_document_from_library(
         )
 
     # 2. 权限校验
-    # 作用：用户仅可访问自己的文档或公共文档库，防止越权
-    # 超级管理员可访问所有文档
-    if not current_user.is_superuser:
-        if document.user_id != current_user.id and document.visibility != VISIBILITY_PUBLIC:
-            # 出于安全考虑，权限不足时返回 404 而非 403，避免泄露文档存在性
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": "DOCUMENT_NOT_FOUND", "message": "文档不存在"}},
-            )
+    if not permission_service.can_access_document(db, current_user.id, document.id, current_user.is_superuser):
+        # 出于安全考虑，权限不足时返回 404 而非 403，避免泄露文档存在性
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "DOCUMENT_NOT_FOUND", "message": "文档不存在"}},
+        )
 
     # 3. 校验文档处理状态
     # 作用：只有 completed 状态的文档才有可用的全文内容
@@ -474,9 +472,15 @@ async def select_document_from_library(
     "/ask/stream",
     summary="文档对话提问（流式输出）",
     # 限流：每分钟最多 RATE_LIMIT_ASK_PER_MINUTE 次
-    dependencies=[Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE))],
+    dependencies=[
+        Depends(rate_limit("ask", per_minute=settings.RATE_LIMIT_ASK_PER_MINUTE)),
+        Depends(concurrency_limit("chat", per_user=settings.CHAT_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.CHAT_MAX_CONCURRENT_GLOBAL), scope="request"),
+        Depends(concurrency_limit("provider", per_user=settings.MODEL_MAX_CONCURRENT_PER_USER,
+                                   global_limit=settings.MODEL_MAX_CONCURRENT_GLOBAL), scope="request"),
+    ],
 )
-async def ask_document_stream(
+def ask_document_stream(
     request_data: DocumentChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_regular_user),

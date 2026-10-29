@@ -19,7 +19,7 @@
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from sqlalchemy import String, DateTime, Integer, ForeignKey, Text, JSON, Float, func, Index
+from sqlalchemy import String, DateTime, Integer, ForeignKey, Text, JSON, Float, func, Index, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -102,7 +102,7 @@ class QAEvent(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
 
     # 是否降级
-    degraded: Mapped[bool] = mapped_column(default=False)
+    degraded: Mapped[bool] = mapped_column(default=False, server_default=false())
 
     # 降级原因
     # 示例："llm_timeout" / "llm_unavailable" / "embedding_failed" / "circuit_breaker_open"
@@ -113,29 +113,29 @@ class QAEvent(Base):
     # ============================================
 
     # 检索到的文档数
-    retrieval_count: Mapped[int] = mapped_column(Integer, default=0)
+    retrieval_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 最高相关度分数（0-1）
-    retrieval_top_score: Mapped[float] = mapped_column(Float, default=0.0)
+    retrieval_top_score: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
     # 检索耗时（毫秒）
-    retrieval_time_ms: Mapped[int] = mapped_column(Integer, default=0)
+    retrieval_time_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # ============================================
     # LLM 指标
     # ============================================
 
     # LLM 调用耗时（毫秒）
-    llm_time_ms: Mapped[int] = mapped_column(Integer, default=0)
+    llm_time_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 重试次数
-    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 输入 Token 数
-    token_input: Mapped[int] = mapped_column(Integer, default=0)
+    token_input: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 输出 Token 数
-    token_output: Mapped[int] = mapped_column(Integer, default=0)
+    token_output: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 实际使用的模型
     model_used: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -145,7 +145,7 @@ class QAEvent(Base):
     # ============================================
 
     # 总耗时（毫秒）
-    total_time_ms: Mapped[int] = mapped_column(Integer, default=0)
+    total_time_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # ============================================
     # 用户反馈
@@ -175,8 +175,9 @@ class QAEvent(Base):
     # ============================================
 
     # 创建时间
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), index=True
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now(), index=True,
+        nullable=True,
     )
 
     # ============================================

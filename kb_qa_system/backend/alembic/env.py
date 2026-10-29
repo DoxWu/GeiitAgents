@@ -29,6 +29,8 @@ from app.core.database import Base
 from app.models import (
     User, Document, DocumentChunk, Conversation, Message, QAEvent,
     RegistrationApplication, EmailLog, Note, Todo, Reminder, ReminderDelivery,
+    SharedAgent,
+    Organization, OrganizationMembership, OrganizationWorkflow,
 )
 
 # Alembic 配置

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, Response
 from sqlalchemy.orm import Session
 
-from app.models import Conversation, Document, Message, Note, Reminder, ReminderDelivery, Todo, User
+from app.models import Conversation, Document, Message, Note, Reminder, ReminderDelivery, SharedAgent, Todo, User
 
 MAX_ROWS = 5000
 MAX_MESSAGES = 20000
@@ -34,11 +34,11 @@ def export_account(db, user_id):
             if not user or not user.is_active:
                 raise HTTPException(401, detail="账号已失效")
             payload = {
-                'format': 'geiit-server-account-v2',
+                'format': 'geiit-server-account-v3',
                 'account': serialize(user, ['id', 'username', 'email', 'is_active', 'created_at', 'updated_at']),
                 'coverage': {
                     'included': ['account', 'document_metadata_including_deleted', 'conversations_including_inactive',
-                                 'messages', 'notes', 'todos', 'reminders_including_archived', 'reminder_deliveries'],
+                                 'messages', 'notes', 'todos', 'reminders_including_archived', 'reminder_deliveries', 'owned_shared_agents'],
                     'excluded': ['original_files', 'vectors', 'server_credentials', 'audit_and_mail_bodies',
                                  'client_workbench', 'client_local_knowledge', 'external_files'],
                     'snapshot': 'one_database_read_transaction', 'max_rows_per_module': MAX_ROWS,
@@ -71,6 +71,8 @@ def export_account(db, user_id):
                                  .order_by(ReminderDelivery.id), MAX_MESSAGES)
             payload['reminder_deliveries'] = [serialize(d, ['id', 'reminder_id', 'revision', 'scheduled_at',
                 'status', 'attempts', 'retry_limit', 'next_attempt_at', 'last_attempt_at', 'error_code', 'created_at']) for d in deliveries]
+            agents = bounded(snapshot.query(SharedAgent).filter(SharedAgent.owner_id == user_id).order_by(SharedAgent.id))
+            payload['shared_agents'] = [serialize(agent, ['id', 'name', 'summary', 'definition', 'created_at', 'updated_at']) for agent in agents]
             content = json.dumps(payload, ensure_ascii=False)
             if len(content.encode('utf-8')) > MAX_BYTES:
                 raise HTTPException(413, detail={"error": {"code": "ACCOUNT_EXPORT_LIMIT", "message": "导出超过 16 MiB 上限，请分模块导出。"}})

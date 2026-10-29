@@ -9,7 +9,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
-def test_authenticated_route_validation_no_cache_and_key_header():
+def test_authenticated_route_validation_no_cache_and_key_header(monkeypatch):
+    from app.services import request_concurrency
+    from test_concurrency_controls import FakeAsyncRedis
+    monkeypatch.setattr(request_concurrency, 'async_redis_client', FakeAsyncRedis())
     def auth():
         raise HTTPException(401, "Authentication required")
     def rate_limit(*args, **kwargs):
@@ -35,7 +38,7 @@ def test_authenticated_route_validation_no_cache_and_key_header():
     account_tools_url = "/api/v1/private-models/account/tools/complete"
     assert client.post(tools_url, json=body).status_code == 401
     assert client.post(account_tools_url, json={"messages": body["messages"]}).status_code == 401
-    app.dependency_overrides[auth] = lambda: object()
+    app.dependency_overrides[auth] = lambda: types.SimpleNamespace(id=7)
     tool_completion = AsyncMock(return_value={"content": "done", "tool_calls": []})
     with patch.object(module, "complete_private_tools", tool_completion), patch.object(module, "complete_account_tools", tool_completion):
         response = client.post(tools_url, json=body, headers={"X-Model-Api-Key": "fixture-private-key"})
@@ -46,11 +49,11 @@ def test_authenticated_route_validation_no_cache_and_key_header():
         assert invalid.headers["cache-control"] == "no-store"
         oversized = client.post(tools_url, content=b"x" * (1024 * 1024 + 1))
         assert oversized.status_code == 413 and oversized.headers["cache-control"] == "no-store"
-        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(is_active=True, is_superuser=False, user_type="guest")
+        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(id=7, is_active=True, is_superuser=False, user_type="guest")
         denied = client.post(account_tools_url, json={"messages": body["messages"]})
         assert denied.status_code == 403 and denied.headers["cache-control"] == "no-store"
         assert tool_completion.await_count == 1
-        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(is_active=True, is_superuser=False, user_type="regular")
+        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(id=7, is_active=True, is_superuser=False, user_type="regular")
         response = client.post(account_tools_url, json={"messages": body["messages"]})
         assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
         assert len(tool_completion.await_args.args) == 1
@@ -107,11 +110,11 @@ def test_authenticated_route_validation_no_cache_and_key_header():
         app.dependency_overrides.clear()
         assert client.get(account_url).status_code == 401
         assert client.post(account_url + "/complete", json={"messages": body["messages"]}).status_code == 401
-        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(is_active=True, is_superuser=False, user_type="guest")
+        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(id=7, is_active=True, is_superuser=False, user_type="guest")
         assert client.get(account_url).json() == {"available": False}
         assert client.post(account_url + "/complete", json={"messages": body["messages"]}).status_code == 403
         status.assert_not_called(); account_completion.assert_not_called()
-        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(is_active=True, is_superuser=False, user_type="regular")
+        app.dependency_overrides[auth] = lambda: types.SimpleNamespace(id=7, is_active=True, is_superuser=False, user_type="regular")
         assert client.get(account_url).json() == {"available": True, "model": "server-model"}
         response = client.post(account_url + "/complete", json={"messages": body["messages"]})
         assert response.status_code == 200

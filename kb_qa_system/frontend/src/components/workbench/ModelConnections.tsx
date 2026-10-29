@@ -36,7 +36,7 @@ export function ModelConnections() {
   const active = useRef<AbortController | null>(null);
   const busy = operation === 'save' || operation === 'test' || operation === 'tool-test' || operation === 'vision-test';
   const existing = profiles.find(p => p.id === draft.id);
-  const dirty = Boolean(apiKey || clearKey || !existing || (['name', 'baseUrl', 'model', 'mode', 'maxTokens'] as const).some(key => draft[key] !== existing[key]));
+  const dirty = Boolean(apiKey || clearKey || !existing || (['name', 'baseUrl', 'model', 'imageModel', 'mode', 'maxTokens'] as const).some(key => draft[key] !== existing[key]));
 
   const invalidate = useCallback(() => {
     active.current?.abort(); active.current = null;
@@ -113,6 +113,7 @@ export function ModelConnections() {
           </>}
         </div>
         <label className="work-label">模型名称<input className="work-input" required maxLength={200} placeholder="模型服务中的完整模型名称，也可手填" value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })} /></label>
+        <label className="work-label">生图模型（可选）<input className="work-input" maxLength={200} placeholder="同一接口和密钥下支持 /images/generations 的模型名称" value={draft.imageModel ?? ''} onChange={event => editConnection({ imageModel: event.target.value || undefined })} /></label>
         <label className="work-label">最大输出 Token（可选）<input className="work-input" type="number" min={1} max={2147483647} placeholder="模型默认" value={draft.maxTokens ?? ''} onChange={e => setDraft({ ...draft, maxTokens: e.target.value === '' ? undefined : Number(e.target.value) })} /></label>
       </fieldset>
       <div className="rounded-lg border border-line p-3 text-xs text-ink-secondary">

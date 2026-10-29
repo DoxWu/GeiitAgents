@@ -15,6 +15,8 @@ from app.models.email_log import EmailLog
 from app.models.audit_log import AuditLog
 from app.models.personal import Note, Todo, Reminder, ReminderDelivery
 from app.models.file_cleanup import FileCleanupJob
+from app.models.shared_agent import SharedAgent
+from app.models.organization import Organization, OrganizationMembership, OrganizationWorkflow
 
 __all__ = [
     "User",
@@ -29,4 +31,7 @@ __all__ = [
     "AuditLog",
     "Note", "Todo", "Reminder", "ReminderDelivery",
     "FileCleanupJob",
+    "SharedAgent",
+    "Organization", "OrganizationMembership", "OrganizationWorkflow",
 ]
+from app.models.capability import SharedCapability

@@ -128,6 +128,10 @@ celery_app.conf.update(
             "queue": "document",
             "routing_key": "document.reprocess",
         },
+        "app.tasks.document_tasks.batch_process_documents": {
+            "queue": "document",
+            "routing_key": "document.batch",
+        },
         "app.tasks.email_tasks.send_email": {
             "queue": "email",
             "routing_key": "email.send",

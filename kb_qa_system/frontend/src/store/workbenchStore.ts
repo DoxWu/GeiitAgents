@@ -1,14 +1,17 @@
+import { validateImageStudio, type ImageStudioDraft } from '@/officeTasks/composition';
+import { runAgent } from '@/agents/runtime';
 import type { TextBatchInput, TextBatchPlan, TextBatchPreview } from '@/fileOrganizer/textBatch';
 import { artifactSeries } from '@/officeTasks/artifactSeries';
 import { create } from "zustand";
 import { PrivateVault, withVaultWriteLock } from "@/services/privateVault";
 import { createVaultStorage, VAULT_CHANGE_CHANNEL, VAULT_WINDOW_ID } from '@/services/privateVaultStorage';
 import type { VaultBackupSummary } from '@/services/vaultBackup';
-import { completeModel, completeAccountModel, getAccountModel, validateProfile, validateModelEndpoint } from "@/services/workbenchModel";
+import { completeModel, completeAccountModel, generateWorkImage, getAccountModel, validateImageModel, validateProfile, validateModelEndpoint } from "@/services/workbenchModel";
 import { discoverModels, type ModelCatalog, type ModelEndpoint } from '@/services/modelDiscovery';
 import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, StoredReferenceDocument, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConversation, WorkMessage } from "@/types/workbench";
 import type { WorkImage } from '@/types/workbench';
+import { validateAgent, type AgentDefinition } from '@/agents/definition';
 import { MAX_IMAGES_PER_MESSAGE, MAX_VAULT_IMAGE_BYTES, validateWorkImage } from '@/services/workbenchImages';
 import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages, type KnowledgeTurn } from '@/localKnowledge/answer';
@@ -72,6 +75,16 @@ function clearWorkflowDraftTimer() { clearTimeout(workflowDraftTimer); workflowD
 function clearWorkflowScheduleTimer() { clearInterval(workflowScheduleTimer); workflowScheduleTimer = undefined; }
 
 interface WorkbenchState {
+  imageDraft: ImageStudioDraft | null;
+  saveImageDraft: (draft: ImageStudioDraft) => Promise<void>;
+  capabilities: import('@/agents/capabilities').CapabilityResource[];
+  saveCapability: (resource: import('@/agents/capabilities').CapabilityResource) => Promise<void>;
+  removeCapability: (id: string) => Promise<void>;
+  agents: AgentDefinition[];
+  pptxDraft: import('@/officeTasks/pptxDesign').PptxDesignDeck | null;
+  savePptxDraft: (deck: import('@/officeTasks/pptxDesign').PptxDesignDeck) => Promise<void>;
+  saveAgent: (agent: AgentDefinition) => Promise<void>;
+  removeAgent: (id: string) => Promise<void>;
   textBatchPreview: TextBatchPreview | null;
   prepareFileEditBatch: (directory: OrganizerDirectoryHandle, names: string[], rule: TextBatchInput, acknowledged: boolean, restoreBatchId?: string) => Promise<void>;
   commitFileEditBatch: (directory: OrganizerDirectoryHandle, id: string, selected: string[], acknowledged: boolean) => Promise<void>;
@@ -94,7 +107,7 @@ interface WorkbenchState {
   clearWorkflowDraft: () => Promise<void>;
   saveWorkflow: (definition: WorkflowDefinition) => Promise<WorkflowDefinition>;
   removeWorkflow: (id: string, revision: number) => Promise<void>;
-  startWorkflow: (id: string, revision: number, input: WorkflowInput, profileId: string, allowCloud: boolean, resume?: { sourceTaskId: string; fromNodeId?: string }) => Promise<string>;
+  startWorkflow: (id: string, revision: number, input: WorkflowInput, profileId: string, allowCloud: boolean, resume?: { sourceTaskId: string; fromNodeId?: string }, onStarted?: (taskId: string) => void) => Promise<string>;
   resumeWorkflow: (taskId: string, fromNodeId: string | undefined, allowCloud: boolean) => Promise<string>;
   saveWorkflowSchedule: (schedule: WorkflowSchedule) => Promise<WorkflowSchedule>;
   removeWorkflowSchedule: (id: string) => Promise<void>;
@@ -164,6 +177,7 @@ interface WorkbenchState {
   testProfile: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileToolSupport: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileVision: (id: string, signal?: AbortSignal) => Promise<boolean>;
+  generateImage: (profileId: string, prompt: string, allowCloud: boolean, signal?: AbortSignal) => Promise<WorkImage>;
   discoverProfileModels: (input: ModelEndpoint, apiKey: string, clearKey: boolean, signal: AbortSignal) => Promise<ModelCatalog>;
   newConversation: (profileId?: string) => string;
   select: (id: string) => void;
@@ -206,7 +220,7 @@ function keyForEndpoint(input: ModelEndpoint, apiKey: string, clearKey: boolean,
   return secret;
 }
 
-async function modelCheck<T>(mode: ModelProfile['mode'], signal: AbortSignal | undefined, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function modelCheck<T>(mode: ModelProfile['mode'], signal: AbortSignal | undefined, operation: (signal: AbortSignal) => Promise<T>, timeoutMs = 25_000): Promise<T> {
   if (!useWorkbenchStore.getState().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
   if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
   if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型请求。');
@@ -215,7 +229,7 @@ async function modelCheck<T>(mode: ModelProfile['mode'], signal: AbortSignal | u
   signal?.addEventListener('abort', abort, { once: true });
   controllers.set(token, controller);
   if (mode === 'relay') accountRequests.add(token);
-  const timeout = setTimeout(abort, 25_000);
+  const timeout = setTimeout(abort, timeoutMs);
   try {
     const result = await operation(controller.signal);
     if (controller.signal.aborted || epoch !== generation) throw new DOMException('请求已取消或超时', 'AbortError');
@@ -255,7 +269,7 @@ async function persist(required = false) {
 
 function vaultSnapshot(): VaultData {
   const state = useWorkbenchStore.getState();
-  return { workflows: state.workflows, workflowDraft: state.workflowDraft, workflowSchedules: state.workflowSchedules, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, referenceDocuments: state.referenceDocuments, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
+  return { imageDraft: state.imageDraft, capabilities: state.capabilities, pptxDraft: state.pptxDraft, agents: state.agents, workflows: state.workflows, workflowDraft: state.workflowDraft, workflowSchedules: state.workflowSchedules, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, referenceDocuments: state.referenceDocuments, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
 }
 
 async function pollWorkflowSchedules() {
@@ -273,7 +287,7 @@ async function pollWorkflowSchedules() {
         useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, status: 'error', lastError: '工作流修订已不存在，请重新配置触发器。', updatedAt: now.toISOString() } : item) }));
         continue;
       }
-      const cloud = definition.nodes.some(node => {
+      const cloud = definition.nodes.some(node => node.agent?.capabilities?.some(r => r.kind === 'mcp')) || definition.nodes.some(node => {
         if (!isWorkflowModelNode(node)) return false;
         const routeId = node.profileId || schedule.profileId;
         return routeId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(state.profiles.find(profile => profile.id === routeId)?.mode || '');
@@ -321,6 +335,28 @@ async function executeWorkflowSchedule(id: string, allowCloud: boolean): Promise
   }
 }
 
+function capabilityRecorder(taskId: string, agent: AgentDefinition, guard: () => void, workflowNodeId?: string) {
+  let step: ToolRun | undefined;
+  return async (resourceId: string, phase: 'started' | 'succeeded') => {
+    guard();
+    if (phase === 'started') {
+      const resource = agent.capabilities?.find(item => item.id === resourceId);
+      step = { id: crypto.randomUUID(), callId: crypto.randomUUID(), taskId, workflowNodeId,
+        tool: 'agent.capability', arguments: JSON.stringify({ resourceId, kind: resource?.kind }),
+        status: 'running', startedAt: new Date().toISOString(),
+        warnings: resource?.kind === 'mcp' ? ['远程调用可能产生外部操作；中断后需核验，不会自动续跑本步骤。'] : [] };
+    } else {
+      if (!step) throw new Error('缺少能力调用检查点。');
+      step = { ...step, status: 'succeeded', finishedAt: new Date().toISOString(), result: '调用完成（不保存参数与返回正文）' };
+    }
+    const record = step;
+    useWorkbenchStore.setState(state => ({ toolRuns: [...state.toolRuns.filter(item => item.id !== record.id), record],
+      taskRuns: state.taskRuns.map(task => task.id === taskId ? { ...task,
+        toolRunIds: task.toolRunIds.includes(record.id) ? task.toolRunIds : [...task.toolRunIds, record.id] } : task) }));
+    await persist(true); guard();
+  };
+}
+
 function eraseMemory() {
   textBatchGeneration++; textBatchPlan = null;
   personalImportGeneration++; personalImportPlan = null;
@@ -339,7 +375,7 @@ function eraseMemory() {
   clearWorkflowDraftTimer();
   clearWorkflowScheduleTimer();
   workflowSchedulesInFlight.clear();
-  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], referenceDocuments: [], workflowSchedules: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, capabilities: [], pptxDraft: null, agents: [], workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], referenceDocuments: [], workflowSchedules: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -844,7 +880,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
   },
-  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
+  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -889,7 +925,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const recoveredSchedules = workflowSchedules.map(schedule => schedule.enabled && schedule.status === 'enabled'
       && schedule.nextRunAt && Date.parse(schedule.nextRunAt) <= Date.now()
       ? { ...schedule, status: 'awaiting-device' as const, updatedAt: unlockedAt } : schedule);
-    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: data.workflows ?? [], referenceDocuments: data.referenceDocuments ?? [], workflowSchedules: recoveredSchedules, workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
+    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: data.imageDraft ?? null, capabilities: data.capabilities ?? [], pptxDraft: data.pptxDraft ?? null, agents: (data.agents ?? []).map(validateAgent), workflows: data.workflows ?? [], referenceDocuments: data.referenceDocuments ?? [], workflowSchedules: recoveredSchedules, workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
     if (recoveredSchedules.some((item, index) => item !== workflowSchedules[index])) await persist();
@@ -906,11 +942,65 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
     clearWorkflowScheduleTimer();
-    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
     if (epoch === generation) eraseMemory();
+  },
+  saveImageDraft: async draft => {
+    if (!get().unlocked) throw new Error('请先解锁本机加密库。');
+    const clean = validateImageStudio(draft), epoch = generation, previous = get().imageDraft;
+    const bytes = [...clean.references, ...(clean.result ? [clean.result] : [])].reduce((sum, image) => sum + image.bytes, 0)
+      + get().conversations.flatMap(c => c.messages).flatMap(m => m.images ?? []).reduce((sum,i) => sum+i.bytes,0)
+      + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0)
+      + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0);
+    if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过8 MiB，请删除较早素材。');
+    set({ imageDraft: clean });
+    try { await persist(true); } catch (e) { if (epoch === generation && get().imageDraft === clean) set({ imageDraft: previous }); throw e; }
+  },
+  saveCapability: async input => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const epoch = generation, { validateCapability } = await import('@/agents/capabilities');
+    if (epoch !== generation || !get().unlocked) throw new Error('密钥库已改变。');
+    const clean = validateCapability(input), previous = get().capabilities;
+    if (previous.length >= 100 && !previous.some(r => r.id === clean.id)) throw new Error('最多保存100项能力。');
+    const next = [clean, ...previous.filter(r => r.id !== clean.id)]; set({ capabilities: next });
+    try { await persist(true); } catch (error) { if (generation === epoch && get().capabilities === next) set({ capabilities: previous }); throw error; }
+  },
+  removeCapability: async id => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const previous = get().capabilities, epoch = generation, next = previous.filter(r => r.id !== id); set({ capabilities: next });
+    try { await persist(true); } catch (error) { if (generation === epoch && get().capabilities === next) set({ capabilities: previous }); throw error; }
+  },
+  saveAgent: async input => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const agent = validateAgent(input), previous = get().agents.find(item => item.id === agent.id), epoch = generation;
+    if (!previous && get().agents.length >= 100) throw new Error('本机最多保存 100 个智能体。');
+    const next = [agent, ...get().agents.filter(item => item.id !== agent.id)];
+    set({ agents: next });
+    try { await persist(true); }
+    catch (error) { if (epoch === generation && get().agents === next) set({ agents: previous ? next.map(item => item.id === previous.id ? previous : item) : next.filter(item => item.id !== agent.id) }); throw error; }
+  },
+  savePptxDraft: async deck => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const { validatePptxDesign } = await import('@/officeTasks/pptxDesign');
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const clean = validatePptxDesign(deck);
+    const otherImages = get().conversations.flatMap(item => item.messages).flatMap(message => message.images ?? [])
+      .concat(get().taskRuns.flatMap(task => task.referenceImages ?? [])).reduce((sum, image) => sum + image.bytes, 0);
+    const deckImages = clean.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0);
+    if (otherImages + deckImages + [...(get().imageDraft?.references ?? []), ...(get().imageDraft?.result ? [get().imageDraft!.result!] : [])].reduce((sum,i) => sum+i.bytes,0) > MAX_VAULT_IMAGE_BYTES) throw new Error('设计图片会使本机加密库中的图片总量超过 8 MiB，请删除较早的含图对话或任务。');
+    set({ pptxDraft: clean });
+    await persist(true);
+  },
+  removeAgent: async id => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const previous = get().agents, next = previous.filter(item => item.id !== id), epoch = generation;
+    if (next.length === previous.length) return;
+    set({ agents: next });
+    try { await persist(true); }
+    catch (error) { if (epoch === generation && get().agents === next) set({ agents: previous }); throw error; }
   },
   saveProfile: async (input, apiKey, clearKey = false) => {
     if (!get().unlocked || !vault) throw new Error("请先解锁本机密钥库。");
@@ -918,8 +1008,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const previous = secrets.find((profile) => profile.id === input.id);
     if (secrets.length >= 30 && !previous) throw new Error("最多保存 30 个模型连接。");
     const secret = keyForEndpoint(input, apiKey, clearKey, baseUrl);
-    const configChanged = !previous || previous.mode !== input.mode || previous.baseUrl !== baseUrl || previous.model !== input.model.trim() || previous.maxTokens !== input.maxTokens || previous.apiKey !== secret;
-    const profile = { ...input, name: input.name.trim(), model: input.model.trim(), baseUrl, apiKey: secret,
+    const imageModel = validateImageModel(input.imageModel);
+    const configChanged = !previous || previous.mode !== input.mode || previous.baseUrl !== baseUrl || previous.model !== input.model.trim() || previous.imageModel !== imageModel || previous.maxTokens !== input.maxTokens || previous.apiKey !== secret;
+    const profile = { ...input, name: input.name.trim(), model: input.model.trim(), ...(imageModel ? { imageModel } : { imageModel: undefined }), baseUrl, apiKey: secret,
       textTestedAt: configChanged ? undefined : previous.textTestedAt,
       toolTestedAt: configChanged ? undefined : previous.toolTestedAt,
       capabilities: configChanged ? undefined : previous.capabilities };
@@ -1013,6 +1104,16 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
     return supported;
   },
+  generateImage: async (profileId, prompt, allowCloud, signal) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    const profile = get().profiles.find(item => item.id === profileId), secret = secrets.find(item => item.id === profileId);
+    if (!profile || !secret || !profile.imageModel) throw new Error('请选择已配置生图模型的连接。');
+    if (profile.mode !== 'local' && !allowCloud) throw new Error('发送图片生成描述到云端前需要明确授权。');
+    const epoch = generation, fingerprint = JSON.stringify(secret);
+    const image = await modelCheck(profile.mode, signal, requestSignal => generateWorkImage(profile, secret.apiKey, prompt, requestSignal), 120_000);
+    if (epoch !== generation || !get().unlocked || JSON.stringify(secrets.find(item => item.id === profileId)) !== fingerprint) throw new Error('模型连接或密钥库状态已改变，图片未返回。');
+    return image;
+  },
   newConversation: (profileId) => {
     if (!get().unlocked) return "";
     const id = crypto.randomUUID();
@@ -1051,7 +1152,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const historyImageBytes = conversation.messages.flatMap(message => message.images ?? []).reduce((total, image) => total + image.bytes, 0);
     const vaultImageBytes = get().conversations.flatMap(item => item.messages.flatMap(message => message.images ?? [])).reduce((total, image) => total + image.bytes, 0);
     const newImageBytes = images.reduce((total, image) => total + image.bytes, 0);
-    if (vaultImageBytes + newImageBytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 8 MiB，请先删除不再需要的旧对话。');
+    if (vaultImageBytes + [...(get().imageDraft?.references ?? []), ...(get().imageDraft?.result ? [get().imageDraft!.result!] : [])].reduce((sum,i) => sum+i.bytes,0) + newImageBytes + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0) + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 8 MiB，请先删除不再需要的旧对话。');
     const isCloud = useAccount || ['relay', 'direct'].includes(profile?.mode || '');
     if (isCloud && (historyImageBytes > 0 || newImageBytes > 0) && !allowCloudImages) throw new Error('云端发送包含本对话中的图片，需重新明确授权。');
     if (useAccount) {
@@ -1125,8 +1226,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个办公任务，请先删除旧任务。');
     const clean = validateDocumentTask(input);
     const storedImageBytes = get().conversations.flatMap(item => item.messages).flatMap(message => message.images ?? []).reduce((sum, image) => sum + image.bytes, 0)
+      + (get().pptxDraft?.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0) ?? 0)
       + get().taskRuns.flatMap(item => item.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0);
-    if (storedImageBytes + (clean.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机加密库中的图片总量将超过 8 MiB，请先删除较早的含图对话或任务。');
+    if (storedImageBytes + [...(get().imageDraft?.references ?? []), ...(get().imageDraft?.result ? [get().imageDraft!.result!] : [])].reduce((sum,i) => sum+i.bytes,0) + (clean.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机加密库中的图片总量将超过 8 MiB，请先删除较早的含图对话或任务。');
     const messages = buildDocumentMessages(clean);
     const profile = get().profiles.find(item => item.id === profileId);
     const secret = secrets.find(item => item.id === profileId);
@@ -1138,8 +1240,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型请求。');
     const id = crypto.randomUUID(), toolId = crypto.randomUUID(), now = new Date().toISOString();
     const controller = new AbortController(), token = `task:${id}`, epoch = generation;
-    controllers.set(token, controller); if (account || profile?.mode === 'relay') accountRequests.add(token);
-    const task: TaskRun = { id, type: 'document.generate-markdown', title: clean.title, profileId, instruction: clean.instruction,
+    controllers.set(token, controller); if (account || profile?.mode === 'relay' || clean.agent?.capabilities?.some(r => r.sharedId)) accountRequests.add(token);
+    const task: TaskRun = { id, type: 'document.generate-markdown', title: clean.title, profileId, instruction: clean.instruction, ...(clean.outputFormat ? { outputFormat: clean.outputFormat } : {}),
       ...(clean.sourceName ? { sourceName: clean.sourceName } : {}), ...(clean.sourceContent ? { sourceContent: clean.sourceContent } : {}),
       ...(clean.referenceImages?.length ? { referenceImages: clean.referenceImages } : {}),
       status: 'running', createdAt: now, updatedAt: now, toolRunIds: [toolId], artifactIds: [] };
@@ -1166,9 +1268,15 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     });
     try {
       if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
-      const result = account ? await completeAccountModel(messages, controller.signal, preview.push, onFinish) : {
-        content: await completeModel(profile!, secret!.apiKey, messages, controller.signal, preview.push, onFinish), model: profile!.model,
+      const request = async (nextMessages: typeof messages) => {
+        finishReason = 'unknown';
+        const reply = account ? await completeAccountModel(nextMessages, controller.signal, preview.push, onFinish) : {
+          content: await completeModel(profile!, secret!.apiKey, nextMessages, controller.signal, preview.push, onFinish), model: profile!.model,
+        };
+        return { ...reply, finishReason };
       };
+      const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('任务已停止', 'AbortError'); };
+      const result = clean.agent ? await runAgent(clean.agent, clean.agentInputs!, controller.signal, request, allowCloud, capabilityRecorder(id, clean.agent, guard)) : await request(messages);
       if (controller.signal.aborted || epoch !== generation) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
       const content = normalizeDocumentMarkdown(result.content), completedAt = new Date().toISOString();
       const artifact: WorkArtifact = { id: crypto.randomUUID(), taskId: id, kind: 'markdown', version: 1,
@@ -1180,13 +1288,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: 'succeeded', model: result.model, finishReason, finishedAt: completedAt, error: undefined } : item) }));
       await persist(true);
       if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请解锁后检查任务成果。');
+      void get().triggerWorkflowEvent('task.completed').catch(() => {});
       return id;
     } catch (error) {
       if (epoch === generation && !get().taskRuns.find(item => item.id === id)?.artifactIds.length) {
         const stoppedAt = new Date().toISOString(), cancelled = controller.signal.aborted;
         const message = cancelled ? '任务已取消或超时。' : error instanceof Error ? error.message : '文档生成失败。';
         set(state => ({ taskRuns: state.taskRuns.map(item => item.id === id ? { ...item, status: cancelled ? 'cancelled' : 'failed', updatedAt: stoppedAt, error: message } : item),
-          toolRuns: state.toolRuns.map(item => item.id === toolId ? { ...item, status: cancelled ? 'cancelled' : 'failed', finishedAt: stoppedAt, error: message } : item) }));
+          toolRuns: state.toolRuns.map(item => item.taskId === id && item.status === 'running' ? { ...item, status: cancelled ? 'cancelled' : 'failed', finishedAt: stoppedAt, error: message } : item) }));
         await persist();
       }
       throw error;
@@ -1305,7 +1414,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       ...(state.workflowDraft?.id === id ? { workflowDraft: null, workflowDraftSaving: false } : {}) }));
     await persist(true);
   },
-  startWorkflow: async (definitionId, revision, input, profileId, allowCloud, resume) => {
+  startWorkflow: async (definitionId, revision, input, profileId, allowCloud, resume, onStarted) => {
     const epoch = generation;
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     // Snapshot caller input before imports/awaits; definitions cannot mutate a live run.
@@ -1351,6 +1460,17 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       if (!resumeNodeId) throw new Error('原工作流没有可续跑的步骤。');
       const resumeIndex = ordered.findIndex(node => node.id === resumeNodeId);
       if (resumeIndex < 0) throw new Error('续跑步骤不存在于原工作流快照中。');
+      const replayed = new Set(ordered.slice(resumeIndex).map(node => node.id));
+      let ancestor: TaskRun | undefined = source;
+      const visited = new Set<string>();
+      while (ancestor && !visited.has(ancestor.id)) {
+        visited.add(ancestor.id);
+        if (get().toolRuns.some(tool => tool.taskId === ancestor!.id && tool.tool === 'agent.capability'
+          && replayed.has(tool.workflowNodeId ?? '') && JSON.parse(tool.arguments ?? '{}').kind === 'mcp')) {
+          throw new Error('待续跑步骤曾发出远程 MCP 调用，可能已产生外部操作。请先核验服务端记录，再新建运行；本次不会自动重发。');
+        }
+        ancestor = get().taskRuns.find(task => task.id === ancestor?.resumedFromTaskId);
+      }
       for (const node of ordered.slice(0, resumeIndex)) {
         const step = findCheckpoint(node.id);
         if (!step || step.status !== 'succeeded' || Boolean(step.finishReason && step.finishReason !== 'stop') || !step.result) {
@@ -1402,7 +1522,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       const routeId = node.profileId || profileId;
       return [node.id, { id: routeId, profile: get().profiles.find(item => item.id === routeId), secret: secrets.find(item => item.id === routeId), account: routeId === ACCOUNT_MODEL_ID }];
     }));
-    const cloud = [...routes.values()].some(route => route.account || ['relay', 'direct'].includes(route.profile?.mode || ''));
+    const cloud = frozen.definition.nodes.some(n => n.agent?.capabilities?.some(r => r.kind === 'mcp')) || [...routes.values()].some(route => route.account || ['relay', 'direct'].includes(route.profile?.mode || ''));
     if (usesModel) {
       for (const route of routes.values()) {
         if (route.account) {
@@ -1414,7 +1534,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (controllers.size >= 3) throw new Error('最多同时运行 3 个模型或工作流请求。');
     if (get().taskRuns.length >= 100) throw new Error('最多保留 100 个办公任务。');
     const id = crypto.randomUUID(), token = `task:${id}`, now = new Date().toISOString(), controller = new AbortController();
-    controllers.set(token, controller); if ([...routes.values()].some(route => route.account)) accountRequests.add(token);
+    controllers.set(token, controller); if ([...routes.values()].some(route => route.account || route.profile?.mode === 'relay') || frozen.definition.nodes.some(n => n.capability?.sharedId || n.agent?.capabilities?.some(r => r.sharedId))) accountRequests.add(token);
     const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('工作流已停止或密钥库已锁定', 'AbortError'); };
     set(state => ({ taskRuns: [{ id, type: 'workflow.run', workflow: frozen, title: definition.name, profileId: usesModel ? profileId : '',
       instruction: resume ? '从已保存检查点继续运行工作流' : '手动运行已保存工作流', status: 'running', createdAt: now, updatedAt: now,
@@ -1422,6 +1542,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       ...(source ? { resumedFromTaskId: source.id, ...(resumeNodeId ? { resumeFromNodeId: resumeNodeId } : {}) } : {}) }, ...state.taskRuns],
       toolRuns: [...state.toolRuns, ...restoredCheckpoints.map(item => ({ ...item.step, taskId: id }))],
       artifacts: [...restoredCheckpoints.flatMap(item => item.artifact ? [{ ...item.artifact, taskId: id }] : []), ...state.artifacts] }));
+    onStarted?.(id);
     const timeout = setTimeout(() => controller.abort(), 12 * 60000);
     try {
       await persist(true); guard();
@@ -1439,8 +1560,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         });
         try {
           const messages = buildDocumentMessages(document), finish = (reason: FinishReason) => { finishReason = reason; };
-          const result = route.account ? await completeAccountModel(messages, round.signal, preview.push, finish)
-            : { content: await completeModel(route.profile!, route.secret!.apiKey, messages, round.signal, preview.push, finish), model: route.profile!.model };
+          const request = async (nextMessages: typeof messages) => {
+            finishReason = 'unknown';
+            const reply = route.account ? await completeAccountModel(nextMessages, round.signal, preview.push, finish)
+              : { content: await completeModel(route.profile!, route.secret!.apiKey, nextMessages, round.signal, preview.push, finish), model: route.profile!.model };
+            return { ...reply, finishReason };
+          };
+          const result = document.agent ? await runAgent(document.agent, document.agentInputs!, round.signal, request, allowCloud, capabilityRecorder(id, document.agent, guard, node.id)) : await request(messages);
           guard(); if (round.signal.aborted) throw new Error('此模型步骤已超时。');
           return { ...result, finishReason };
         } finally { preview.dispose(); clearTimeout(roundTimeout); controller.signal.removeEventListener('abort', abort); }
@@ -1510,6 +1636,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
   triggerWorkflowEvent: async eventName => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
+    if (!get().workflowSchedules.some(item => item.enabled && item.kind === 'event' && item.eventName === eventName && item.status === 'enabled')) return;
     const now = new Date();
     set(state => ({ workflowSchedules: state.workflowSchedules.map(item => scheduleEvent(item, eventName, now)) }));
     await persist(true);
@@ -1624,6 +1751,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       throw error;
     }
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，参考材料未保存。');
+    void get().triggerWorkflowEvent('reference.added').catch(() => {});
     return document.id;
   },
   removeReferenceDocument: async id => {

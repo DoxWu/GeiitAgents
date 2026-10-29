@@ -89,6 +89,7 @@ class DocumentResponse(BaseModel):
         "private",
         description="可见性：private 个人文档库 / public 公共文档库"
     )
+    organization_id: Optional[int] = None
     # 修复 Issue 6/8：暴露 folder_id，供前端移动文档、区分分支归属
     folder_id: Optional[int] = Field(None, description="所属文档库分支ID")
     processing_step: Optional[str] = Field(None, description="当前处理步骤")
@@ -275,6 +276,9 @@ class BatchMoveRequest(BaseModel):
         description="目标文档库：private 个人文档库 / public 公共文档库（仅管理员）。"
                     "不传则保持各文档原 visibility 不变。",
     )
+
+
+    organization_id: Optional[int] = None
 
 
 class BatchOperationResponse(BaseModel):

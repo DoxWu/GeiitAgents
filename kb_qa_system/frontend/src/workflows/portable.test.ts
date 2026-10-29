@@ -36,6 +36,18 @@ it('roundtrips bounded loop settings and still imports version 1 workflow files'
   expect(importWorkflowDefinition(v1).nodes[0].kind).toBe('inspect_csv');
 });
 
+it('remaps agent field references when exporting and importing reusable agent steps', async () => {
+  const { newAgent } = await import('@/agents/definition');
+  const first = newWorkflowNode('agent', 0), second = newWorkflowNode('agent', 1);
+  const input = newAgent(); input.instructions = 'Process';
+  const output = newAgent(); output.instructions = 'Use prior value'; output.inputFields = [{ key: 'source', label: 'Source', type: 'string', required: true, description: '' }];
+  first.agent = input; first.bindings = { context: { source: 'reference', value: '' } };
+  second.agent = output; second.bindings = { source: { source: 'step', value: '', nodeId: first.id, field: 'result' } };
+  const source = { ...newWorkflow(), name: 'agent sequence', nodes: [first, second], edges: [{ from: first.id, to: second.id }] };
+  const imported = importWorkflowDefinition(exportWorkflowDefinition(source));
+  expect(imported.nodes[1].bindings?.source.nodeId).toBe(imported.nodes[0].id);
+});
+
 it('rejects a cycle after remapping imported step identifiers', () => {
   const first = newWorkflowNode('inspect_csv', 0), second = newWorkflowNode('create_document', 1);
   const encoded = JSON.stringify({ format: 'geiit-workflow-definition', version: 1, exportedAt: new Date().toISOString(),

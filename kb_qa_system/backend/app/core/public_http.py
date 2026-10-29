@@ -22,6 +22,10 @@ class PinnedHTTPSAdapter(HTTPAdapter):
 
 
 def public_get(url: str, *, headers=None, timeout=30, allow_redirects=False, stream=True):
+    return public_request("GET", url, headers=headers, timeout=timeout, allow_redirects=allow_redirects, stream=stream)
+
+
+def public_request(method: str, url: str, *, headers=None, timeout=30, allow_redirects=False, stream=True, json=None):
     if allow_redirects:
         raise ValueError("Redirects require validation of every destination")
     validate_url(url, allow_private=False)
@@ -42,7 +46,7 @@ def public_get(url: str, *, headers=None, timeout=30, allow_redirects=False, str
     if parsed.scheme == 'https':
         session.mount('https://', PinnedHTTPSAdapter(hostname))
     try:
-        response = session.get(pinned, headers={**(headers or {}), 'Host': host},
+        response = session.request(method, pinned, headers={**(headers or {}), 'Host': host}, json=json,
                                timeout=(min(timeout, 10), min(timeout, 5)),
                                allow_redirects=False, stream=stream)
     except Exception:

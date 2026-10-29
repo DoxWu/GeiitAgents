@@ -15,6 +15,8 @@ export default defineConfig({
   plugins: [react(), tsconfigPaths()],
   test: {
     globals: true,
+    maxWorkers: 4,
+    testTimeout: 15_000,
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     css: true,

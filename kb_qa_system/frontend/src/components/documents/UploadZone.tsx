@@ -57,12 +57,13 @@ interface UploadZoneProps {
    * - mine / accessible：上传到个人文档库（visibility=private）
    */
   scope?: DocumentScope;
+  organizationId?: number;
   /** 是否紧凑模式（在工具栏中使用） */
   compact?: boolean;
 }
 
 /** UploadZone 组件 */
-export function UploadZone({ folderId, scope, compact = false }: UploadZoneProps) {
+export function UploadZone({ folderId, scope, organizationId, compact = false }: UploadZoneProps) {
   const { uploadDocument } = useDocumentStore();
   const toast = useToastStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -147,14 +148,16 @@ export function UploadZone({ folderId, scope, compact = false }: UploadZoneProps
       // - scope=mine/accessible → visibility=private（个人文档库）
       // 作用：此前未传 visibility，后端默认 private，导致用户在公共库视图下上传的文档
       //       仍归入个人库，列表刷新后看不到，被误判为"统一出现在全部文档"。
-      const visibility: DocumentVisibility =
-        scope === "public" ? "public" : "private";
+      const visibility: DocumentVisibility = organizationId !== undefined
+        ? "organization"
+        : scope === "public" ? "public" : "private";
 
       try {
         await uploadDocument(
           {
             file,
             visibility,
+            ...(organizationId !== undefined ? { organization_id: organizationId } : {}),
             folder_id: folderId ?? undefined,
             conflict_resolution: conflictResolution,
           },
@@ -225,7 +228,7 @@ export function UploadZone({ folderId, scope, compact = false }: UploadZoneProps
         );
       }, 3000);
     },
-    [folderId, scope, uploadDocument, toast],
+    [folderId, scope, organizationId, uploadDocument, toast],
   );
 
   /**

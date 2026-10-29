@@ -37,6 +37,7 @@ class RegisterApplyRequest(BaseModel):
         frontend/src/types/user.ts → RegisterApplyRequest
     """
     email: EmailStr = Field(..., description="申请人邮箱")
+    organization_id: Optional[int] = Field(None, ge=1)
     username: str = Field(
         ...,
         min_length=3,
@@ -104,6 +105,7 @@ class ApplicationListItem(BaseModel):
     reviewed_at: Optional[datetime] = None
     reviewed_by: Optional[int] = None
     reject_reason: Optional[str] = None
+    organization_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -122,6 +124,7 @@ class ApproveRequest(BaseModel):
     批准申请请求 Schema
     """
     application_id: int = Field(..., description="申请 ID")
+    organization_id: Optional[int] = Field(None, ge=1)
 
 
 class RejectRequest(BaseModel):

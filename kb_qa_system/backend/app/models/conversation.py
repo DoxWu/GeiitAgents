@@ -13,11 +13,14 @@
 """
 
 from datetime import datetime
-from typing import List, Optional
-from sqlalchemy import String, DateTime, Text, Integer, ForeignKey, Boolean, JSON, func, Index
+from typing import TYPE_CHECKING, List, Optional
+from sqlalchemy import String, DateTime, Text, Integer, ForeignKey, Boolean, JSON, func, Index, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class Conversation(Base):
@@ -47,7 +50,7 @@ class Conversation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     # 对话标题（默认取第一条消息的前20个字）
-    title: Mapped[str] = mapped_column(String(200), default="新对话")
+    title: Mapped[str] = mapped_column(String(200), default="新对话", server_default="新对话")
 
     # 用户ID（外键，关联 users 表）
     user_id: Mapped[int] = mapped_column(
@@ -57,11 +60,11 @@ class Conversation(Base):
     )
 
     # 是否活跃（软删除：False 表示已删除）
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
 
     # 是否置顶/收藏
     # 作用：用户可收藏重要对话，置顶显示
-    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), index=True)
 
     # ============================================
     # 记忆衰退机制相关字段
@@ -74,26 +77,28 @@ class Conversation(Base):
 
     # 摘要涵盖的轮数
     # 作用：记录摘要包含到第几轮，避免重复摘要
-    summary_turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    summary_turn_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 对话总轮数
     # 作用：用于判断是否需要生成摘要
-    turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    turn_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 额外元数据（JSON 格式，存储对话设置等）
     metadata_: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # 创建时间
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=True,
     )
 
     # 最后更新时间
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
-        onupdate=func.now()
+        onupdate=func.now(),
+        nullable=True,
     )
 
     # ============================================
@@ -174,25 +179,25 @@ class Message(Base):
     sources: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     # 是否正在流式生成（True 表示生成中，False 表示完成）
-    is_streaming: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_streaming: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     # ============================================
     # 新增字段
     # ============================================
 
     # Token 数量（用于成本计算和上下文长度控制）
-    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 使用的模型（记录实际使用的 LLM 模型）
     model_used: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # 响应耗时（毫秒）
     # 作用：性能监控
-    response_time_ms: Mapped[int] = mapped_column(Integer, default=0)
+    response_time_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 是否是重新生成的消息
     # 作用：支持消息重新生成功能
-    is_regenerated: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_regenerated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     # 父消息ID（重新生成时关联原消息）
     # 作用：重新生成的消息关联到原消息，便于追溯
@@ -209,15 +214,16 @@ class Message(Base):
 
     # 是否降级生成
     # 作用：标记该消息是否在降级模式下生成
-    is_degraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_degraded: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     # 降级原因
     degrade_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # 创建时间
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=True,
     )
 
     # ============================================

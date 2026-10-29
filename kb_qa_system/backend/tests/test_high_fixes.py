@@ -249,14 +249,18 @@ class TestReprocessTOCTOU:
         assert "H-3" in source, "应有 H-3 修复标记"
         assert "TOCTOU" in source, "应说明 TOCTOU 竞态窗口"
 
-    def test_processing_check_before_lock(self):
-        """验证 status==processing 检查在锁获取之前（快速失败）"""
+    def test_processing_state_is_rechecked_under_lock(self):
+        """The optimistic precheck is repeated against refreshed state under the lock."""
         source = read_source("app/api/routes/documents.py")
-        check_pos = source.find('document.status == "processing"')
+        check_pos = source.find('document.status in {"pending", "processing"}')
         lock_pos = source.find("RedisManager.acquire_lock(lock_key")
-        assert check_pos > 0, "应有 processing 状态检查"
+        refresh_pos = source.find("db.refresh(document)", lock_pos)
+        recheck_pos = source.find('document.status in {"pending", "processing"}', lock_pos)
+        mark_pos = source.find('document.status = "processing"', recheck_pos)
+        assert check_pos > 0, "应保留快速状态检查"
         assert lock_pos > 0, "应有锁获取"
-        assert check_pos < lock_pos, "状态检查应在锁获取之前（快速失败）"
+        assert check_pos < lock_pos < refresh_pos < recheck_pos < mark_pos, \
+            "应在锁内刷新并检查状态后再标记为 processing"
 
 
 # ============================================

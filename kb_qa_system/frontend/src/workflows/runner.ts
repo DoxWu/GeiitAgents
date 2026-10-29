@@ -3,9 +3,16 @@ import { documentExportContent, normalizeDocumentMarkdown, sha256Text, type Docu
 import { checkChart, parseChartCsv } from '@/officeTasks/chart';
 import type { FinishReason } from '@/services/modelStream';
 import type { ToolRun, WorkArtifact } from '@/types/workbench';
-import { isWorkflowModelNode, validateWorkflow, validateWorkflowInput, workflowOrder, type WorkflowCondition, type WorkflowDefinition, type WorkflowInput, type WorkflowNode } from './definition';
+import { agentMessages, validateAgentOutput } from '@/agents/definition';
+import { executeWorkflowFunction } from './functions';
+import { verifyCapability } from '@/api/capabilities';
+import { isBranchNode, nodeContract, isWorkflowModelNode, validateWorkflow, validateWorkflowInput, workflowOrder, type WorkflowCondition, type WorkflowDefinition, type WorkflowInput, type WorkflowNode } from './definition';
 
 export const WORKFLOW_SKIPPED_RESULT = '__geiit_workflow_skipped__';
+function branchValue(result: string | undefined) {
+  if (result === 'true' || result === 'false') return result;
+  try { return String(JSON.parse(result ?? '').decision); } catch { return undefined; }
+}
 
 export function evaluateWorkflowCondition(condition: WorkflowCondition, input: WorkflowInput, previous: string): boolean {
   const source = condition.source === 'reference' ? input.reference : condition.source === 'csv' ? input.csv : previous;
@@ -25,7 +32,12 @@ export function evaluateWorkflowCondition(condition: WorkflowCondition, input: W
 }
 
 function toolName(node: WorkflowNode): ToolRun['tool'] {
-  return node.kind === 'condition' ? 'workflow.condition' : node.kind === 'generate_document' || node.kind === 'loop' ? 'model.complete' : `office.${node.kind}`;
+  if (node.kind === 'trigger') return 'workflow.trigger';
+  if (node.kind === 'function') return 'workflow.function';
+  if (isBranchNode(node)) return 'workflow.condition';
+  if (isWorkflowModelNode(node)) return 'model.complete';
+  if (node.kind === 'inspect_csv' || node.kind === 'render_chart' || node.kind === 'create_document') return `office.${node.kind}`;
+  throw new Error('工作流步骤类型无效。');
 }
 function loopIterationKey(nodeId: string, iteration: number) { return `workflow-loop:${nodeId}:${iteration}`; }
 
@@ -35,6 +47,9 @@ export interface WorkflowResumeOptions {
 
 export function prepareWorkflow(definition: WorkflowDefinition, input: WorkflowInput) {
   const graph = validateWorkflow(definition), values = validateWorkflowInput(input);
+  if (values.triggerNodeId && !graph.nodes.some(n => n.id === values.triggerNodeId && n.kind === 'trigger')) throw new Error('触发入口不存在。');
+  if (graph.nodes.some(n => n.kind === 'function' && !n.fn?.reviewed)) throw new Error('请先检查并确认所有函数代码。');
+  if (graph.nodes.some(n => n.agent?.capabilities?.some(resource => resource.fn && !resource.fn.reviewed))) throw new Error('智能体绑定了尚未检查确认的工具函数，请在资源仓库检查并重新绑定。');
   // Reject static CSV/chart errors before a model is charged or a task is created.
   for (const node of graph.nodes) {
     if (node.kind === 'inspect_csv') parseChartCsv(values.csv);
@@ -46,6 +61,7 @@ export async function runWorkflow(taskId: string, definition: WorkflowDefinition
   model: (input: DocumentTaskInput, node: WorkflowDefinition['nodes'][number]) => Promise<{ content: string; model: string; finishReason: FinishReason }>,
   checkpoint: (event: ToolCheckpoint) => Promise<void>, options: WorkflowResumeOptions = {}): Promise<string> {
   const prepared = prepareWorkflow(definition, input), graph = prepared.definition, values = prepared.input;
+  for (const node of graph.nodes) for (const resource of [...(node.agent?.capabilities ?? []), ...(node.capability ? [node.capability] : [])]) await verifyCapability(resource, signal);
   const results = new Map<string, string>(), skipped = new Set<string>();
   for (const [id, result] of options.completedResults ?? []) {
     results.set(id, result);
@@ -57,9 +73,10 @@ export async function runWorkflow(taskId: string, definition: WorkflowDefinition
     if (results.has(node.id)) continue;
     const incoming = graph.edges.filter(e => e.to === node.id);
     const enabled = incoming.filter(edge => !skipped.has(edge.from) && results.has(edge.from)
-      && (edge.when === undefined || results.get(edge.from) === edge.when));
+      && (edge.when === undefined || branchValue(results.get(edge.from)) === edge.when));
     // Topological ordering has already resolved every predecessor, including skipped paths.
-    const active = !incoming.length || enabled.length > 0;
+    const selectedTrigger = values.triggerNodeId ?? graph.nodes.find(n => n.kind === 'trigger' && n.trigger?.kind === 'manual')?.id ?? graph.nodes.find(n => n.kind === 'trigger')?.id;
+    const active = node.kind === 'trigger' ? node.id === selectedTrigger : incoming.length ? enabled.length > 0 : !selectedTrigger;
     if (!active) {
       const now = new Date().toISOString();
       await checkpoint({ step: { id: crypto.randomUUID(), taskId, workflowNodeId: node.id, tool: toolName(node), status: 'succeeded', startedAt: now, finishedAt: now,
@@ -73,8 +90,36 @@ export async function runWorkflow(taskId: string, definition: WorkflowDefinition
     await checkpoint({ step }); guard();
     let artifact: WorkArtifact | undefined, result: string, modelName: string | undefined, finishReason: FinishReason | undefined;
     try {
-      if (node.kind === 'condition') {
+      if (node.kind === 'trigger') { result = JSON.stringify(values);
+      } else if (node.kind === 'condition') {
         result = String(evaluateWorkflowCondition(node.condition!, values, sources.map(source => source.output).join('\n')));
+      } else if (node.kind === 'agent' || node.kind === 'agent_condition' || node.kind === 'function') {
+        const agent = nodeContract(node)!, inputs: Record<string, string | number | boolean> = {};
+        for (const field of agent.inputFields) {
+          const binding = node.bindings?.[field.key];
+          if (!binding) continue;
+          if (binding.source === 'step') {
+            if (!enabled.some(edge => edge.from === binding.nodeId)) throw new Error(`智能体输入“${field.label}”所引用的步骤未执行。`);
+            const sourceNode = graph.nodes.find(n => n.id === binding.nodeId)!;
+            const source = validateAgentOutput(results.get(binding.nodeId!), nodeContract(sourceNode)!);
+            if (source[binding.field!] !== undefined) inputs[field.key] = source[binding.field!];
+          } else {
+            const value = binding.source === 'reference' ? values.reference : binding.source === 'csv' ? values.csv
+              : binding.source === 'previous' ? sources.map(source => source.output).join('\n') : binding.value;
+            inputs[field.key] = field.type === 'number' ? Number(value) : field.type === 'boolean' ? value === 'true' : value;
+          }
+        }
+        agentMessages(agent, inputs); // Validate inputs before sending any model request.
+        if (node.capability) await verifyCapability(node.capability, signal);
+        guard();
+        const reply = node.kind === 'function'
+          ? { content: JSON.stringify(await executeWorkflowFunction(node.fn!, inputs, signal)), model: '本机隔离函数', finishReason: 'stop' as const }
+          : await model({ title: node.title, instruction: '按智能体字段契约执行', agent, agentInputs: inputs }, node);
+        guard();
+        if (reply.finishReason !== 'stop') throw new Error('智能体未正常完成，输出不会进入后续步骤。');
+        const output = validateAgentOutput(reply.content, agent);
+        result = JSON.stringify(output);
+        modelName = reply.model; finishReason = reply.finishReason;
       } else if (node.kind === 'generate_document' || node.kind === 'loop') {
         let reply: { content: string; model: string; finishReason: FinishReason };
         if (node.kind === 'loop') {

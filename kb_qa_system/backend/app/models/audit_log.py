@@ -95,10 +95,11 @@ class AuditLog(Base):
     user_agent: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # 操作时间
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
         index=True,
+        nullable=True,
     )
 
     # ============================================

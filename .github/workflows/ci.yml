@@ -383,7 +383,7 @@ jobs:
             geiit/backend:${{ github.sha }} \
             -m pytest tests/test_ops.py tests/test_ops_alerts.py tests/test_maintenance.py \
             tests/test_recovery_bundle.py tests/test_vector_store_live_postgres.py \
-            tests/test_embedding_migration.py \
+            tests/test_embedding_migration.py tests/test_schema_migrations.py \
             tests/test_entrypoint_supervision.py \
             tests/test_review_ocr_limits.py \
             -p pytest_asyncio.plugin --basetemp=/tmp/image-tests \

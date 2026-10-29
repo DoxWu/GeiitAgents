@@ -82,7 +82,8 @@
 1. 重启 Celery Worker（Railway Dashboard → Worker 服务 → Redeploy）
 2. 如果是单任务卡住，通过 Flower 终止该任务
 3. 检查死信队列中的失败任务，分析失败原因
-4. 调整 Worker 并发数（环境变量 `CELERY_WORKER_CONCURRENCY`）
+4. 分别调整 `CELERY_DOCUMENT_WORKER_CONCURRENCY`、`CELERY_GENERAL_WORKER_CONCURRENCY` 和 `CELERY_EMAIL_WORKER_CONCURRENCY`；邮件 worker 独立消费 `email` 队列
+5. 文档队列默认每用户最多 2 条、全局最多 4 条在途记录；超额上传/重处理会立即返回 429，不会无限堆入 broker。提高文档 worker 并发时，应同步评估 `DOCUMENT_MAX_OUTSTANDING_GLOBAL`、数据库和内存预算
 
 ### 3.4 LLM 调用超时/降级（P1/P2）
 

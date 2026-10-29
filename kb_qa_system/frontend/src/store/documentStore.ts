@@ -23,6 +23,7 @@ import type {
   DocumentStatus,
   DocumentQueryParams,
   DocumentScope,
+  DocumentVisibility,
   SortField,
   SortOrder,
   UploadDocumentParams,
@@ -125,7 +126,8 @@ interface DocumentState {
   moveDocument: (
     id: number,
     folderId: number | null | undefined,
-    visibility?: "private" | "public",
+    visibility?: DocumentVisibility,
+    organizationId?: number,
   ) => Promise<void>;
 
   // ===== 搜索与排序 =====
@@ -166,7 +168,8 @@ interface DocumentState {
   /** 批量移动选中的文档到目标分支 / 批量切换文档库（修复问题3b） */
   batchMove: (
     folderId: number | null | undefined,
-    visibility?: "private" | "public",
+    visibility?: DocumentVisibility,
+    organizationId?: number,
   ) => Promise<BatchOperationResponse>;
 
   // ===== 轮询管理 =====
@@ -534,9 +537,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  moveDocument: async (id, folderId, visibility) => {
+  moveDocument: async (id, folderId, visibility, organizationId) => {
     try {
-      await documentApi.moveDocument(id, folderId, visibility);
+      await documentApi.moveDocument(id, folderId, visibility, organizationId);
       // 移动后重新加载文档列表，反映新的分支归属
       await get().loadDocuments();
     } catch (err) {
@@ -652,13 +655,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return result;
   },
 
-  batchMove: async (folderId, visibility) => {
+  batchMove: async (folderId, visibility, organizationId) => {
     const { selectedDocIds } = get();
     const ids = Array.from(selectedDocIds);
     if (ids.length === 0) {
       throw new Error("未选中任何文档");
     }
-    const result = await documentApi.batchMoveDocuments(ids, folderId, visibility);
+    const result = await documentApi.batchMoveDocuments(ids, folderId, visibility, organizationId);
     // 清空选择并重新加载列表
     set({ selectedDocIds: new Set<number>(), selectionMode: false });
     await get().loadDocuments();

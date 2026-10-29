@@ -1,7 +1,7 @@
 import { newWorkflow, validateWorkflow, type WorkflowDefinition, type WorkflowNode } from './definition';
 
 const FORMAT = 'geiit-workflow-definition';
-const VERSION = 2;
+const VERSION = 4;
 export const MAX_WORKFLOW_FILE_BYTES = 512 * 1024;
 
 function assertRecord(value: unknown, keys: string[]): asserts value is Record<string, unknown> {
@@ -26,7 +26,7 @@ export function importWorkflowDefinition(text: string): WorkflowDefinition {
   let value: unknown;
   try { value = JSON.parse(text); } catch { throw new Error('工作流文件不是有效 JSON。'); }
   assertRecord(value, ['format', 'version', 'exportedAt', 'workflow']);
-  if (value.format !== FORMAT || ![1, VERSION].includes(value.version as number) || typeof value.exportedAt !== 'string' || !Number.isFinite(Date.parse(value.exportedAt))) {
+  if (value.format !== FORMAT || ![1, 2, 3, VERSION].includes(value.version as number) || typeof value.exportedAt !== 'string' || !Number.isFinite(Date.parse(value.exportedAt))) {
     throw new Error('不支持此工作流文件格式或版本。');
   }
   assertRecord(value.workflow, ['name', 'nodes', 'edges']);
@@ -34,11 +34,13 @@ export function importWorkflowDefinition(text: string): WorkflowDefinition {
   const base = newWorkflow();
   const ids = new Map<string, string>();
   const nodes = value.workflow.nodes.map(raw => {
-    assertRecord(raw, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit', 'condition', 'loop']);
+    assertRecord(raw, ['id', 'kind', 'title', 'x', 'y', 'text', 'includeInputs', 'profileId', 'categoryColumn', 'valueColumns', 'chartType', 'unit', 'condition', 'loop', 'agent', 'bindings', 'fn', 'functionBranch', 'trigger', 'capability']);
     if (typeof raw.id !== 'string' || ids.has(raw.id)) throw new Error('工作流步骤标识缺失或重复。');
     const id = crypto.randomUUID(); ids.set(raw.id, id);
     const node = { ...raw, id, ...(raw.profileId === undefined ? {} : { profileId: undefined }) } as unknown as WorkflowNode;
     delete (node as WorkflowNode & { profileId?: string }).profileId;
+    if (node.fn) node.fn.reviewed = false;
+    for (const resource of node.agent?.capabilities ?? []) if (resource.fn) resource.fn.reviewed = false;
     return node;
   });
   const edges = value.workflow.edges.map(raw => {
@@ -48,5 +50,8 @@ export function importWorkflowDefinition(text: string): WorkflowDefinition {
     if (!from || !to) throw new Error('工作流连线引用了不存在的步骤。');
     return { ...raw, from, to } as WorkflowDefinition['edges'][number];
   });
+  for (const node of nodes) for (const binding of Object.values(node.bindings ?? {})) {
+    if (binding.source === 'step' && binding.nodeId) binding.nodeId = ids.get(binding.nodeId) ?? '';
+  }
   return validateWorkflow({ ...base, name: value.workflow.name, nodes, edges });
 }

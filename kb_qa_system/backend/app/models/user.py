@@ -12,11 +12,16 @@
 """
 
 from datetime import datetime
-from typing import List, Optional
-from sqlalchemy import String, Boolean, DateTime, Text, Integer, func
+from typing import TYPE_CHECKING, List, Optional
+from sqlalchemy import String, Boolean, DateTime, Text, Integer, func, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.conversation import Conversation
+    from app.models.document import Document
+    from app.models.document_folder import DocumentFolder
 
 
 class User(Base):
@@ -56,10 +61,10 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
 
     # 是否激活（默认 True，管理员可禁用用户）
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
 
     # 是否是超级管理员（默认 False）
-    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     # 用户类型（任务5）
     # 作用：区分正式注册用户（regular）与临时登录用户（guest），
@@ -69,20 +74,23 @@ class User(Base):
     user_type: Mapped[str] = mapped_column(
         String(20),
         default="regular",
+        server_default="regular",
         index=True,
     )
 
     # 创建时间（服务器默认当前时间）
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=True,
     )
 
     # 更新时间（每次更新自动修改）
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
-        onupdate=func.now()
+        onupdate=func.now(),
+        nullable=True,
     )
 
     # ============================================

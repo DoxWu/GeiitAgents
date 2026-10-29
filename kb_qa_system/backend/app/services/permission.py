@@ -32,10 +32,12 @@
 import logging
 from typing import List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.models.document import Document
+from app.models.organization import Organization, OrganizationMembership
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,8 @@ VISIBILITY_PRIVATE = "private"  # 个人文档库
 VISIBILITY_PUBLIC = "public"    # 公共文档库
 
 # 合法取值集合（用于校验）
-VALID_VISIBILITIES = {VISIBILITY_PRIVATE, VISIBILITY_PUBLIC}
+VISIBILITY_ORGANIZATION = "organization"
+VALID_VISIBILITIES = {VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_ORGANIZATION}
 
 
 class PermissionService:
@@ -114,8 +117,11 @@ class PermissionService:
             query = query.filter(Document.visibility == VISIBILITY_PUBLIC)
         else:
             # 正式用户：个人文档（自己上传的） OR 公共文档
+            organization_ids = self.get_active_organization_ids(db, user_id)
             query = query.filter(
-                (Document.user_id == user_id) | (Document.visibility == VISIBILITY_PUBLIC)
+                (Document.visibility == VISIBILITY_PUBLIC)
+                | ((Document.visibility == VISIBILITY_PRIVATE) & (Document.user_id == user_id))
+                | ((Document.visibility == VISIBILITY_ORGANIZATION) & Document.organization_id.in_(organization_ids))
             )
 
         # 只取已处理完成的文档参与检索（pending/failed 的文档无分块）
@@ -123,6 +129,13 @@ class PermissionService:
         query = query.filter(Document.status == "completed")
 
         rows = query.all()
+        return [row[0] for row in rows]
+
+    def get_active_organization_ids(self, db: Session, user_id: int) -> List[int]:
+        rows = db.query(OrganizationMembership.organization_id).join(
+            Organization, Organization.id == OrganizationMembership.organization_id
+        ).filter(OrganizationMembership.user_id == user_id,
+                 OrganizationMembership.status == "active", Organization.is_active.is_(True)).all()
         return [row[0] for row in rows]
 
     # ============================================
@@ -173,7 +186,16 @@ class PermissionService:
             return False
 
         # 上传者可访问自己的文档
-        if document.user_id == user_id:
+        if document.visibility == VISIBILITY_ORGANIZATION:
+            if document.organization_id is None:
+                return False
+            return db.query(OrganizationMembership.id).join(
+                Organization, Organization.id == OrganizationMembership.organization_id
+            ).filter(OrganizationMembership.organization_id == document.organization_id,
+                     OrganizationMembership.user_id == user_id,
+                     OrganizationMembership.status == "active", Organization.is_active.is_(True)).first() is not None
+
+        if document.user_id == user_id and document.visibility == VISIBILITY_PRIVATE:
             return True
 
         # 公共文档所有登录用户可访问
@@ -225,6 +247,13 @@ class PermissionService:
             return False
 
         # 只有上传者能管理自己的文档
+        if document.visibility == VISIBILITY_ORGANIZATION and document.organization_id is not None:
+            member = db.query(OrganizationMembership).join(
+                Organization, Organization.id == OrganizationMembership.organization_id
+            ).filter(OrganizationMembership.organization_id == document.organization_id,
+                     OrganizationMembership.user_id == user_id,
+                     OrganizationMembership.status == "active", Organization.is_active.is_(True)).first()
+            return bool(member and (document.user_id == user_id or member.role == "org_admin"))
         return document.user_id == user_id
 
     # ============================================
@@ -255,7 +284,8 @@ class PermissionService:
     # 可见性取值校验
     # ============================================
 
-    def validate_visibility(self, visibility: Optional[str], user: User) -> str:
+    def validate_visibility(self, visibility: Optional[str], user: User, db: Session | None = None,
+                            organization_id: int | None = None) -> str:
         """
         校验并归一化可见性参数
 
@@ -271,6 +301,23 @@ class PermissionService:
         返回:
             str - 最终生效的可见性（private/public）
         """
+        if visibility == VISIBILITY_ORGANIZATION:
+            if db is None or organization_id is None:
+                raise HTTPException(status_code=400, detail="organization_id_required")
+            if db.query(Organization.id).filter(Organization.id == organization_id,
+                                                Organization.is_active.is_(True)).first() is None:
+                raise HTTPException(status_code=404, detail="organization_not_found")
+            if user.is_superuser:
+                return visibility
+            member = db.query(OrganizationMembership.id).join(
+                Organization, Organization.id == OrganizationMembership.organization_id
+            ).filter(OrganizationMembership.organization_id == organization_id,
+                     OrganizationMembership.user_id == user.id,
+                     OrganizationMembership.status == "active", Organization.is_active.is_(True)).first()
+            if member is None:
+                raise HTTPException(status_code=403, detail="organization_membership_required")
+            return visibility
+
         # 默认私有
         if visibility is None or visibility not in VALID_VISIBILITIES:
             return VISIBILITY_PRIVATE

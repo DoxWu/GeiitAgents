@@ -11,13 +11,14 @@
  */
 
 import { useState, useEffect } from "react";
-import { Folder as FolderIcon, FileText, Globe, Lock } from "lucide-react";
+import { Building2, Folder as FolderIcon, FileText, Globe, Lock } from "lucide-react";
 import { Modal, Button } from "@/components/common";
 import { useDocumentStore } from "@/store/documentStore";
 import { useAuthStore } from "@/store/authStore";
 import { useToastStore } from "@/store/toastStore";
 import { cn } from "@/lib/utils";
 import type { DocumentVisibility } from "@/types/document";
+import { useOrganizationOptions } from "@/hooks/useOrganizationOptions";
 
 /** 文档库选择选项（修复问题3b） */
 type LibraryOption = "keep" | DocumentVisibility;
@@ -35,11 +36,13 @@ export function BatchMoveModal({ open, onClose }: BatchMoveModalProps) {
   const { folders, selectedDocIds, batchMove } = useDocumentStore();
   const { user } = useAuthStore();
   const toast = useToastStore();
+  const organizations = useOrganizationOptions();
   /** 选中的目标分支ID（null = 未分类） */
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   /** 选中的目标文档库（修复问题3b，默认保持不变） */
   const [selectedLibrary, setSelectedLibrary] =
     useState<LibraryOption>("keep");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   /** 当前用户是否为超级管理员（仅管理员可将文档移入公共库） */
@@ -50,6 +53,7 @@ export function BatchMoveModal({ open, onClose }: BatchMoveModalProps) {
     if (open) {
       setSelectedFolderId(null);
       setSelectedLibrary("keep");
+      setSelectedOrganizationId(null);
     }
   }, [open]);
 
@@ -63,7 +67,13 @@ export function BatchMoveModal({ open, onClose }: BatchMoveModalProps) {
       const visibilityArg =
         selectedLibrary === "keep" ? undefined : selectedLibrary;
 
-      const result = await batchMove(selectedFolderId, visibilityArg);
+      if (selectedLibrary === "organization" && selectedOrganizationId === null) {
+        toast.error("请选择组织", "组织共享需要选择一个已加入的组织。");
+        return;
+      }
+
+      const result = await batchMove(selectedFolderId, visibilityArg,
+        selectedLibrary === "organization" ? selectedOrganizationId ?? undefined : undefined);
       if (result.failed.length > 0) {
         toast.warning(
           `操作完成：成功 ${result.success_count} 个，失败 ${result.failed.length} 个`,
@@ -76,9 +86,9 @@ export function BatchMoveModal({ open, onClose }: BatchMoveModalProps) {
         );
         if (selectedLibrary !== "keep") {
           parts.push(
-            selectedLibrary === "public"
-              ? "并迁移到公共文档库"
-              : "并迁移到个人文档库",
+            selectedLibrary === "public" ? "并迁移到公共文档库"
+              : selectedLibrary === "organization" ? `并迁移到${organizations.find(item => item.id === selectedOrganizationId)?.name || "组织"}共享库`
+                : "并迁移到个人文档库",
           );
         }
         toast.success(parts.join(" · "));
@@ -95,6 +105,7 @@ export function BatchMoveModal({ open, onClose }: BatchMoveModalProps) {
   function handleClose() {
     setSelectedFolderId(null);
     setSelectedLibrary("keep");
+    setSelectedOrganizationId(null);
     onClose();
   }
 
@@ -176,6 +187,13 @@ export function BatchMoveModal({ open, onClose }: BatchMoveModalProps) {
               <span className="ml-auto text-xs text-ink-tertiary">需管理员</span>
             )}
           </button>
+          {organizations.length > 0 && <>
+            <button type="button" onClick={() => setSelectedLibrary("organization")} className={cn(
+              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+              selectedLibrary === "organization" ? "bg-brand-light text-brand" : "text-ink-secondary hover:bg-muted hover:text-ink",
+            )}><Building2 className="h-4 w-4" /><span>迁移到组织共享库</span></button>
+            {selectedLibrary === "organization" && <label className="work-label px-3">目标组织<select aria-label="批量移动目标组织" className="work-input" value={selectedOrganizationId ?? ""} onChange={event => setSelectedOrganizationId(event.target.value ? Number(event.target.value) : null)}><option value="">选择组织</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+          </>}
         </div>
 
         {/* 分隔线 */}

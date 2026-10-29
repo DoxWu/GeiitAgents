@@ -1,3 +1,4 @@
+import { validateImageStudio } from '@/officeTasks/composition';
 import type { VaultData } from "@/types/workbench";
 import type { VaultStorage } from './privateVaultStorage';
 
@@ -97,6 +98,32 @@ export class PrivateVault {
           if (data.workflowDraft) validateWorkflow(data.workflowDraft, true);
           data.taskRuns?.forEach(t => { if (t.workflow) { validateWorkflow(t.workflow.definition); validateWorkflowInput(t.workflow.input); } });
         }
+        if (data.imageDraft) validateImageStudio(data.imageDraft);
+        if (data.capabilities !== undefined) {
+          if (!Array.isArray(data.capabilities) || data.capabilities.length > 100 || new Set(data.capabilities.map(r => r.id)).size !== data.capabilities.length) throw new Error();
+          const { validateCapability } = await import('@/agents/capabilities'); data.capabilities.forEach(validateCapability);
+        }
+        if (data.agents !== undefined && (!Array.isArray(data.agents) || data.agents.length > 100)) throw new Error();
+        if (data.agents?.length) {
+          const { validateAgent } = await import('@/agents/definition');
+          if (new Set(data.agents.map(agent => agent.id)).size !== data.agents.length) throw new Error();
+          data.agents.forEach(agent => validateAgent(agent));
+        }
+        if (data.pptxDraft != null) { const { validatePptxDesign } = await import('@/officeTasks/pptxDesign'); validatePptxDesign(data.pptxDraft); }
+        const { validateDocumentTask } = await import('@/officeTasks/document');
+        const { validateWorkImage, MAX_VAULT_IMAGE_BYTES } = await import('@/services/workbenchImages');
+        let workImageBytes = 0;
+        for (const conversation of data.conversations) for (const message of conversation.messages ?? []) for (const image of message.images ?? []) {
+          validateWorkImage(image); workImageBytes += image.bytes;
+        }
+        for (const task of data.taskRuns ?? []) {
+          if (task.type === 'document.generate-markdown') validateDocumentTask({ title: task.title, instruction: task.instruction,
+            outputFormat: task.outputFormat, sourceName: task.sourceName, sourceContent: task.sourceContent, referenceImages: task.referenceImages });
+          for (const image of task.referenceImages ?? []) { validateWorkImage(image); workImageBytes += image.bytes; }
+        }
+        for (const slide of data.pptxDraft?.slides ?? []) if (slide.image) workImageBytes += slide.image.bytes;
+        for (const image of [...(data.imageDraft?.references ?? []), ...(data.imageDraft?.result ? [data.imageDraft.result] : [])]) workImageBytes += image.bytes;
+        if (workImageBytes > MAX_VAULT_IMAGE_BYTES) throw new Error();
       } catch {
         throw new Error("口令错误或本机密钥库已损坏。");
       }

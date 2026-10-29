@@ -1,22 +1,39 @@
 import { TaskNavigation } from './TaskNavigation';
 import { useTaskNavigation } from '@/hooks/useTaskNavigation';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ClipboardList, FileUp, Loader2, Play, RotateCcw, Square, Trash2, XCircle } from 'lucide-react';
 import { DocumentArtifact } from './DocumentArtifact';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
+import { readLocalDocument } from '@/localKnowledge/documentImport';
+import { readWorkImages } from '@/services/workbenchImages';
+import type { WorkImage } from '@/types/workbench';
 import type { TaskRun } from '@/types/workbench';
+import type { DocumentOutputFormat } from '@/officeTasks/document';
 import { finishLabel } from '@/services/modelStream';
 import { GenerationPreview } from './GenerationPreview';
 import { ReferenceLibrary } from './ReferenceLibrary';
+import { useWorkbenchFence } from '@/hooks/useWorkbenchFence';
+import { MAX_CONVERSATION_IMAGE_BYTES, MAX_IMAGES_PER_TASK } from '@/services/workbenchImages';
 
 const statusText: Record<TaskRun['status'], string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 
+const PptxDesigner = lazy(() => import('./PptxDesigner').then(m => ({ default: m.PptxDesigner })));
 export function DocumentTasks() {
+  const [format, setFormat] = useState<DocumentOutputFormat>('docx'), [pptVisited, setPptVisited] = useState(false);
+  return <div className="flex min-h-0 min-w-0 flex-1 flex-col"><div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3"><label className="work-label">输出文件类型<select aria-label="输出文件类型" className="work-input" value={format} onChange={e => { setFormat(e.target.value as DocumentOutputFormat); if (e.target.value === 'pptx') setPptVisited(true); }}><option value="docx">Word 文档 (.docx)</option><option value="pptx">PowerPoint 演示文稿 (.pptx)</option><option value="xlsx">Excel 工作簿 (.xlsx)</option><option value="xls">Excel 兼容工作簿 (.xls)</option><option value="markdown">Markdown</option><option value="html">网页文件 (.html)</option></select></label><p className="text-xs text-ink-secondary">先选格式，再选模板与参考材料；各类历史成果继续保留。</p></div>
+    <div className={`${format === 'pptx' ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col`}><DocumentTaskContent outputFormat={format} onFormat={setFormat} /></div>
+    {pptVisited && <div className={`${format === 'pptx' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col`}><Suspense fallback={<p className="p-4">加载PPT设计器…</p>}><PptxDesigner /></Suspense></div>}
+  </div>;
+}
+function DocumentTaskContent({ outputFormat, onFormat }: { outputFormat: DocumentOutputFormat; onFormat: (value: DocumentOutputFormat) => void }) {
   const store = useWorkbenchStore();
+  const capture = useWorkbenchFence(), fileRequest = useRef(0);
   const [selectedId, setSelectedId] = useState('');
   const [profileId, setProfileId] = useState('');
   const [title, setTitle] = useState('');
   const [instruction, setInstruction] = useState('');
+  const [referenceImages, setReferenceImages] = useState<WorkImage[]>([]), [warnings, setWarnings] = useState<string[]>([]);
+  const latestImages = useRef(referenceImages); latestImages.current = referenceImages;
   const [sourceName, setSourceName] = useState('');
   const [sourceContent, setSourceContent] = useState('');
   const [consent, setConsent] = useState(false);
@@ -32,32 +49,46 @@ export function DocumentTasks() {
   const cloud = profileId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(profile?.mode || '');
   const connectionSignature = JSON.stringify([profile, store.accountModel]);
   useEffect(() => { if (!profileId) setProfileId(store.profiles[0]?.id ?? (store.accountModel ? ACCOUNT_MODEL_ID : '')); }, [profileId, store.profiles, store.accountModel]);
-  useEffect(() => { setConsent(false); }, [profileId, sourceContent, sourceName, instruction, title, connectionSignature]);
+  useEffect(() => { setConsent(false); }, [profileId, sourceContent, sourceName, instruction, title, outputFormat, referenceImages, connectionSignature]);
+  useEffect(() => {
+    if (!store.unlocked) { fileRequest.current++; setTitle(''); setInstruction(''); setSourceName(''); setSourceContent(''); setReferenceImages([]); setWarnings([]); setConsent(false); setError(''); }
+  }, [store.unlocked]);
   async function open(file?: File) {
     if (!file) return;
-    setError('');
-    if (!/\.(md|markdown|txt)$/i.test(file.name) || file.size > 2 * 1024 * 1024 || !file.size) { setError('请选择不超过 2 MiB 的非空 Markdown/TXT 文件。'); return; }
+    const current = capture(), request = ++fileRequest.current; setError('');
     try {
-      const content = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
-      if (!content.trim() || content.includes('\0') || content.length > 100000) throw new Error();
-      setSourceName(file.name); setSourceContent(content);
-    } catch { setError('参考文件需为 UTF-8 文本，且最多 100000 个字符。'); }
+      let doc: { text: string; importWarnings?: string[] };
+      if (/\.xlsx$/i.test(file.name)) {
+        if (file.size > 2000000) throw new Error('XLSX 参考文件不能超过2 MB。');
+        const { parseFirstXlsxSheet } = await import('@/officeTasks/xlsx');
+        const sheet = await parseFirstXlsxSheet(await file.arrayBuffer());
+        doc = { text: sheet.csv, importWarnings: [`已提取工作表“${sheet.sheetName}”的可读数据；未复制公式、样式或其他工作表。`] };
+      } else if (/\.csv$/i.test(file.name)) {
+        if (file.size > 400000) throw new Error('CSV 参考文件过大。');
+        doc = { text: await file.text() };
+      } else doc = await readLocalDocument(file);
+      if (doc.text.length > 100000) throw new Error('参考材料最多100000字符。');
+      if (!current() || request !== fileRequest.current) return;
+      setSourceName(file.name); setSourceContent(doc.text); setWarnings(doc.importWarnings ?? []);
+    } catch (e) { if (current() && request === fileRequest.current) setError(e instanceof Error ? e.message : '参考文件解析失败。'); }
   }
+
   async function start(event: React.FormEvent) {
-    event.preventDefault(); setError(''); setSubmitting(true);
+    event.preventDefault(); const current = capture(); setError(''); setSubmitting(true);
     const previous = new Set(store.taskRuns.map(item => item.id));
-    const pending = store.startDocumentTask(profileId, { title, instruction, ...(sourceContent ? { sourceName: sourceName || '粘贴材料.txt', sourceContent } : {}) }, consent);
+    const pending = store.startDocumentTask(profileId, { title, instruction, outputFormat, referenceImages, ...(sourceContent ? { sourceName: sourceName || '粘贴材料.txt', sourceContent } : {}) }, consent);
     setConsent(false);
     queueMicrotask(() => {
       const created = useWorkbenchStore.getState().taskRuns.find(item => !previous.has(item.id));
-      if (created) setSelectedId(created.id);
+      if (created && current()) setSelectedId(created.id);
     });
-    try { const id = await pending; setSelectedId(id); }
-    catch (e) { setError(e instanceof Error ? e.message : '文档任务失败。'); }
+    try { const id = await pending; if (current()) setSelectedId(id); }
+    catch (e) { if (current()) setError(e instanceof Error ? e.message : '文档任务失败。'); }
     finally { setSubmitting(false); }
   }
   function reuse(item: TaskRun) {
     setTitle(item.title); setInstruction(item.instruction); setSourceName(item.sourceName ?? ''); setSourceContent(item.sourceContent ?? '');
+    onFormat(item.outputFormat ?? 'markdown'); setReferenceImages(item.referenceImages ?? []);
     setProfileId(item.profileId); setConsent(false); setError(''); taskNavigation.showInput();
   }
   return <section className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]" aria-label="文档任务">
@@ -71,8 +102,8 @@ export function DocumentTasks() {
     </aside>
     <div className="min-h-0 overflow-auto p-4 sm:p-6">
       <div className="mx-auto max-w-4xl">
-        <h1 className="text-xl font-semibold">生成 Markdown 文档</h1>
-        <p className="mt-2 text-sm text-ink-secondary">任务和成果保存到本机加密库。模型只收到本次标题、要求和参考文本。关闭或锁定客户端会中断任务；下载文件为明文，内容请先审阅。</p>
+        <h1 className="text-xl font-semibold">生成文档与文件</h1>
+        <p className="mt-2 text-sm text-ink-secondary">先选择交付格式，模型会按该格式组织内容。任务和可编辑成果保存到本机加密库；关闭或锁定客户端会中断任务，导出文件为明文，请先审阅。</p>
       <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
@@ -88,26 +119,31 @@ export function DocumentTasks() {
             {tool.outputArtifactId && <p>{tool.previousArtifactId ? `基于版本 ${artifacts.find(item => item.id === tool.previousArtifactId)?.version ?? '未知'} · ` : ''}生成版本 {artifacts.find(item => item.id === tool.outputArtifactId)?.version ?? '未知'}</p>}
             {tool.outputName && <p>{tool.outputName} · SHA-256 {tool.outputSha256?.slice(0, 12)}…</p>}{tool.error && <p>{tool.error}</p>}{tool.warnings?.map(warning => <p key={warning}>{warning}</p>)}</div>)}</details>
           {store.storageError && <button className="work-command mt-3" onClick={() => void store.retryStorage().catch(e => setError(e instanceof Error ? e.message : '保存失败。'))}>重试本机保存</button>}
-          {!!artifacts.length && <DocumentArtifact key={task.id} versions={artifacts} />}
+          {!!artifacts.length && <DocumentArtifact key={task.id} versions={artifacts} preferredFormat={task.outputFormat} />}
         </section>}
       </div>
       <div ref={taskNavigation.inputRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
         <form className="mt-5 grid gap-4 border-b border-line pb-6" onSubmit={start}>
           <fieldset disabled={submitting} className="grid gap-4 sm:grid-cols-2">
             <label className="work-label">文档标题<input className="work-input" required maxLength={100} value={title} onChange={e => setTitle(e.target.value)} /></label>
+            <label className="work-label">生成模板<select className="work-input" aria-label="生成模板" defaultValue="" key={outputFormat} onChange={e => { if (e.target.value) setInstruction(e.target.value); }}><option value="">空白 / 自定义要求</option>{(outputFormat === 'xlsx' || outputFormat === 'xls' ? [['数据台账','生成字段清晰的数据台账，包含日期、项目、负责人、数量、金额、状态；只使用参考材料数据，缺失留空。'],['预算明细','根据参考数据制作预算明细表，列出分类、项目、数量、单价、小计。']] : [['项目报告','生成项目报告，包含摘要、背景、进展、风险、下一步和待确认事项。'],['会议纪要','生成会议纪要，包含会议主题、讨论要点、决策、行动项、责任人和日期。'],['操作指南','按章节组织操作指南，包含目标、前提、步骤、示例、常见问题。']]).map(([name,value]) => <option value={value} key={name}>{name}</option>)}</select></label>
             <label className="work-label">生成模型<select aria-label="文档生成模型" className="work-input" required value={profileId} onChange={e => setProfileId(e.target.value)}><option value="">请选择模型</option>
               {store.profiles.map(item => <option key={item.id} value={item.id}>{item.name} · {item.model}</option>)}
               {store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>
             <label className="work-label sm:col-span-2">生成要求<textarea aria-label="生成要求" className="work-input min-h-28 resize-y" required maxLength={10000} value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="例如：整理为项目周报，包含进展、风险、下周计划和待确认事项。" /></label>
-            <label className="work-label sm:col-span-2">参考材料（可选）<textarea aria-label="参考材料（可选）" className="work-input min-h-32 resize-y" maxLength={100000} value={sourceContent} onChange={e => { setSourceContent(e.target.value); if (!e.target.value) setSourceName(''); }} placeholder="粘贴文本，或选择 Markdown/TXT 文件" /></label>
+            <label className="work-label sm:col-span-2">参考材料（可选）<textarea aria-label="参考材料（可选）" className="work-input min-h-32 resize-y" maxLength={100000} value={sourceContent} onChange={e => { setSourceContent(e.target.value); if (!e.target.value) setSourceName(''); }} placeholder="粘贴文本，或提取 PDF / DOCX / PPTX 参考内容；参考文件不会自动克隆原版式" /></label>
             <div className="sm:col-span-2"><ReferenceLibrary valueName={sourceName || '粘贴材料.txt'} valueContent={sourceContent} disabled={submitting} onLoad={(name, content) => { setSourceName(name); setSourceContent(content); setError(''); }} /></div>
           </fieldset>
           <div className="flex flex-wrap items-center gap-2"><button type="button" className="work-command" disabled={submitting} onClick={() => input.current?.click()}><FileUp size={16} />选择参考文件</button>
             {sourceName && <span className="max-w-72 truncate text-xs text-ink-secondary" title={sourceName}>{sourceName}</span>}
             {sourceContent && <button type="button" className="work-icon" title="移除参考材料" aria-label="移除参考材料" disabled={submitting} onClick={() => { setSourceName(''); setSourceContent(''); }}><XCircle size={16} /></button>}
-            <input ref={input} hidden type="file" accept=".md,.markdown,.txt" aria-label="选择任务参考文件" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} /></div>
+            <input ref={input} hidden type="file" accept=".md,.markdown,.txt,.pdf,.docx,.pptx,.xlsx,.csv" aria-label="选择任务参考文件" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} /></div>
+          <p className="text-xs text-ink-secondary">参考文件提取可读文本，保留解析提示；图片另行插入。XLS为精简兼容工作簿，复杂公式和多表样式请使用XLSX。</p>
+          {warnings.map((w,i) => <p className="text-xs text-ink-secondary" key={i}>{w}</p>)}
+          <label className="work-label">插入图片<input className="work-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e => { const current=capture(), files=Array.from(e.target.files??[]); e.target.value=''; void readWorkImages(files).then(images => { if (!current()) return; const next=[...latestImages.current,...images]; if (next.length>MAX_IMAGES_PER_TASK || next.reduce((sum,image)=>sum+image.bytes,0)>MAX_CONVERSATION_IMAGE_BYTES) throw new Error('最多50张图片、合计4 MiB。'); setReferenceImages(next); }).catch(e => { if (current()) setError(e instanceof Error?e.message:'图片无效'); }); }} /></label>
+          {referenceImages.map((image,index) => <div className="flex items-center gap-2" key={index}><img src={image.dataUrl} alt={image.name} className="h-12 w-16 object-contain" /><span className="text-xs">{image.name}</span><button type="button" className="work-command" onClick={() => setReferenceImages(images => images.filter((_,i) => i !== index))}>移除图片</button></div>)}
           <p className="break-all text-xs text-ink-secondary">目标：{profile?.baseUrl ?? (profileId === ACCOUNT_MODEL_ID ? '账号配置的服务端模型供应商' : '尚未选择')}</p>
-          {cloud && <label className="flex items-start gap-2 text-sm leading-6"><input className="mt-1" type="checkbox" disabled={submitting} checked={consent} onChange={e => setConsent(e.target.checked)} />我允许本次将文档标题、生成要求和参考文本，经应用服务端发送给所选云端模型</label>}
+          {cloud && <label className="flex items-start gap-2 text-sm leading-6"><input className="mt-1" type="checkbox" disabled={submitting} checked={consent} onChange={e => setConsent(e.target.checked)} />我允许本次将文档标题、生成要求、参考文本及前3张图片，经应用服务端发送给所选云端模型</label>}
           {profile?.mode === 'local' && <p className="text-xs text-ink-secondary">请求发往上述本机接口；接口背后的模型是否完全离线取决于你的服务配置。</p>}
           <div className="flex flex-wrap gap-2"><button className="work-command bg-brand text-white" disabled={submitting || !profileId || !title.trim() || !instruction.trim() || !!cloud && !consent}><Play size={16} />{submitting ? '任务运行中…' : '开始生成'}</button>
             {store.accountModel === null && <button type="button" className="work-command" disabled={store.accountLoading} onClick={() => void store.refreshAccountModel()}>检查账号模型权限</button>}</div>

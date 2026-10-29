@@ -1,9 +1,10 @@
 import { webcrypto } from 'node:crypto';
 import { TextEncoder } from 'node:util';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
-import { newWorkflow, newWorkflowNode, validateWorkflow, workflowOrder } from './definition';
+import { newWorkflow, newWorkflowNode, pruneAgentStepBindings, validateWorkflow, workflowOrder } from './definition';
 import { evaluateWorkflowCondition, prepareWorkflow, runWorkflow, WORKFLOW_SKIPPED_RESULT } from './runner';
 import type { ToolCheckpoint } from '@/officeTasks/toolRunner';
+import { newAgent } from '@/agents/definition';
 
 beforeEach(() => { vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); });
 afterEach(() => vi.unstubAllGlobals());
@@ -197,6 +198,43 @@ it('does not execute the next node after successful checkpoint storage fails or 
     })).rejects.toThrow();
     expect(events).toHaveLength(2);
   }
+});
+
+it('runs agent steps with typed direct-predecessor bindings and rejects invalid outputs', async () => {
+  const firstAgent = newAgent(); firstAgent.name = 'First'; firstAgent.instructions = 'Produce the first result.';
+  const secondAgent = newAgent(); secondAgent.name = 'Second'; secondAgent.instructions = 'Use the typed prior output.';
+  secondAgent.inputFields = [{ key: 'source', label: 'Prior result', type: 'string', required: true, description: '' }];
+  const first = newWorkflowNode('agent', 0), second = newWorkflowNode('agent', 1);
+  first.agent = firstAgent; first.bindings = { context: { source: 'reference', value: '' } };
+  second.agent = secondAgent; second.bindings = { source: { source: 'step', value: '', nodeId: first.id, field: 'result' } };
+  const definition = { ...newWorkflow(), nodes: [first, second], edges: [{ from: first.id, to: second.id }] };
+  expect(validateWorkflow(definition).nodes).toHaveLength(2);
+  const model = vi.fn().mockResolvedValueOnce({ content: '{"result":"typed value"}', model: 'fixture', finishReason: 'stop' })
+    .mockResolvedValueOnce({ content: '{"result":"finished"}', model: 'fixture', finishReason: 'stop' });
+  const checkpoints: ToolCheckpoint[] = [];
+  await runWorkflow('task', definition, input, new AbortController().signal, model, async event => { checkpoints.push(event); });
+  expect(model.mock.calls[1][0].agentInputs).toEqual({ source: 'typed value' });
+  expect(checkpoints.find(event => event.step.workflowNodeId === second.id && event.step.status === 'succeeded')?.step.result).toBe('{"result":"finished"}');
+
+  model.mockReset().mockResolvedValueOnce({ content: '{"result":"bad","extra":true}', model: 'fixture', finishReason: 'stop' });
+  await expect(runWorkflow('task', definition, input, new AbortController().signal, model, async () => {})).rejects.toThrow('未定义');
+  expect(model).toHaveBeenCalledTimes(1);
+});
+
+it('rejects workflow field mappings that cross agent contracts or lack an edge', () => {
+  const first = newAgent(), second = newAgent(); first.instructions = second.instructions = 'Run';
+  const a = newWorkflowNode('agent', 0), b = newWorkflowNode('agent', 1); a.agent = first; b.agent = second;
+  a.bindings = { context: { source: 'reference', value: '' } };
+  b.bindings = { context: { source: 'step', value: '', nodeId: a.id, field: 'missing' } };
+  expect(() => validateWorkflow({ ...newWorkflow(), nodes: [a, b], edges: [{ from: a.id, to: b.id }] })).toThrow('字段映射');
+});
+it('clears typed agent mappings when the direct predecessor edge is removed', () => {
+  const first = newWorkflowNode('agent', 0), second = newWorkflowNode('agent', 1);
+  first.agent = newAgent(); second.agent = newAgent();
+  second.bindings = { context: { source: 'step', value: '', nodeId: first.id, field: 'result' } };
+  const definition = { ...newWorkflow(), nodes: [first, second], edges: [{ from: first.id, to: second.id }] };
+  const updated = pruneAgentStepBindings({ ...definition, edges: [] });
+  expect(updated.nodes[1].bindings).toEqual({});
 });
 it('refuses oversized upstream context instead of silently truncating it', async () => {
   const generated = newWorkflowNode('generate_document', 0), after = newWorkflowNode('generate_document', 1);

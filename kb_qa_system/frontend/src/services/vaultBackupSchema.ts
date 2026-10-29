@@ -1,3 +1,4 @@
+import { validateImageStudio } from '@/officeTasks/composition';
 import type { VaultData } from '@/types/workbench';
 import { artifactRoot } from '@/officeTasks/artifactSeries';
 import { validateProfile } from './workbenchModel';
@@ -8,8 +9,12 @@ import { validateReminderDraft, validateReminderTemplate } from '@/personal/remi
 import { textBytes, validateDraft, validateTextName, MAX_VERSION_BYTES } from '@/fileOrganizer/textEdit';
 import { validFileName } from '@/fileOrganizer/plan';
 import { validateWorkflow, validateWorkflowInput } from '@/workflows/definition';
+import { validateCapability } from '@/agents/capabilities';
+import { isBranchNode } from '@/workflows/definition';
+import { validateAgent } from '@/agents/definition';
+import { validatePptxDesign } from '@/officeTasks/pptxDesign';
 import { validateWorkflowSchedule } from '@/workflows/schedule';
-import { MAX_VAULT_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE, validateWorkImage } from './workbenchImages';
+import { MAX_VAULT_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE, MAX_IMAGES_PER_TASK, validateWorkImage } from './workbenchImages';
 
 type Check = (value: unknown) => void;
 const fail = (): never => { throw new Error('备份内容无效、超限或版本不兼容，当前工作台未更改。'); };
@@ -32,21 +37,22 @@ const filename: Check = value => { str(240, 1)(value); if (!validFileName(value 
 const status = one('running', 'succeeded', 'failed', 'cancelled', 'interrupted');
 const capabilityEvidence = obj({ state: one('unknown', 'supported', 'unsupported'), testedAt: optional(date), fingerprint: optional(hash), value: optional(num(2147483647, 1)) });
 const capabilities = obj({ text: optional(capabilityEvidence), toolCalls: optional(capabilityEvidence), vision: optional(capabilityEvidence), contextWindow: optional(capabilityEvidence), maxOutputTokens: optional(capabilityEvidence) });
-const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local', 'direct'), baseUrl: str(2048, 1), model: str(400, 1), maxTokens: optional(num(2147483647, 1)), textTestedAt: optional(date), toolTestedAt: optional(date), capabilities: optional(capabilities), apiKey: str(4096) });
+const profile = obj({ id, name: str(1000, 1), mode: one('relay', 'local', 'direct'), baseUrl: str(2048, 1), model: str(400, 1), imageModel: optional(str(200, 1)), maxTokens: optional(num(2147483647, 1)), textTestedAt: optional(date), toolTestedAt: optional(date), capabilities: optional(capabilities), apiKey: str(4096) });
 const workImage = obj({ name: str(240), mimeType: one('image/png', 'image/jpeg', 'image/webp'), dataUrl: str(2_100_000, 1), bytes: num(1_500_000, 1) });
 const conversation = obj({ id, kind: optional(one('knowledge-answer')), title: str(1000), profileId: str(200), updatedAt: date,
   messages: arr(obj({ id, role: one('user', 'assistant'), content: str(1_000_000), images: optional(arr(workImage, MAX_IMAGES_PER_MESSAGE)), createdAt: date, model: optional(str(1000)), finishReason: optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown')) }), 100) });
-const documentInput = { title: str(100, 1), instruction: str(10000, 1), sourceName: optional(str(255)), sourceContent: optional(str(100000)), referenceImages: optional(arr(workImage, MAX_IMAGES_PER_MESSAGE)) };
+const documentInput = { title: str(100, 1), instruction: str(10000, 1), outputFormat: optional(one('markdown', 'html', 'docx', 'pptx', 'xlsx', 'xls')), sourceName: optional(str(255)), sourceContent: optional(str(100000)), referenceImages: optional(arr(workImage, MAX_IMAGES_PER_TASK)) };
 const chartInput = obj({ title: str(80, 1), csv: str(100000, 1), categoryColumn: num(11), valueColumn: num(11), valueColumns: optional(arr(num(11), 6)), chartType: one('bar', 'horizontal_bar', 'line', 'pie', 'scatter'), unit: str(20) });
 const chartReview = obj({ profileId: id, model: str(400, 1), answer: str(20000, 1), reviewedAt: date, imageSha256: hash, artifactSha256: hash });
 const workflow: Check = value => { validateWorkflow(value); };
+const agent: Check = value => { validateAgent(value); };
 const workflowDraft: Check = value => { validateWorkflow(value, true); };
 const workflowInput: Check = value => { validateWorkflowInput(value); };
 const workflowSchedule: Check = value => { validateWorkflowSchedule(value); };
 const task = obj({ id, type: one('document.generate-markdown', 'chart.generate', 'office.tools', 'workflow.run'), workflow: optional(obj({ definition: workflow, input: workflowInput })), officeInput: optional(obj({ ...documentInput, csv: optional(str(100000)) })), chartInput: optional(chartInput), chartReview: optional(chartReview), summary: optional(str(1_000_000)),
-  title: str(1000), profileId: str(200), instruction: str(10000), sourceName: optional(str(255)), sourceContent: optional(str(100000)), referenceImages: optional(arr(workImage, MAX_IMAGES_PER_MESSAGE)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50), resumedFromTaskId: optional(id), resumeFromNodeId: optional(id) });
+  title: str(1000), profileId: str(200), instruction: str(10000), outputFormat: optional(one('markdown', 'html', 'docx', 'pptx', 'xlsx', 'xls')), sourceName: optional(str(255)), sourceContent: optional(str(100000)), referenceImages: optional(arr(workImage, MAX_IMAGES_PER_TASK)), status, createdAt: date, updatedAt: date, error: optional(str(100000)), toolRunIds: arr(id, 300), artifactIds: arr(id, 50), resumedFromTaskId: optional(id), resumeFromNodeId: optional(id) });
 const finishReason = optional(one('stop', 'length', 'content_filter', 'tool_calls', 'unknown'));
-const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('model.complete', 'workflow.condition', 'workflow.loop-iteration', 'document.edit', 'document.restore', 'document.export-docx', 'document.export-pptx', 'document.export-xlsx', 'document.export-xls', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document', 'office.search_wikipedia'),
+const tool = obj({ id, taskId: id, workflowNodeId: optional(id), finishReason, tool: one('agent.capability', 'model.complete', 'workflow.condition', 'workflow.function', 'workflow.trigger', 'workflow.loop-iteration', 'document.edit', 'document.restore', 'document.export-docx', 'document.export-pptx', 'document.export-xlsx', 'document.export-xls', 'chart.check', 'chart.render', 'model.tools', 'office.inspect_csv', 'office.render_chart', 'office.create_document', 'office.search_wikipedia'),
   callId: optional(id), arguments: optional(str(1_000_000)), result: optional(str(1_000_000)), sourceArtifactId: optional(id), previousArtifactId: optional(id), outputArtifactId: optional(id), outputSha256: optional(hash), outputName: optional(str(300)), converterVersion: optional(str(100)), warnings: optional(arr(str(10000), 100)), status, model: optional(str(1000)), startedAt: date, finishedAt: optional(date), error: optional(str(100000)) });
 const artifact = obj({ id, taskId: id, finishReason, kind: one('markdown', 'svg'), version: num(50, 1), parentArtifactId: optional(id), restoredFromArtifactId: optional(id), name: str(300, 1), mimeType: one('text/markdown', 'image/svg+xml'), content: str(1_000_001), sha256: hash, createdAt: date });
 const itemInput = { kind: one('note', 'todo'), title: str(120), content: str(20000), tags: arr(str(30), 8), status: optional(one('open', 'done', 'cancelled')), priority: optional(one('normal', 'high', 'low')), dueAt: optional(nullable(date)) };
@@ -73,7 +79,7 @@ const fileMerge = obj({ base: snapshot, local: snapshot, current: snapshot });
 const fileDraft = obj({ id, editId: id, ...directory, name: filename, before: snapshot, content: str(256 * 1024), newline: one('lf', 'crlf', 'cr', 'mixed'), bom: bool, restoredFrom: optional(id), restoreText: optional(str(256 * 1024)), merge: optional(fileMerge) });
 const fileVersion = obj({ id, draftId: id, ...directory, name: filename, before: snapshot, after: snapshot, batch: optional(obj({ id, index: num(19), total: num(20, 1) })), status: one('not-started', 'running', 'succeeded', 'not-applied', 'interrupted', 'needs-attention'), createdAt: date, updatedAt: date, restoredFrom: optional(id), error: optional(str(100000)), inspection: optional(obj({ outcome: one('before', 'after', 'different'), checkedAt: date })), merge: optional(fileMerge) });
 const referenceDocument = obj({ id, name: str(255, 1), content: str(100000, 1), createdAt: date, updatedAt: date });
-const schema = obj({ workflows: optional(arr(workflow, 30)), workflowSchedules: optional(arr(workflowSchedule, 30)), workflowDraft: optional(nullable(workflowDraft)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)), referenceDocuments: optional(arr(referenceDocument, 20)),
+const schema = obj({ imageDraft: optional(nullable(value => { validateImageStudio(value); })), capabilities: optional(arr(value => { validateCapability(value); }, 100)), pptxDraft: optional(nullable(value => { validatePptxDesign(value); })), agents: optional(arr(agent, 100)), workflows: optional(arr(workflow, 30)), workflowSchedules: optional(arr(workflowSchedule, 30)), workflowDraft: optional(nullable(workflowDraft)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)), referenceDocuments: optional(arr(referenceDocument, 20)),
   personalItems: optional(arr(personalItem, 500)), personalDrafts: optional(arr(personalDraft, 100)), reminderDrafts: optional(arr(reminderDraft, 20)), reminderTemplates: optional(arr(reminderTemplate, 100)), organizerRuns: optional(arr(organizer, 100)), fileEditDraft: optional(nullable(fileDraft)), fileEditVersions: optional(arr(fileVersion, 50)) });
 
 function unique(values: { id: string }[]) { if (new Set(values.map(v => v.id)).size !== values.length) fail(); }
@@ -95,6 +101,7 @@ function safeSvg(content: string) {
 export async function validateVaultBackup(value: unknown): Promise<VaultData> {
   try {
     schema(value); const data = value as VaultData;
+    unique(data.agents ?? []); unique(data.capabilities ?? []);
     unique(data.workflows ?? []);
     unique(data.workflowSchedules ?? []);
     for (const schedule of data.workflowSchedules ?? []) {
@@ -118,6 +125,8 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
       for (const image of images) { validateWorkImage(image); workImageBytes += image.bytes; }
     }
     for (const task of data.taskRuns ?? []) for (const image of task.referenceImages ?? []) { validateWorkImage(image); workImageBytes += image.bytes; }
+    for (const slide of data.pptxDraft?.slides ?? []) if (slide.image) workImageBytes += slide.image.bytes;
+    for (const image of [...(data.imageDraft?.references ?? []), ...(data.imageDraft?.result ? [data.imageDraft.result] : [])]) workImageBytes += image.bytes;
     if (workImageBytes > MAX_VAULT_IMAGE_BYTES) fail();
     for (const p of data.personalItems ?? []) validatePersonalInput(p);
     for (const d of data.personalDrafts ?? []) { validatePersonalDraft(d); if (d.input.kind === 'todo' && (!d.input.status || !d.input.priority || d.input.dueAt === undefined)) fail(); }
@@ -144,7 +153,7 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
       if (t.workflow) {
         if (t.resumeFromNodeId && !t.workflow.definition.nodes.some(node => node.id === t.resumeFromNodeId)) fail();
         const steps = t.toolRunIds.map(id => tools.get(id)).filter(step => step?.workflowNodeId);
-        const nodeSteps = steps.filter(step => step!.tool !== 'workflow.loop-iteration');
+        const nodeSteps = steps.filter(step => !['workflow.loop-iteration', 'agent.capability'].includes(step!.tool));
         if (new Set(nodeSteps.map(step => step!.workflowNodeId)).size !== nodeSteps.length) fail();
         if (t.status === 'succeeded' && ((!t.resumedFromTaskId && nodeSteps.length !== t.workflow.definition.nodes.length) || !nodeSteps.length || nodeSteps.some(step => step!.status !== 'succeeded'))) fail();
       }
@@ -154,7 +163,12 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     for (const t of tools.values()) {
       if (t.workflowNodeId) {
         const node = tasks.get(t.taskId)?.workflow?.definition.nodes.find(n => n.id === t.workflowNodeId);
-        if (!node || t.tool !== (node.kind === 'condition' ? 'workflow.condition' : node.kind === 'loop' && t.callId ? 'workflow.loop-iteration' : ['generate_document', 'loop'].includes(node.kind) ? 'model.complete' : `office.${node.kind}`)) fail();
+        if (!node) fail();
+        if (t.tool === 'agent.capability') {
+          const details = JSON.parse(t.arguments ?? '{}');
+          if (!t.callId || !['agent', 'agent_condition'].includes(node!.kind)
+            || !node!.agent?.capabilities?.some(resource => resource.id === details.resourceId && resource.kind === details.kind && resource.kind !== 'skill')) fail();
+        } else if (t.tool !== (node!.kind === 'trigger' ? 'workflow.trigger' : node!.kind === 'function' ? 'workflow.function' : isBranchNode(node!) ? 'workflow.condition' : node!.kind === 'loop' && t.callId ? 'workflow.loop-iteration' : ['generate_document', 'loop', 'agent'].includes(node!.kind) ? 'model.complete' : `office.${node!.kind}`)) fail();
       } else if (tasks.get(t.taskId)?.workflow && !['document.export-docx', 'document.export-pptx', 'document.export-xlsx', 'document.export-xls'].includes(t.tool)) fail();
       if (!tasks.get(t.taskId)?.toolRunIds.includes(t.id)) fail();
       for (const reference of [t.sourceArtifactId, t.previousArtifactId, t.outputArtifactId]) {

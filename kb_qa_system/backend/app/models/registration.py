@@ -89,8 +89,9 @@ class RegistrationApplication(Base):
     )
 
     # 申请提交时间（服务器默认当前时间）
-    submitted_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+    submitted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now(),
+        nullable=True,
     )
 
     # 审批时间（管理员审批时填充，null 表示未审批）
@@ -115,12 +116,18 @@ class RegistrationApplication(Base):
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
-    # 创建时间 / 更新时间
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+    organization_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+
+    # 创建时间 / 更新时间
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now(),
+        nullable=True,
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+        nullable=True,
     )
 
     # ============================================

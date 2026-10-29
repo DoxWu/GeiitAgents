@@ -21,9 +21,11 @@ export interface ModelProfile {
   mode: "relay" | "local" | "direct";
   baseUrl: string;
   model: string;
+  imageModel?: string;
   maxTokens?: number;
   textTestedAt?: string;
   toolTestedAt?: string;
+  imageDraft?: import('@/officeTasks/composition').ImageStudioDraft | null;
   capabilities?: ModelCapabilities;
   hasKey: boolean;
 }
@@ -69,6 +71,7 @@ export interface TaskRun {
   type: 'document.generate-markdown' | 'chart.generate' | 'office.tools' | 'workflow.run';
   workflow?: { definition: import('@/workflows/definition').WorkflowDefinition; input: import('@/workflows/definition').WorkflowInput };
   officeInput?: import('@/officeTasks/toolRunner').OfficeToolInput;
+  outputFormat?: import('@/officeTasks/document').DocumentOutputFormat;
   summary?: string;
   chartReview?: {
     profileId: string;
@@ -100,7 +103,7 @@ export interface ToolRun {
   finishReason?: import('@/services/modelStream').FinishReason;
   id: string;
   taskId: string;
-  tool: 'model.complete' | 'workflow.condition' | 'workflow.loop-iteration' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'document.export-pptx' | 'document.export-xlsx' | 'document.export-xls' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
+  tool: 'agent.capability' | 'model.complete' | 'workflow.condition' | 'workflow.function' | 'workflow.trigger' | 'workflow.loop-iteration' | 'document.edit' | 'document.restore' | 'document.export-docx' | 'document.export-pptx' | 'document.export-xlsx' | 'document.export-xls' | 'chart.check' | 'chart.render' | 'model.tools' | `office.${import('@/officeTasks/toolProtocol').OfficeToolName}`;
   callId?: string;
   arguments?: string;
   result?: string;
@@ -134,6 +137,10 @@ export interface WorkArtifact {
 }
 
 export interface VaultData {
+  imageDraft?: import('@/officeTasks/composition').ImageStudioDraft | null;
+  capabilities?: import('@/agents/capabilities').CapabilityResource[];
+  pptxDraft?: import('@/officeTasks/pptxDesign').PptxDesignDeck | null;
+  agents?: import('@/agents/definition').AgentDefinition[];
   workflows?: import('@/workflows/definition').WorkflowDefinition[];
   workflowDraft?: import('@/workflows/definition').WorkflowDefinition | null;
   workflowSchedules?: import('@/workflows/schedule').WorkflowSchedule[];

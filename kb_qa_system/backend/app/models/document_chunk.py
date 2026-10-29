@@ -25,13 +25,16 @@
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
-from sqlalchemy import String, DateTime, Integer, ForeignKey, Text, JSON, func, Index
+from typing import TYPE_CHECKING, Optional, Dict, Any
+from sqlalchemy import String, DateTime, Integer, ForeignKey, Text, JSON, func, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
 from app.core.database import Base
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.models.document import Document
 
 
 class DocumentChunk(Base):
@@ -105,7 +108,7 @@ class DocumentChunk(Base):
     )
 
     # Token 数量（用于成本计算和上下文长度控制）
-    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 页码（PDF等分页文档）
     # 作用：引用定位时告知用户来自哪一页
@@ -121,9 +124,10 @@ class DocumentChunk(Base):
     metadata_: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # 创建时间
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
+        nullable=True,
     )
 
     # ============================================
@@ -145,21 +149,23 @@ class DocumentChunk(Base):
         Index("ix_document_chunks_document_id_chunk_index",
               "document_id", "chunk_index"),
 
-        # 向量索引：加速相似度检索
-        # IVFFlat 索引，适合中等规模数据
-        # 注意：IVFFlat 索引需要在迁移脚本中手动创建
-        # 因为需要先有数据才能训练聚类中心
-        # Index("ix_document_chunks_content_vector",
-        #       "content_vector",
-        #       postgresql_using="ivfflat",
-        #       postgresql_with={"lists": 100},
-        #       postgresql_ops={"content_vector": "vector_cosine_ops"}),
+        # Mirror indexes created by the PostgreSQL migrations so autogenerate
+        # does not propose dropping database-managed indexes.
+        Index(
+            "ix_document_chunks_content_vector",
+            "content_vector",
+            postgresql_using="ivfflat",
+            postgresql_with={"lists": 100},
+            postgresql_ops={"content_vector": "vector_cosine_ops"},
+        ).ddl_if(dialect="postgresql"),
 
         # 全文检索索引：加速关键词检索
         # GIN 索引，支持高效的全文检索
-        Index("ix_document_chunks_content_tsv",
-              "content_tsv",
-              postgresql_using="gin"),
+        Index(
+            "ix_document_chunks_content_tsv",
+            text("to_tsvector('simple'::regconfig, content)"),
+            postgresql_using="gin",
+        ).ddl_if(dialect="postgresql"),
     )
 
     def __repr__(self) -> str:

@@ -20,13 +20,14 @@
  */
 
 import { useState, useEffect } from "react";
-import { Folder as FolderIcon, FileText, Globe, Lock } from "lucide-react";
+import { Building2, Folder as FolderIcon, FileText, Globe, Lock } from "lucide-react";
 import { Modal, Button } from "@/components/common";
 import { useDocumentStore } from "@/store/documentStore";
 import { useAuthStore } from "@/store/authStore";
 import { useToastStore } from "@/store/toastStore";
 import { cn } from "@/lib/utils";
 import type { DocumentVisibility } from "@/types/document";
+import { useOrganizationOptions } from "@/hooks/useOrganizationOptions";
 
 /** MoveToFolderModal 组件属性 */
 interface MoveToFolderModalProps {
@@ -38,6 +39,7 @@ interface MoveToFolderModalProps {
   currentFolderId: number | null;
   /** 当前文档库（用于高亮当前库，修复问题3b） */
   currentVisibility: DocumentVisibility;
+  currentOrganizationId?: number | null;
   /** 关闭回调 */
   onClose: () => void;
 }
@@ -48,16 +50,19 @@ export function MoveToFolderModal({
   documentId,
   currentFolderId,
   currentVisibility,
+  currentOrganizationId,
   onClose,
 }: MoveToFolderModalProps) {
   const { folders, moveDocument } = useDocumentStore();
   const { user } = useAuthStore();
   const toast = useToastStore();
+  const organizations = useOrganizationOptions();
   /** 选中的目标分支ID（null = 未分类） */
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   /** 选中的目标文档库（修复问题3b） */
   const [selectedVisibility, setSelectedVisibility] =
     useState<DocumentVisibility>("private");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   /** 当前用户是否为超级管理员（仅管理员可将文档移入公共库） */
@@ -68,14 +73,21 @@ export function MoveToFolderModal({
     if (open) {
       setSelectedFolderId(currentFolderId);
       setSelectedVisibility(currentVisibility);
+      setSelectedOrganizationId(currentOrganizationId ?? null);
     }
-  }, [open, currentFolderId, currentVisibility]);
+  }, [open, currentFolderId, currentVisibility, currentOrganizationId]);
 
   /** 提交移动 */
   async function handleSubmit() {
     // 计算是否有变化：分支或文档库至少一项发生改变
     const folderChanged = selectedFolderId !== currentFolderId;
-    const visibilityChanged = selectedVisibility !== currentVisibility;
+    const visibilityChanged = selectedVisibility !== currentVisibility
+      || selectedVisibility === "organization" && selectedOrganizationId !== (currentOrganizationId ?? null);
+
+    if (selectedVisibility === "organization" && selectedOrganizationId === null) {
+      toast.error("请选择组织", "组织共享需要选择一个已加入的组织。");
+      return;
+    }
 
     if (!folderChanged && !visibilityChanged) {
       toast.info("文档已在该分支和文档库中");
@@ -91,7 +103,8 @@ export function MoveToFolderModal({
       // 仅在文档库变化时传 visibility（不传则后端保持原库不变）
       const visibilityArg = visibilityChanged ? selectedVisibility : undefined;
 
-      await moveDocument(documentId, folderIdArg, visibilityArg);
+      await moveDocument(documentId, folderIdArg, visibilityArg,
+        selectedVisibility === "organization" ? selectedOrganizationId ?? undefined : undefined);
 
       // 构建友好提示
       const parts: string[] = [];
@@ -100,7 +113,9 @@ export function MoveToFolderModal({
       }
       if (visibilityChanged) {
         parts.push(
-          selectedVisibility === "public" ? "迁移到公共文档库" : "迁移到个人文档库",
+          selectedVisibility === "public" ? "迁移到公共文档库"
+            : selectedVisibility === "organization" ? `迁移到${organizations.find(item => item.id === selectedOrganizationId)?.name || "组织"}共享库`
+              : "迁移到个人文档库",
         );
       }
       toast.success(parts.join(" · "));
@@ -116,6 +131,7 @@ export function MoveToFolderModal({
   function handleClose() {
     setSelectedFolderId(null);
     setSelectedVisibility("private");
+    setSelectedOrganizationId(null);
     onClose();
   }
 
@@ -185,6 +201,13 @@ export function MoveToFolderModal({
               <span className="ml-auto text-xs text-ink-tertiary">当前</span>
             )}
           </button>
+          {organizations.length > 0 && <>
+            <button type="button" onClick={() => setSelectedVisibility("organization")} className={cn(
+              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+              selectedVisibility === "organization" ? "bg-brand-light text-brand" : "text-ink-secondary hover:bg-muted hover:text-ink",
+            )}><Building2 className="h-4 w-4" /><span>组织共享库</span></button>
+            {selectedVisibility === "organization" && <label className="work-label px-3">组织<select aria-label="目标组织" className="work-input" value={selectedOrganizationId ?? ""} onChange={event => setSelectedOrganizationId(event.target.value ? Number(event.target.value) : null)}><option value="">选择组织</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+          </>}
         </div>
 
         {/* 分隔线 */}

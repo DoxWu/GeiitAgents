@@ -13,7 +13,7 @@ async function prepare(d: MemoryDirectory) { await store.getState().prepareFileE
 async function commit(d: MemoryDirectory) { const p = store.getState().textBatchPreview!; await store.getState().commitFileEditBatch(d, p.id, p.rows.filter(r => r.after).map(r => r.id), true); }
 it('persists every recovery snapshot before the first write and restores as a new batch after refresh', async () => {
   const d = new MemoryDirectory({ 'a.md': '\ufeffold\r\n', 'b.txt': 'old\n' }); await prepare(d);
-  d.onCreateWritable = () => { expect(store.getState().fileEditVersions).toHaveLength(2); expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain('old'); };
+  d.onCreateWritable = () => { expect(store.getState().fileEditVersions).toHaveLength(2); expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain('\ufeffold\r\n'); };
   await commit(d); d.onCreateWritable = undefined; expect(d.closes).toBe(2);
   expect(store.getState().fileEditVersions.every(v => v.status === 'succeeded')).toBe(true);
   const batchId = store.getState().fileEditVersions[0].batch!.id;

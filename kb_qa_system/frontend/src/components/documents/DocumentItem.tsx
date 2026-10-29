@@ -315,6 +315,7 @@ export function DocumentItem({ document }: DocumentItemProps) {
         documentId={document.id}
         currentFolderId={document.folder_id}
         currentVisibility={document.visibility}
+        currentOrganizationId={document.organization_id}
         onClose={() => setMoveModalOpen(false)}
       />
     </div>

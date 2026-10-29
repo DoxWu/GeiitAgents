@@ -13,13 +13,14 @@
  *   <RegisterApplyForm onSuccess={() => setShowSuccess(true)} />
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Mail, MailCheck, User, Send } from "lucide-react";
 import { Button, Input } from "@/components/common";
 import { useToastStore } from "@/store/toastStore";
 import { submitRegisterApply } from "@/api/auth";
 import { isValidEmail, validateUsername } from "@/utils/validate";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
+import { listOrganizationCatalog, type OrganizationSummary } from "@/api/organizations";
 
 /** RegisterApplyForm 组件属性 */
 interface RegisterApplyFormProps {
@@ -40,11 +41,19 @@ export function RegisterApplyForm({ onSuccess }: RegisterApplyFormProps) {
   const [email, setEmail] = useState("");
   const [confirmEmail, setConfirmEmail] = useState("");
   const [username, setUsername] = useState("");
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
+  const [organizationId, setOrganizationId] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+    void listOrganizationCatalog().then(items => { if (active) setOrganizations(items); }).catch(() => { if (active) setOrganizations([]); });
+    return () => { active = false; };
+  }, []);
+
   // E5-03: 表单未保存提示 — 任一字段有值时视为 dirty
-  const isDirty = email !== "" || confirmEmail !== "" || username !== "";
+  const isDirty = email !== "" || confirmEmail !== "" || username !== "" || organizationId !== "";
   useUnsavedChanges(isDirty, "您有未保存的注册申请数据，确定要离开吗？");
 
   /** 校验表单 */
@@ -82,7 +91,7 @@ export function RegisterApplyForm({ onSuccess }: RegisterApplyFormProps) {
 
     setLoading(true);
     try {
-      await submitRegisterApply({ email, username });
+      await submitRegisterApply({ email, username, ...(organizationId ? { organization_id: Number(organizationId) } : {}) });
       toast.success("申请已提交", "请等待管理员审核");
       onSuccess?.(email);
     } catch (err) {
@@ -142,6 +151,22 @@ export function RegisterApplyForm({ onSuccess }: RegisterApplyFormProps) {
         icon={<User className="h-4 w-4" />}
         autoComplete="username"
       />
+
+      <label className="block space-y-1 text-sm font-medium text-ink">
+        <span>申请加入组织</span>
+        <select className="w-full rounded border border-line bg-surface px-3 py-2 text-sm text-ink" value={organizationId} onChange={event => setOrganizationId(event.target.value)} disabled={loading}>
+          <option value="">暂不加入组织</option>
+          {organizations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>
+
+      <label className="block space-y-1 text-sm font-medium text-ink">
+        <span>申请加入组织</span>
+        <select className="w-full rounded border border-line bg-surface px-3 py-2 text-sm text-ink" value={organizationId} onChange={event => setOrganizationId(event.target.value)} disabled={loading}>
+          <option value="">暂不加入组织</option>
+          {organizations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>
 
       <Button
         type="submit"

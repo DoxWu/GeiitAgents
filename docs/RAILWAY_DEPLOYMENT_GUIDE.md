@@ -1050,6 +1050,7 @@ MODEL_EAGER_HEALTH_CHECK=False
 3. 检查 `DATABASE_URL` 与 API 配置是否一致
 4. 检查 Worker 日志是否有异常（如模型 Key 无效、Embedding 失败）
 5. 确认与项目当前 provider 配置对应的模型变量正确
+6. 合并部署默认也启动独立邮件消费者；如果邮件队列由另一个 `ROLE=email-worker` 服务消费，将 `CELERY_EMAIL_WORKER_CONCURRENCY=0`，避免在 API 容器重复启动
 
 ### Q5：数据库迁移失败
 
@@ -1066,7 +1067,7 @@ MODEL_EAGER_HEALTH_CHECK=False
 **症状**：Worker 日志显示 `Killed` 或容器频繁重启
 
 **排查**：
-1. 降低 `CELERY_WORKER_CONCURRENCY`（如从 2 降到 1）
+1. 分别降低 `CELERY_DOCUMENT_WORKER_CONCURRENCY`、`CELERY_GENERAL_WORKER_CONCURRENCY` 与 `CELERY_EMAIL_WORKER_CONCURRENCY`
 2. 降低 `CELERY_MAX_TASKS_PER_CHILD`（让 Worker 更频繁重启释放内存）
 3. 在 Railway 中升级合并后端服务的资源限制（RAM）
 4. 关闭 `ENABLE_OCR`（OCR 是内存密集型操作）

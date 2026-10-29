@@ -110,11 +110,13 @@ class EmailLog(Base):
     )
 
     # 创建时间 / 更新时间
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now(),
+        nullable=True,
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+        nullable=True,
     )
 
     # 复合索引：按状态 + 创建时间查询（用于失败重试）

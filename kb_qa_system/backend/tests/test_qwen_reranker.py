@@ -22,10 +22,11 @@ DOCUMENTS = [
 def primary(monkeypatch):
     endpoint = ProviderEndpointConfig(
         name="primary",
+        type="dashscope_rerank",
         api_key="synthetic-secret",
         api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    config = ModelProviderConfig(providers={"llm": [endpoint]})
+    config = ModelProviderConfig(providers={"reranker": [endpoint]})
     monkeypatch.setattr(reranker.ConfigLoader, "load", lambda: config)
     return endpoint
 
@@ -96,6 +97,37 @@ def test_primary_request_maps_indexes_and_preserves_sources(monkeypatch, primary
     assert output[0]["score"] == 0.7
     assert output[0]["rerank_score"] == 0.9
     assert all("rerank_score" not in d for d in DOCUMENTS)
+
+
+def test_fallback_endpoint_is_tried_after_primary_failure(monkeypatch, primary):
+    config = reranker.ConfigLoader.load()
+    fallback = ProviderEndpointConfig(
+        name="fallback",
+        type="dashscope_rerank",
+        model="backup-reranker",
+        api_key="synthetic-fallback-secret",
+        api_base="https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    )
+    primary.model = "primary-reranker"
+    config.providers["reranker"] = [primary, fallback]
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.headers["Authorization"] == "Bearer synthetic-secret":
+            return httpx.Response(503)
+        body = json.loads(request.content)
+        assert body["model"] == "backup-reranker"
+        return httpx.Response(200, json={"output": {"results": [
+            {"index": 0, "relevance_score": 0.1},
+            {"index": 1, "relevance_score": 0.9},
+        ]}})
+
+    transport(monkeypatch, handler)
+    output = reranker.rerank_with_primary("query", DOCUMENTS, 2)
+    assert len(calls) == 2
+    assert "workspace.cn-beijing.maas.aliyuncs.com" in str(calls[1].url)
+    assert [item["metadata"]["document_id"] for item in output] == [8, 7]
 
 
 @pytest.mark.parametrize(

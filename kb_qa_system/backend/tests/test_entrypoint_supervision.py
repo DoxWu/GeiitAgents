@@ -23,7 +23,7 @@ def test_api_worker_fails_container_when_child_exits_successfully(tmp_path):
     stubs = {
         "id": "#!/bin/sh\n[ \"$1\" = -u ] && { printf '1001\\n'; exit 0; }\nexit 1\n",
         "python": "#!/bin/sh\nexit 0\n",
-        "celery": "#!/bin/sh\ncase \" $* \" in *\" worker \"*) exit 0 ;; *) exec sleep 30 ;; esac\n",
+        "celery": '#!/bin/sh\ncase " $* " in *" worker "*) printf \'%s\\n\' "$*" >> "$CELERY_LOG"; exit 0 ;; *) exec sleep 30 ;; esac\n',
         "uvicorn": "#!/bin/sh\nexec sleep 30\n",
     }
     for name, contents in stubs.items():
@@ -34,6 +34,7 @@ def test_api_worker_fails_container_when_child_exits_successfully(tmp_path):
     env = os.environ.copy()
     env["PATH"] = f"{stub_dir}{os.pathsep}{env['PATH']}"
     env["ROLE"] = "api+worker"
+    env["CELERY_LOG"] = str(tmp_path / "celery-commands.txt")
     process = subprocess.Popen(
         ["bash", str(entrypoint)],
         env=env,
@@ -50,3 +51,7 @@ def test_api_worker_fails_container_when_child_exits_successfully(tmp_path):
         pytest.fail("api+worker supervisor did not stop after a child exited")
 
     assert process.returncode == 1, f"stdout={stdout}\nstderr={stderr}"
+    worker_commands = Path(env["CELERY_LOG"]).read_text(encoding="utf-8").splitlines()
+    assert any("--queues=document" in command for command in worker_commands)
+    assert any("--queues=default,embedding,dead_letter" in command for command in worker_commands)
+    assert any("--queues=email" in command for command in worker_commands)

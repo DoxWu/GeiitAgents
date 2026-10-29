@@ -39,6 +39,7 @@ import type {
   ApplicationListItem,
   ApplicationListResponse,
 } from "@/types/user";
+import { listOrganizationCatalog, type OrganizationSummary } from "@/api/organizations";
 
 /** 状态筛选选项 */
 type StatusFilter = "all" | "pending" | "approved" | "rejected";
@@ -109,6 +110,14 @@ export default function AdminApplicationsPage() {
   const [rejectingApp, setRejectingApp] = useState<ApplicationListItem | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
+  const [organizationChoices, setOrganizationChoices] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    let active = true;
+    void listOrganizationCatalog().then(items => { if (active) setOrganizations(items); }).catch(() => { if (active) setOrganizations([]); });
+    return () => { active = false; };
+  }, []);
 
   /** 加载申请列表 */
   const loadApplications = useCallback(async () => {
@@ -148,10 +157,11 @@ export default function AdminApplicationsPage() {
   };
 
   /** 批准申请 */
-  const handleApprove = async (applicationId: number) => {
+  const handleApprove = async (applicationId: number, currentOrganizationId?: number | null) => {
     setApprovingId(applicationId);
     try {
-      await approveApplication(applicationId);
+      const selected = organizationChoices[applicationId] ?? (currentOrganizationId ? String(currentOrganizationId) : "");
+      await approveApplication(applicationId, selected ? Number(selected) : null);
       success("批准成功", "密码设置邮件已发送给申请人。");
       // 重新加载列表
       loadApplications();
@@ -299,9 +309,13 @@ export default function AdminApplicationsPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           {app.status === "pending" ? (
-                            <div className="flex items-center justify-end gap-2">
+                            <div className="flex min-w-72 items-center justify-end gap-2">
+                              <select aria-label={`${app.username} 的组织`} className="work-input max-w-40 text-xs" value={organizationChoices[app.id] ?? (app.organization_id ? String(app.organization_id) : "")} onChange={event => setOrganizationChoices(current => ({ ...current, [app.id]: event.target.value }))}>
+                                <option value="">不加入组织</option>
+                                {organizations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                              </select>
                               <button
-                                onClick={() => handleApprove(app.id)}
+                                onClick={() => handleApprove(app.id, app.organization_id)}
                                 disabled={approvingId === app.id}
                                 className="inline-flex items-center gap-1 rounded-md bg-green-50 px-2.5 py-1 text-xs font-medium text-success transition-colors hover:bg-green-100 disabled:opacity-50"
                               >

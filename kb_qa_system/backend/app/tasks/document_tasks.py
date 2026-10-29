@@ -365,21 +365,15 @@ def reprocess_document_task(self, document_id: int) -> dict:
 @celery_app.task(
     name="app.tasks.document_tasks.batch_process_documents",
     bind=True,
-    time_limit=settings.CELERY_TASK_TIMEOUT * 5,  # 批量任务超时延长
-    soft_time_limit=settings.CELERY_TASK_TIMEOUT * 5 - 30,
+    time_limit=settings.CELERY_TASK_TIMEOUT,
+    soft_time_limit=settings.CELERY_TASK_TIMEOUT - 30,
 )
 def batch_process_documents_task(self, document_ids: list) -> dict:
     """
     批量处理文档任务
 
     作用：
-        批量处理多个文档，逐个调用 process_document_task。
-        用于初始化导入、批量重新处理等场景。
-
-    实现方式：
-        1. 遍历 document_ids
-        2. 对每个文档调用 process_document_task（同步调用函数，不开子任务）
-        3. 统计成功/失败数量
+        将文档逐条交给受限的 document 队列，不在一个 worker 进程中同步处理整批。
 
     参数：
         self: Task - Celery 任务实例
@@ -387,34 +381,80 @@ def batch_process_documents_task(self, document_ids: list) -> dict:
 
     返回:
         dict - 批量处理结果
-            {
-                "total": 10,
-                "success": 8,
-                "failed": 2,
-                "failed_ids": [3, 7]
-            }
+            {"total": 10, "queued": 8, "failed": 2, "failed_ids": [3, 7]}
     """
-    logger.info(f"批量处理 {len(document_ids)} 个文档")
+    from app.services.document_queue import acquire_document_admission, release_document_admission
 
-    success_count = 0
+    document_ids = list(dict.fromkeys(document_ids))
+    logger.info("批量派发 %s 个文档", len(document_ids))
+    if len(document_ids) > settings.DOCUMENT_MAX_OUTSTANDING_GLOBAL:
+        return {
+            "total": len(document_ids),
+            "queued": 0,
+            "failed": len(document_ids),
+            "failed_ids": document_ids,
+            "reason": "batch_exceeds_document_queue_limit",
+        }
+
+    queued_ids = []
     failed_ids = []
 
     for doc_id in document_ids:
+        db = SessionLocal()
+        lease = None
+        row_marked = False
         try:
-            process_document_task(doc_id)
-            success_count += 1
+            document = db.query(Document).filter(Document.id == doc_id).first()
+            if not document or document.is_deleted:
+                failed_ids.append(doc_id)
+                continue
+            if document.status in {"pending", "processing"}:
+                failed_ids.append(doc_id)
+                continue
+
+            lease = acquire_document_admission(
+                db, document.user_id, exclude_document_id=doc_id
+            )
+            document.status = "processing"
+            document.processing_step = "queued"
+            document.processing_progress = 0
+            document.error_message = None
+            document.task_id = None
+            lease.ensure_valid()
+            db.commit()
+            row_marked = True
+            release_document_admission(lease)
+            lease = None
+
+            task = process_document_task.delay(doc_id)
+            queued_ids.append(doc_id)
+            try:
+                document.task_id = task.id
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.warning("记录批量文档 task_id 失败，任务仍已派发（document_id=%s）", doc_id)
         except Exception as e:
-            logger.error(f"文档 {doc_id} 处理失败: {e}")
+            logger.warning("文档批量派发失败（document_id=%s）: %s", doc_id, e)
+            db.rollback()
+            document = db.query(Document).filter(Document.id == doc_id).first()
+            if row_marked and document and document.status == "processing" and document.processing_step == "queued":
+                document.status = "failed"
+                document.error_message = "任务触发失败，请稍后重试"
+                db.commit()
             failed_ids.append(doc_id)
+        finally:
+            release_document_admission(lease)
+            db.close()
 
     result = {
         "total": len(document_ids),
-        "success": success_count,
+        "queued": len(queued_ids),
         "failed": len(failed_ids),
         "failed_ids": failed_ids,
     }
 
-    logger.info(f"批量处理完成：成功 {success_count}，失败 {len(failed_ids)}")
+    logger.info("文档批量派发完成：queued=%s failed=%s", len(queued_ids), len(failed_ids))
     return result
 
 

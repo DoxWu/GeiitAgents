@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markdownToHtml } from "./html";
+import { generatedHtmlDocument, markdownToHtml } from "./html";
 
 describe("markdownToHtml", () => {
   it("exports common Markdown as a standalone safe document", () => {
@@ -23,4 +23,12 @@ describe("markdownToHtml", () => {
     expect(() => markdownToHtml("\0", "x")).toThrow();
     expect(() => markdownToHtml("x".repeat(200_001), "x")).toThrow();
   });
+});
+
+it('keeps a selected generated HTML document as HTML and adds the isolated CSP', () => {
+  const html = generatedHtmlDocument('```html\n<!doctype html><html><head><title>Demo</title></head><body><h1>Demo</h1><script>document.body.dataset.ready="yes"</script></body></html>\n```');
+  expect(html).toContain('<h1>Demo</h1>');
+  expect(html).toContain("connect-src 'none'");
+  expect(html).not.toContain('```html');
+  expect(() => generatedHtmlDocument('<html><body><iframe src="https://outside"></iframe></body></html>')).toThrow('无效');
 });

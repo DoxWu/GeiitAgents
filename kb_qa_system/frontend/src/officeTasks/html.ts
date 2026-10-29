@@ -2,6 +2,7 @@ import { unified } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import type { Root, RootContent, PhrasingContent, List, ListItem, Table } from "mdast";
+import { htmlFromArtifact } from '@/components/workbench/webDesignerOutput';
 
 export const HTML_CONVERTER_VERSION = "markdown-html/1";
 
@@ -92,4 +93,15 @@ export function markdownToHtml(content: string, title: string): HtmlResult {
   const documentTitle = title.trim() || "文档成果";
   const html = `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeText(documentTitle)}</title><style>body{font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;line-height:1.7;max-width:920px;margin:2rem auto;padding:0 1rem;color:#202124}h1,h2,h3,h4,h5,h6{line-height:1.3;margin-top:1.5em}pre{background:#f4f4f5;padding:1rem;overflow:auto}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #c9cdd3;padding:.45rem .6rem;vertical-align:top}th{background:#f1f3f5}.plain-url,.omitted-media{color:#5f6368}.raw-html{white-space:pre-wrap}.checkbox{margin-right:.35rem}blockquote{border-left:4px solid #c9cdd3;padding-left:1rem;color:#5f6368}</style></head><body>${blocks(root.children)}</body></html>`;
   return { html, warnings: [...warnings], converterVersion: HTML_CONVERTER_VERSION };
+}
+
+export function generatedHtmlDocument(content: string, images: import('@/types/workbench').WorkImage[] = []): string {
+  const value = content.trim();
+  const fenced = value.match(/^```(?:html|htm)\s*\n([\s\S]*?)\n```$/i);
+  const html = (fenced?.[1] ?? value).trim();
+  if (!html || html.length > 1_000_000 || !/<html(?:\s[^>]*)?>/i.test(html) || /<\/?(?:iframe|object|embed|base)\b/i.test(html)
+    || /<meta\b[^>]*http-equiv\s*=\s*["']?refresh\b/i.test(html)) throw new Error('HTML 成果无效或超过限制。');
+  const safe = htmlFromArtifact(`\`\`\`html\n${html}\n\`\`\``, images);
+  if (!safe) throw new Error('HTML 成果无法安全导出。');
+  return safe;
 }

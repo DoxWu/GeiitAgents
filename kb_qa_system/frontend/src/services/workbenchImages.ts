@@ -4,6 +4,7 @@ export const MAX_WORK_IMAGE_BYTES = 1_500_000;
 export const MAX_CONVERSATION_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_VAULT_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_IMAGES_PER_MESSAGE = 3;
+export const MAX_IMAGES_PER_TASK = 50;
 
 export async function readWorkImages(files: FileList | File[]): Promise<WorkImage[]> {
   if (files.length > MAX_IMAGES_PER_MESSAGE) throw new Error('每条消息最多附加 3 张图片。');
@@ -37,4 +38,16 @@ export function validateWorkImage(image: WorkImage): void {
   if (!match || match[1] !== image.mimeType || match[2].length % 4 !== 0 || Math.floor(match[2].length * 3 / 4) - (match[2].endsWith('==') ? 2 : match[2].endsWith('=') ? 1 : 0) !== image.bytes) throw new Error('图片数据无效。');
   const decoded = Uint8Array.from(atob(match[2]), character => character.charCodeAt(0));
   if (imageType(decoded) !== image.mimeType) throw new Error('图片内容与类型不匹配。');
+}
+
+export function workImageFromDataUrl(dataUrl: string, name: string): WorkImage {
+  if (typeof dataUrl !== 'string' || dataUrl.length > 2_100_000) throw new Error('生成图片超过大小限制。');
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+  if (!match || match[2].length % 4 !== 0) throw new Error('生图模型返回的数据格式无效。');
+  const decoded = Uint8Array.from(atob(match[2]), character => character.charCodeAt(0));
+  const mimeType = imageType(decoded);
+  if (!mimeType || mimeType !== match[1] || decoded.length > MAX_WORK_IMAGE_BYTES) throw new Error('生成图片格式无效或超过 1.5 MiB 限制。');
+  const image = { name: name.slice(0, 240) || 'generated-image.png', mimeType, dataUrl, bytes: decoded.length };
+  validateWorkImage(image);
+  return image;
 }

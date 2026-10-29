@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from typing import Any, Optional
 
 from app.core.database import get_db
@@ -49,7 +49,8 @@ from app.schemas.document import (
     BatchOperationResponse,
 )
 from app.services.document_processor import document_processor
-from app.services.permission import permission_service, VISIBILITY_PRIVATE, VISIBILITY_PUBLIC
+from app.services.document_queue import acquire_document_admission, release_document_admission
+from app.services.permission import permission_service, VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_ORGANIZATION
 from app.services.audit_service import audit_service
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,7 @@ async def upload_document(
         None, ge=0,
         description="所属分支ID（≥1 指定分支；0 或不传表示未分类）"
     ),
+    organization_id: Optional[int] = Form(None, ge=1),
     # 文档重名/重传修复：冲突处理策略
     # 作用：当检测到与当前用户某篇活跃文档内容相同时（file_hash 命中），
     #       根据此参数决定处理方式，避免直接 409 拒绝导致业务中断。
@@ -291,7 +293,7 @@ async def upload_document(
     #   扫描完成前文档状态保持 pending_scan，扫描通过后才进入处理流水线
 
     # 校验可见性（普通用户请求 public 会被降级为 private）
-    effective_visibility = permission_service.validate_visibility(visibility, current_user)
+    effective_visibility = permission_service.validate_visibility(visibility, current_user, db, organization_id)
 
     # 修复问题3a：校验并设置 folder_id
     # 作用：此前上传接口不接受 folder_id，文档一律归入未分类。
@@ -393,6 +395,7 @@ async def upload_document(
             )
 
     record_saved = False
+    queue_admission_token = None
     # M-2 修复：try 块覆盖"检查去重 → 创建记录 → DB 插入"全程，finally 释放锁
     try:
         # 文档重名/重传修复：仅检查当前用户的活跃文档（is_deleted=False），
@@ -450,6 +453,8 @@ async def upload_document(
                     f"冲突处理=keep_both: 保留两者, user_id={current_user.id}"
                 )
 
+        queue_admission_token = acquire_document_admission(db, current_user.id)
+
         # 6. 创建数据库记录
         doc_title = title if title else safe_filename
         # 冲突处理=rename 时生成唯一标题和文件名
@@ -470,6 +475,7 @@ async def upload_document(
             processing_progress=0,
             user_id=current_user.id,
             visibility=effective_visibility,
+            organization_id=organization_id if effective_visibility == VISIBILITY_ORGANIZATION else None,
             folder_id=effective_folder_id,
             metadata_={"category": category, "tags": tag_list} if tag_list else None,
             supersedes_document_id=existing.id if existing and conflict_resolution == "overwrite" else None,
@@ -477,6 +483,7 @@ async def upload_document(
 
         try:
             db.add(db_document)
+            queue_admission_token.ensure_valid()
             db.commit()
             record_saved = True
             db.refresh(db_document)
@@ -496,6 +503,7 @@ async def upload_document(
         # M-2 修复：无论成功失败，释放上传去重锁
         if upload_lock_key and upload_lock_token:
             RedisManager.release_lock(upload_lock_key, upload_lock_token)
+        release_document_admission(queue_admission_token)
 
     # 7. 触发 Celery 异步任务
     # 作用：上传接口立即返回，文档在后台异步处理
@@ -662,7 +670,11 @@ def list_documents(
     # 作用：根据 scope 限定可见文档范围
     if scope == "mine":
         # 仅自己上传的
-        query = query.filter(Document.user_id == current_user.id)
+        organization_ids = permission_service.get_active_organization_ids(db, current_user.id)
+        query = query.filter(Document.user_id == current_user.id).filter(
+            (Document.visibility != VISIBILITY_ORGANIZATION)
+            | Document.organization_id.in_(organization_ids)
+        )
     elif scope == "public":
         # 仅公共文档库
         query = query.filter(Document.visibility == VISIBILITY_PUBLIC)
@@ -670,9 +682,11 @@ def list_documents(
         # accessible（默认）：自己的 + 公共库
         # 隐私修复：超级管理员也只能看到自己的文档 + 公共文档
         # （不能看到其他用户的私有文档，避免侵犯隐私）
+        organization_ids = permission_service.get_active_organization_ids(db, current_user.id)
         query = query.filter(
-            (Document.user_id == current_user.id)
-            | (Document.visibility == VISIBILITY_PUBLIC)
+            (Document.visibility == VISIBILITY_PUBLIC)
+            | ((Document.visibility == VISIBILITY_PRIVATE) & (Document.user_id == current_user.id))
+            | ((Document.visibility == VISIBILITY_ORGANIZATION) & Document.organization_id.in_(organization_ids))
         )
 
     # 状态筛选
@@ -995,7 +1009,7 @@ def reprocess_document(
 
     # 幂等性检查：正在处理中的文档不允许重复触发
     # 作用：防止并发重复触发导致 Celery 任务堆积、重复计费、状态混乱
-    if document.status == "processing":
+    if document.status in {"pending", "processing"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1020,40 +1034,55 @@ def reprocess_document(
             detail={"error": {"code": "REPROCESS_LOCKED", "message": "该文档正在被其他请求处理，请稍后重试"}},
         )
 
+    queue_admission_token = None
     try:
-        # 触发 Celery 重新处理任务
-        try:
-            from app.tasks.document_tasks import reprocess_document_task
-            task = reprocess_document_task.delay(document_id)
-            document.task_id = task.id
-            # H-3 修复：状态设为 processing 而非 pending，关闭 TOCTOU 竞态窗口
-            # 作用：原实现设为 pending，finally 释放锁后到 Celery 任务实际启动前存在窗口，
-            #       第二个请求的 status=="processing" 检查会通过（此时仍为 pending），导致并发重复处理。
-            #       修复后：持锁期间就设为 processing，锁释放后 status 屏障立即生效，第二个请求被 409 挡住。
-            #       Celery 任务内部会再次设置 processing（幂等，无副作用）。
-            document.status = "processing"
-            document.processing_step = "queued"
-            document.processing_progress = 0
-            document.error_message = None
-            db.commit()
-            db.refresh(document)
-
-            logger.info(
-                f"文档重新处理任务已触发: doc_id={document_id}, task_id={task.id}"
-            )
-        except Exception as e:
-            logger.error(f"触发重新处理任务失败: {e}")
+        # H-3 TOCTOU: refresh under the distributed lock before reprocessing.
+        db.refresh(document)
+        if document.status in {"pending", "processing"}:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": "TASK_TRIGGER_FAILED", "message": "任务触发失败，请稍后重试"}}
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": {
+                        "code": "DOCUMENT_ALREADY_PROCESSING",
+                        "message": "文档正在处理中，请等待当前处理完成后再重试",
+                        "task_id": document.task_id,
+                    }
+                },
             )
+        queue_admission_token = acquire_document_admission(db, document.user_id)
+        document.status = "processing"
+        document.processing_step = "queued"
+        document.processing_progress = 0
+        document.error_message = None
+        queue_admission_token.ensure_valid()
+        db.commit()
+        db.refresh(document)
     finally:
-        # 释放分布式锁
-        # 作用：无论成功或失败，都释放锁，允许后续重试
-        # H-2: 使用 release_lock 比对 token，防止误删他人锁
+        release_document_admission(queue_admission_token)
         if lock_token:
             RedisManager.release_lock(lock_key, lock_token)
 
+    try:
+        from app.tasks.document_tasks import reprocess_document_task
+        task = reprocess_document_task.delay(document_id)
+    except Exception as e:
+        logger.error(f"触发重新处理任务失败: {e}")
+        document.status = "failed"
+        document.error_message = "任务触发失败，请稍后重试"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": "TASK_TRIGGER_FAILED", "message": "任务触发失败，请稍后重试"}}
+        ) from None
+
+    try:
+        document.task_id = task.id
+        db.commit()
+        db.refresh(document)
+    except Exception as e:
+        db.rollback()
+        logger.warning("重处理任务已派发但 task_id 记录失败（doc_id=%s）: %s", document_id, e)
+    logger.info(f"文档重新处理任务已触发: doc_id={document_id}, task_id={task.id}")
     return document
 
 
@@ -1147,6 +1176,17 @@ def move_document(
     # 修复422：前端用 folder_id=0 表示"移出分支"（URL 无法直接传 null），
     #          后端需要将 0 转换为 None，否则会查询 ID=0 的分支（不存在 → 400）
     folder_id_provided = "folder_id" in request.query_params
+    organization_id_text = request.query_params.get("organization_id")
+    organization_id = None
+    if organization_id_text is not None:
+        try:
+            organization_id = int(organization_id_text)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid_organization_id") from None
+        if organization_id < 1:
+            raise HTTPException(status_code=422, detail="invalid_organization_id")
+    if organization_id is not None and visibility != VISIBILITY_ORGANIZATION:
+        raise HTTPException(status_code=400, detail="organization_id_requires_organization_visibility")
     if folder_id == 0:
         folder_id = None
 
@@ -1187,7 +1227,7 @@ def move_document(
     # 注意：validate_visibility 会将非管理员请求的 public 降级为 private，
     #       保证普通用户无法通过此接口将文档移入公共库。
     if visibility is not None:
-        if visibility not in (VISIBILITY_PRIVATE, VISIBILITY_PUBLIC):
+        if visibility not in (VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_ORGANIZATION):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -1197,8 +1237,9 @@ def move_document(
                     }
                 },
             )
-        effective_visibility = permission_service.validate_visibility(visibility, current_user)
+        effective_visibility = permission_service.validate_visibility(visibility, current_user, db, organization_id)
         document.visibility = effective_visibility
+        document.organization_id = organization_id if effective_visibility == VISIBILITY_ORGANIZATION else None
 
     # 更新文档的 folder_id（仅在显式传递时）
     if folder_id_provided:
@@ -1637,6 +1678,8 @@ def batch_move_documents(
     body_provided = body.model_dump(exclude_unset=True)
     folder_id_provided = "folder_id" in body_provided
     visibility_provided = "visibility" in body_provided
+    organization_id_provided = "organization_id" in body_provided
+    organization_id = body.organization_id
     target_folder_id = body.folder_id
     # 修复问题3b：读取目标 visibility，支持批量在公共库/个人库之间迁移
     target_visibility = body.visibility
@@ -1646,7 +1689,7 @@ def batch_move_documents(
 
     # 修复问题3b：校验 target_visibility 取值合法性
     # 作用：提前拦截非法取值，避免逐个文档处理时重复校验
-    if visibility_provided and target_visibility is not None and target_visibility not in (VISIBILITY_PRIVATE, VISIBILITY_PUBLIC):
+    if visibility_provided and target_visibility is not None and target_visibility not in (VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, VISIBILITY_ORGANIZATION):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -1657,8 +1700,12 @@ def batch_move_documents(
             },
         )
     # 提前计算 effective_visibility（非管理员请求 public 会被降级为 private）
+    if organization_id_provided and target_visibility != VISIBILITY_ORGANIZATION:
+        raise HTTPException(status_code=400, detail="organization_id_requires_organization_visibility")
+    if target_visibility == VISIBILITY_ORGANIZATION and not organization_id_provided:
+        raise HTTPException(status_code=400, detail="organization_id_required")
     effective_visibility = (
-        permission_service.validate_visibility(target_visibility, current_user)
+        permission_service.validate_visibility(target_visibility, current_user, db, organization_id)
         if visibility_provided and target_visibility is not None
         else None
     )
@@ -1718,6 +1765,7 @@ def batch_move_documents(
         # 修复问题3b：如有指定 effective_visibility，则同步更新文档库归属
         if effective_visibility is not None:
             document.visibility = effective_visibility
+            document.organization_id = organization_id if effective_visibility == VISIBILITY_ORGANIZATION else None
         db.commit()
 
         success_count += 1
@@ -1873,6 +1921,7 @@ def import_from_url(
         default="private",
         description="可见性：private 个人文档库（默认）/ public 公共文档库（仅管理员）"
     ),
+    organization_id: Optional[int] = Form(None, ge=1),
     db: Session = Depends(get_db),
     # 任务5：URL 导入接口限制为正式用户，guest 用户返回 403
     current_user: User = Depends(get_current_regular_user),
@@ -1980,7 +2029,7 @@ def import_from_url(
     tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()] if tags else []
 
     # 校验可见性（普通用户请求 public 会被降级为 private）
-    effective_visibility = permission_service.validate_visibility(visibility, current_user)
+    effective_visibility = permission_service.validate_visibility(visibility, current_user, db, organization_id)
 
     db_document = Document(
         title=doc_title,
@@ -1993,6 +2042,7 @@ def import_from_url(
         processing_progress=0,
         user_id=current_user.id,
         visibility=effective_visibility,
+        organization_id=organization_id if effective_visibility == VISIBILITY_ORGANIZATION else None,
         file_hash=url_hash,  # M-1：URL 哈希用于去重
         metadata_={
             "category": category,
@@ -2001,11 +2051,23 @@ def import_from_url(
         },
     )
 
-    # 捕获 IntegrityError（并发导入相同 URL 时的竞态条件）
+    queue_admission_token = None
+    record_saved = False
     try:
+        queue_admission_token = acquire_document_admission(db, current_user.id)
+        queue_admission_token.ensure_valid()
         db.add(db_document)
+        queue_admission_token.ensure_valid()
         db.commit()
+        record_saved = True
         db.refresh(db_document)
+    except HTTPException:
+        db.rollback()
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        raise
     except IntegrityError:
         db.rollback()
         try:
@@ -2016,20 +2078,36 @@ def import_from_url(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"code": "DOCUMENT_ALREADY_EXISTS", "message": "该 URL 的文档已存在"}},
         )
+    except Exception:
+        db.rollback()
+        if not record_saved:
+            try:
+                os.remove(file_path)
+            except OSError:
+                logger.warning("URL 导入准入失败后的文件清理失败")
+        raise
+    finally:
+        release_document_admission(queue_admission_token)
 
     # 5. 触发 Celery 异步任务
     try:
         from app.tasks.document_tasks import process_document_task
         task = process_document_task.delay(db_document.id)
-        db_document.task_id = task.id
-        db.commit()
-        db.refresh(db_document)
     except Exception as e:
         logger.error(f"触发 Celery 任务失败: {e}")
         db_document.status = "failed"
         db_document.error_message = "任务触发失败，请稍后重试"  # 脱敏：不暴露内部错误
         db.commit()
         db.refresh(db_document)
+        return db_document
+
+    try:
+        db_document.task_id = task.id
+        db.commit()
+        db.refresh(db_document)
+    except Exception as e:
+        db.rollback()
+        logger.warning("URL 导入任务已派发但 task_id 记录失败（doc_id=%s）: %s", db_document.id, e)
 
     return db_document
 
@@ -2073,19 +2151,23 @@ def get_documents_stats(
             "avg_quality_score": 82.5
         }
     """
-    from sqlalchemy import func, or_
+    from sqlalchemy import and_, func, or_
 
     # 构建范围过滤条件（与 list_documents 保持一致）
     # 作用：统一权限范围逻辑，避免统计接口绕过权限隔离
     if scope == "mine":
-        scope_filter = Document.user_id == current_user.id
+        organization_ids = permission_service.get_active_organization_ids(db, current_user.id)
+        scope_filter = and_(Document.user_id == current_user.id,
+            (Document.visibility != VISIBILITY_ORGANIZATION) | Document.organization_id.in_(organization_ids))
     elif scope == "public":
         scope_filter = Document.visibility == VISIBILITY_PUBLIC
     else:
         # accessible matches list_documents, including for superusers.
+        organization_ids = permission_service.get_active_organization_ids(db, current_user.id)
         scope_filter = or_(
-            Document.user_id == current_user.id,
+            and_(Document.visibility == VISIBILITY_PRIVATE, Document.user_id == current_user.id),
             Document.visibility == VISIBILITY_PUBLIC,
+            and_(Document.visibility == VISIBILITY_ORGANIZATION, Document.organization_id.in_(organization_ids)),
         )
 
     # 基础查询构造器（统一附加 scope + 未删除过滤）

@@ -6,6 +6,8 @@
 .work-command { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid rgb(var(--color-line-rgb)); border-radius: 4px; font-size: 14px; }
 .work-label { display: grid; gap: 7px; font-size: 13px; }
 .work-input { width: 100%; border: 1px solid rgb(var(--color-line-rgb)); border-radius: 4px; padding: 9px 10px; font-size: 14px; color: inherit; background: transparent; min-width: 0; }
+.work-input:is(select) { color: rgb(var(--color-ink-rgb)); background-color: rgb(var(--color-surface-rgb)); color-scheme: light; }
+.dark .work-input:is(select) { color-scheme: dark; }
 .work-input:focus { outline: 2px solid #648bb0; outline-offset: 1px; }
 .work-nav { display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 4px; font-size: 14px; }
 .private-markdown { font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
@@ -21,3 +23,11 @@
 .private-markdown td, .private-markdown th { border: 1px solid #ccd2da; padding: 6px 10px; text-align: left; }
 .private-markdown blockquote { border-left: 3px solid #8eacbc; padding-left: 14px; }
 .dark .work-icon:hover, .dark .work-nav:hover { background: #293237; }
+.web-design-canvas { background-image: linear-gradient(to right, rgb(100 116 139 / 12%) 1px, transparent 1px), linear-gradient(to bottom, rgb(100 116 139 / 12%) 1px, transparent 1px); background-size: 5% 5%; touch-action: pan-y; }
+.web-canvas-drag, .web-canvas-resize { touch-action: none; user-select: none; }
+.web-canvas-drag { cursor: grab; }
+.web-canvas-drag:active { cursor: grabbing; }
+.web-canvas-resize { cursor: nwse-resize; }
+.web-canvas-motion { animation: web-canvas-float 1.8s ease-in-out infinite alternate; }
+@keyframes web-canvas-float { from { transform: translateY(3px) scale(.92); opacity: .65; } to { transform: translateY(-3px) scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .web-canvas-motion { animation: none; } }

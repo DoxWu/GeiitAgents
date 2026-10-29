@@ -3,6 +3,8 @@ import { apiClient, getStoredTokens } from "@/api/client";
 
 import type { ModelMessageContent, ModelProfile } from "@/types/workbench";
 import { finishReason, readModelResponse, type FinishReason } from './modelStream';
+import { imageType, workImageFromDataUrl } from './workbenchImages';
+import type { WorkImage } from '@/types/workbench';
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
@@ -26,6 +28,13 @@ export function validateProfile(profile: Pick<ModelProfile, "baseUrl" | "mode" |
   if ([...profile.model.trim()].length > 200 || [...profile.model].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)) throw new Error("模型名称过长或包含无效字符。");
   if (profile.maxTokens !== undefined && (!Number.isInteger(profile.maxTokens) || profile.maxTokens < 1 || profile.maxTokens > 2147483647)) throw new Error("输出上限应为有效的正整数。");
   return baseUrl;
+}
+
+export function validateImageModel(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const model = value.trim();
+  if (model.length > 200 || [...model].some(c => c.charCodeAt(0) <= 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)) throw new Error('生图模型名称过长或包含无效字符。');
+  return model;
 }
 
 export function requirePrivateRelay(apiKey: string): void {
@@ -107,6 +116,65 @@ export async function completeModel(
   } catch {
     if (signal.aborted) throw new DOMException("已取消", "AbortError");
     throw new Error(profile.mode === 'local' ? "本机模型请求失败或输出中断。请检查服务、模型名称和跨域设置。" : "自购 API 请求失败或输出中断。请检查模型名称、密钥和跨域设置。");
+  }
+}
+
+export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal): Promise<WorkImage> {
+  const model = validateImageModel(profile.imageModel);
+  const baseUrl = validateProfile(profile);
+  if (!model) throw new Error('请先在模型连接中配置兼容的生图模型名称。');
+  if (!prompt.trim() || prompt.length > 1000) throw new Error('图片生成描述需要 1–1000 个字符。');
+  if (profile.mode === 'relay') {
+    requirePrivateRelay(apiKey);
+    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt: prompt.trim() }, {
+      signal, headers: { 'X-Model-Api-Key': apiKey }, cache: 'no-store', redirect: 'error',
+    });
+    return workImageFromDataUrl(result.data_url, 'generated-image.png');
+  }
+  if (isDesktop()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const requestId = crypto.randomUUID(), abort = () => { void invoke('cancel_local_model', { requestId }).catch(() => {}); };
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      if (signal.aborted) throw new Error();
+      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt: prompt.trim(), direct: profile.mode === 'direct' });
+      if (signal.aborted || typeof encoded !== 'string' || encoded.length > 2_000_000) throw new Error();
+      const mime = imageType(Uint8Array.from(atob(encoded), character => character.charCodeAt(0)));
+      if (!mime) throw new Error();
+      return workImageFromDataUrl(`data:${mime};base64,${encoded}`, 'generated-image.png');
+    } catch { if (signal.aborted) throw new DOMException('已取消', 'AbortError'); throw new Error('生图模型请求失败，请检查模型名称、密钥与图片接口兼容性。'); }
+    finally { signal.removeEventListener('abort', abort); }
+  }
+  try {
+    const response = await fetch(`${baseUrl}/images/generations`, { method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
+      headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+      body: JSON.stringify({ model, prompt: prompt.trim(), n: 1, size: '1024x1024', response_format: 'b64_json' }) });
+    if (!response.ok) { await response.body?.cancel(); throw new Error(); }
+    if (Number(response.headers.get('content-length') ?? 0) > 3 * 1024 * 1024 || !response.body) { await response.body?.cancel(); throw new Error(); }
+    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > 3 * 1024 * 1024 || signal.aborted) { await reader.cancel(); throw new Error(); }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const data = new Uint8Array(total); let offset = 0;
+    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
+    const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)) as { data?: { b64_json?: string }[] };
+    if (!Array.isArray(payload.data) || payload.data.length !== 1) throw new Error();
+    const encoded = payload.data?.[0]?.b64_json;
+    if (typeof encoded !== 'string' || encoded.length > 2_100_000) throw new Error();
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const mime = imageType(bytes);
+    if (!mime) throw new Error();
+    return workImageFromDataUrl(`data:${mime};base64,${encoded}`, 'generated-image.png');
+  } catch (error) {
+    if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+    if (error instanceof Error && error.message.includes('生成图片')) throw error;
+    throw new Error('生图接口请求失败或未返回可用的内嵌图片，请检查模型、接口兼容性和跨域设置。');
   }
 }
 

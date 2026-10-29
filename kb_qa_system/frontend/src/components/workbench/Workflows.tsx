@@ -3,7 +3,7 @@ import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp } from 'lucide-react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
-import { NODE_LABELS, autoLayoutWorkflow, isWorkflowModelNode, maxWorkflowModelRequests, newWorkflow, newWorkflowNode, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
+import { NODE_LABELS, autoLayoutWorkflow, isWorkflowModelNode, maxWorkflowModelRequests, newWorkflow, newWorkflowNode, pruneAgentStepBindings, validateWorkflow, type WorkflowConditionOperator, type WorkflowConditionSource, type WorkflowDefinition, type WorkflowInput, type WorkflowNode, type WorkflowNodeKind } from '@/workflows/definition';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { ToolArtifact } from './ToolArtifact';
 import { GenerationPreview } from './GenerationPreview';
@@ -11,6 +11,12 @@ import { finishLabel } from '@/services/modelStream';
 import type { TaskStatus } from '@/types/workbench';
 import { exportWorkflowDefinition, importWorkflowDefinition, MAX_WORKFLOW_FILE_BYTES } from '@/workflows/portable';
 import type { WorkflowScheduleKind } from '@/workflows/schedule';
+import { FunctionNodeFields } from './FunctionNodeFields';
+import { isBranchNode } from '@/workflows/definition';
+import { AgentNodeFields } from './AgentNodeFields';
+import { useOrganizationOptions } from '@/hooks/useOrganizationOptions';
+import { useAuthStore } from '@/store/authStore';
+import { deleteOrganizationWorkflow, listOrganizationWorkflows, publishOrganizationWorkflow, updateOrganizationWorkflow, type OrganizationWorkflowTemplate } from '@/api/organizations';
 
 const statuses: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 const scheduleStatuses = { enabled: '已启用', paused: '已暂停', 'awaiting-device': '待设备', 'awaiting-authorization': '待授权', error: '需处理' } as const;
@@ -18,6 +24,9 @@ const RUNS_PER_PAGE = 10;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export function Workflows() {
   const store = useWorkbenchStore();
+  const organizations = useOrganizationOptions();
+  const currentUser = useAuthStore(state => state.user);
+  const userId = currentUser?.id;
   const [draft, setDraft] = useState<WorkflowDefinition>(() => clone(store.workflowDraft ?? newWorkflow())), [dirty, setDirty] = useState(Boolean(store.workflowDraft)), [selected, setSelected] = useState('');
   const stageDraft = store.stageWorkflowDraft ?? (() => true);
   const clearDraft = store.clearWorkflowDraft ?? (async () => {});
@@ -32,9 +41,24 @@ export function Workflows() {
   const [scheduleMinutes, setScheduleMinutes] = useState('60');
   const [scheduleEvent, setScheduleEvent] = useState('manual.event');
   const [scheduleConsent, setScheduleConsent] = useState<Record<string, boolean>>({});
+  const [organizationId, setOrganizationId] = useState('');
+  const [organizationTemplates, setOrganizationTemplates] = useState<OrganizationWorkflowTemplate[]>([]);
+  const [selectedOrganizationTemplateId, setSelectedOrganizationTemplateId] = useState('');
   const [selectedRun, setSelectedRun] = useState(''), [artifactId, setArtifactId] = useState(''), [runsPage, setRunsPage] = useState(1);
   const mounted = useRef(false), starting = useRef(false), dirtyRef = useRef(false), inputGeneration = useRef(0), inputFile = useRef<HTMLInputElement>(null);
   const workflowFile = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let current = true;
+    setOrganizationTemplates([]);
+    setSelectedOrganizationTemplateId('');
+    if (!organizationId || !userId) return () => { current = false; };
+    void listOrganizationWorkflows(Number(organizationId)).then(items => {
+      if (current) setOrganizationTemplates(items);
+    }).catch(() => {
+      if (current) setOrganizationTemplates([]);
+    });
+    return () => { current = false; };
+  }, [organizationId, userId]);
   dirtyRef.current = dirty && (draftPending || store.workflowDraftSaving || Boolean(store.storageError));
   useEffect(() => {
     mounted.current = true;
@@ -47,17 +71,25 @@ export function Workflows() {
   const needsDefault = draft.nodes.some(n => isWorkflowModelNode(n) && !n.profileId);
   const routeId = (node: WorkflowNode) => node.profileId || chosen;
   const routes = draft.nodes.filter(isWorkflowModelNode).map(n => [n.id, routeId(n), store.profiles.find(p => p.id === routeId(n)), store.accountModel]);
-  const cloud = routes.some(([, id, profile]) => id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes((profile as typeof store.profiles[number] | undefined)?.mode || ''));
+  const cloud = draft.nodes.some(n => n.agent?.capabilities?.some(r => r.kind === 'mcp')) || routes.some(([, id, profile]) => id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes((profile as typeof store.profiles[number] | undefined)?.mode || ''));
   const signature = JSON.stringify([routes, store.accountModel]);
-  useEffect(() => { setConsent(false); }, [signature]);
+  useEffect(() => { setConsent(false); setScheduleConsent({}); }, [signature]);
   const node = draft.nodes.find(n => n.id === selected);
   const runs = store.taskRuns.filter(t => t.type === 'workflow.run');
   const runsPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
   const currentRunsPage = Math.min(runsPage, runsPageCount);
   const pageRuns = runs.slice((currentRunsPage - 1) * RUNS_PER_PAGE, currentRunsPage * RUNS_PER_PAGE);
   const run = pageRuns.find(t => t.id === selectedRun) ?? pageRuns[0];
+  const canResumeRun = Boolean(run && run.status !== 'running' && (
+    ['failed', 'interrupted', 'cancelled'].includes(run.status)
+    || run.toolRunIds.some(id => {
+      const step = store.toolRuns.find(item => item.id === id);
+      return step && (['failed', 'interrupted', 'cancelled'].includes(step.status) || step.finishReason && step.finishReason !== 'stop');
+    })
+  ));
   const taskNavigation = useTaskNavigation(run?.id);
   const runNeedsCloud = Boolean(run?.workflow?.definition.nodes.some(n => {
+    if (n.agent?.capabilities?.some(resource => resource.kind === 'mcp')) return true;
     if (!isWorkflowModelNode(n)) return false;
     const id = n.profileId || run.profileId;
     return id === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(store.profiles.find(p => p.id === id)?.mode || '');
@@ -65,8 +97,17 @@ export function Workflows() {
   const resumeSignature = JSON.stringify([run?.id, run?.workflow, run?.profileId, store.profiles, store.accountModel]);
   useEffect(() => { setResumeConsent(false); }, [resumeSignature]);
   const artifact = store.artifacts.find(a => a.id === artifactId && run?.artifactIds.includes(a.id)) ?? store.artifacts.find(a => run?.artifactIds.includes(a.id));
+  const selectedTemplate = organizationTemplates.find(item => item.id === selectedOrganizationTemplateId);
+  const canManageSelectedTemplate = Boolean(selectedTemplate && (
+    currentUser?.is_superuser || selectedTemplate.ownerId === userId
+    || organizations.find(item => item.id === Number(organizationId))?.role === 'org_admin'
+  ));
   function change(next: WorkflowDefinition) { setDraft(next); setDirty(true); setDraftPending(stageDraft(next) === false); setConsent(false); setNotice(''); }
   function patchNode(id: string, patch: Partial<WorkflowNode>) { change({ ...draft, nodes: draft.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }); }
+  function removeNode(id: string) {
+    change(pruneAgentStepBindings({ ...draft, nodes: draft.nodes.filter(item => item.id !== id), edges: draft.edges.filter(edge => edge.from !== id && edge.to !== id) }));
+    setSelected('');
+  }
   async function importInputFile(file?: File) {
     if (!file) return;
     const epoch = ++inputGeneration.current;
@@ -104,6 +145,7 @@ export function Workflows() {
   function exportDefinition() {
     try {
       if (!draft.revision) throw new Error('请先保存工作流定义再导出。');
+      if (draft.nodes.some(node => node.kind === 'agent') && !window.confirm('导出的工作流包含智能体指令、输入映射和输出字段契约。请确认这些内容适合保存或分享；模型连接和运行历史不会导出。')) return;
       const text = exportWorkflowDefinition(draft), url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
       const anchor = document.createElement('a'); anchor.href = url; anchor.download = `geiit-workflow-${draft.name.replace(/[^\p{L}\p{N}._-]+/gu, '-').slice(0, 64) || 'definition'}.json`; anchor.click(); URL.revokeObjectURL(url);
       setNotice('工作流定义已导出；节点模型连接不会写入文件。'); setError('');
@@ -113,6 +155,43 @@ export function Workflows() {
     if (dirty && !window.confirm('放弃尚未保存的工作流修改？')) return;
     if (store.workflowDraft) void clearDraft().catch(e => { if (mounted.current) setError(e instanceof Error ? e.message : '无法清除工作流草稿。'); });
     setDraft(clone(definition)); setSelected(definition.nodes[0]?.id || ''); setDirty(false); setDraftPending(false); setFrom(''); setTo(''); setEdgeWhen(''); setConsent(false); setError(''); setNotice(''); taskNavigation.showInput();
+  }
+  async function publishToOrganization() {
+    if (!organizationId || !draft.revision || dirty) { setError('请先选择组织并保存当前工作流。'); return; }
+    if (!window.confirm('将当前工作流定义及其中的智能体指令共享给该组织成员？模型连接与运行历史不会共享。')) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const definition = JSON.parse(exportWorkflowDefinition(draft)) as unknown;
+      const selectedTemplate = organizationTemplates.find(item => item.id === selectedOrganizationTemplateId);
+      const saved = selectedTemplate
+        ? await updateOrganizationWorkflow(Number(organizationId), selectedTemplate.id, draft.name.trim(), definition)
+        : await publishOrganizationWorkflow(Number(organizationId), draft.name.trim(), definition);
+      setOrganizationTemplates(items => [saved, ...items.filter(item => item.id !== saved.id)]);
+      setSelectedOrganizationTemplateId(saved.id);
+      setNotice(selectedTemplate ? '组织工作流模板已更新。' : '工作流已发布到组织共享模板。');
+    } catch (e) { setError(e instanceof Error ? e.message : '无法发布组织工作流。'); }
+    finally { setBusy(false); }
+  }
+  function loadOrganizationTemplate() {
+    const selectedTemplate = organizationTemplates.find(item => item.id === selectedOrganizationTemplateId);
+    if (!selectedTemplate) { setError('请选择组织工作流模板。'); return; }
+    try {
+      const imported = importWorkflowDefinition(JSON.stringify(selectedTemplate.definition));
+      load(imported);
+      setNotice('组织模板已载入本机草稿。保存后即可运行。');
+      setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : '组织工作流模板格式无效。'); }
+  }
+  async function deleteOrganizationTemplate() {
+    if (!organizationId || !selectedOrganizationTemplateId || !window.confirm('删除此组织工作流模板？组织成员之后将无法载入它。')) return;
+    setBusy(true); setError('');
+    try {
+      await deleteOrganizationWorkflow(Number(organizationId), selectedOrganizationTemplateId);
+      setOrganizationTemplates(items => items.filter(item => item.id !== selectedOrganizationTemplateId));
+      setSelectedOrganizationTemplateId('');
+      setNotice('组织工作流模板已删除。');
+    } catch (e) { setError(e instanceof Error ? e.message : '无法删除组织工作流模板。'); }
+    finally { setBusy(false); }
   }
   async function save() {
     setBusy(true); setError('');
@@ -126,6 +205,10 @@ export function Workflows() {
         setError(e instanceof Error ? e.message : '保存失败。');
       }
     } finally { if (mounted.current) setBusy(false); }
+  }
+  function connectEdge(edge: WorkflowDefinition['edges'][number]) {
+    try { const next = { ...draft, edges: [...draft.edges, edge] }; validateWorkflow(next, true); change(next); setError(''); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : '无法连接。'); }
   }
   function connect() {
     try { const next = { ...draft, edges: [...draft.edges, { from, to, ...(edgeWhen ? { when: edgeWhen } : {}) }] }; validateWorkflow(next); change(next); setEdgeWhen(''); setError(''); }
@@ -157,6 +240,14 @@ export function Workflows() {
     } catch (e) { if (mounted.current) { setSelectedRun(useWorkbenchStore.getState().taskRuns.find(t => t.resumedFromTaskId === taskId)?.id || taskId); setError(e instanceof Error ? e.message : '工作流续跑失败。'); } }
     finally { starting.current = false; }
   }
+  async function addNodeSchedule(node: WorkflowNode) {
+    if (!node.trigger || node.trigger.kind === 'manual') return;
+    try { await store.saveWorkflowSchedule({ id: crypto.randomUUID(), workflowId: draft.id, workflowRevision: draft.revision,
+      kind: node.trigger.kind, ...(node.trigger.kind === 'interval' ? { intervalMinutes: node.trigger.intervalMinutes } : { eventName: node.trigger.eventName }),
+      input: { ...input, triggerNodeId: node.id }, profileId: chosen, enabled: true, status: 'enabled', updatedAt: new Date().toISOString(),
+      ...(node.trigger.kind === 'interval' ? { nextRunAt: new Date(Date.now() + (node.trigger.intervalMinutes ?? 60) * 60000).toISOString() } : {}) }); setNotice('节点触发器已保存。'); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : '无法添加触发器。'); }
+  }
   async function addSchedule() {
     if (!draft.revision) { setError('请先保存工作流，再添加触发器。'); return; }
     try {
@@ -168,7 +259,7 @@ export function Workflows() {
     } catch (e) { setError(e instanceof Error ? e.message : '无法保存触发器。'); }
   }
   return <section aria-label="可视化工作流" className="min-h-0 min-w-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5">
-    <div><h1 className="text-xl font-semibold">可视化工作流</h1><p className="mt-2 text-sm text-ink-secondary">把本次输入交给工具，连线将前置步骤结果交给后续文档步骤。手动运行，按依赖顺序串行执行；不自动发邮件或修改外部文件。</p></div>
+    <div><h1 className="text-xl font-semibold">可视化工作流</h1><p className="mt-2 text-sm text-ink-secondary">连接智能体、函数、判断和触发节点，将前置结果传给后续步骤。按连线依赖串行执行；绑定的 MCP 工具可能操作外部系统，运行前请核对调用范围。</p></div>
       <TaskNavigation hasTask={Boolean(run)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} inputLabel="工作流设置 / 本次运行输入" />
     {notice && <p role="status" className="text-sm">{notice}</p>}{error && <p role="alert" className="text-sm text-danger">{error}</p>}
     {store.storageError && <button className="work-command" onClick={() => void store.retryStorage().then(() => { if (mounted.current) { setNotice('本机保存已重试；页面未提交的修改仍需点击保存工作流。'); } }).catch(e => { if (mounted.current) setError(e.message); })}>重试本机保存</button>}
@@ -178,8 +269,8 @@ export function Workflows() {
       {runs.length > RUNS_PER_PAGE && <nav aria-label="工作流运行历史分页" className="flex flex-wrap items-center gap-2 text-sm"><span>第 {currentRunsPage} / {runsPageCount} 页 · 共 {runs.length} 条</span><button className="work-command" disabled={currentRunsPage <= 1} onClick={() => { setRunsPage(currentRunsPage - 1); setSelectedRun(''); setArtifactId(''); }}>上一页运行</button><button className="work-command" disabled={currentRunsPage >= runsPageCount} onClick={() => { setRunsPage(currentRunsPage + 1); setSelectedRun(''); setArtifactId(''); }}>下一页运行</button></nav>}
       {run && <><p className="font-medium">{statuses[run.status]} · {run.artifactIds.length} 个成果</p>{run.error && <p className="text-sm text-danger">{run.error}</p>}{run.summary && <p className="text-sm">{run.summary}</p>}
         <div className="flex flex-wrap gap-2">{run.status === 'running' ? <button className="work-command" onClick={() => store.cancelTask(run.id)}>停止工作流</button> : <>
+          {canResumeRun && runNeedsCloud && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={resumeConsent} onChange={e => setResumeConsent(e.target.checked)} />确认续跑时重新向云端模型发送步骤内容，并允许绑定MCP服务按映射输入执行</label>}
           {(run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled') && <>
-            {runNeedsCloud && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={resumeConsent} onChange={e => setResumeConsent(e.target.checked)} />确认续跑时重新向云端模型发送步骤内容</label>}
             <button className="work-command bg-brand text-white" onClick={() => void resume(run.id)}>从失败步骤继续</button>
           </>}
           <button className="work-command" onClick={() => { if (run.workflow) { if (dirty && !window.confirm('放弃尚未保存修改并复制历史快照？')) return; const copy = { ...clone(run.workflow.definition), id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() }; setDraft(copy); setDirty(true); setInput(clone(run.workflow.input)); setProfileId(run.profileId); setConsent(false); setSelected(copy.nodes[0]?.id || ''); taskNavigation.showInput(); setNotice('已复制历史快照；保存后可作为新任务重新运行，可能再次计费。'); } }}>复制快照为新工作流</button>
@@ -203,21 +294,36 @@ export function Workflows() {
       <button className="work-command" disabled={busy || !draft.revision} onClick={exportDefinition}><Download size={16} />导出定义</button>
       <button className="work-command" disabled={busy || !draft.revision} onClick={() => { if (window.confirm('删除此工作流定义？已运行任务与成果会保留。')) { setBusy(true); void store.removeWorkflow(draft.id, draft.revision).then(() => { if (mounted.current) { setDraft(newWorkflow()); setDirty(false); } }).catch(e => { if (mounted.current) setError(String(e.message)); }).finally(() => { if (mounted.current) setBusy(false); }); } }}>删除定义</button>
     </div>
+    {organizations.length > 0 && <section className="grid gap-3 border-t border-line pt-4 sm:grid-cols-[minmax(180px,1fr)_minmax(200px,1fr)_auto_auto]" aria-label="组织工作流共享">
+      <label className="work-label">组织<select aria-label="工作流共享组织" className="work-input" value={organizationId} onChange={event => setOrganizationId(event.target.value)}><option value="">选择组织</option>{organizations.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}</select></label>
+      <label className="work-label">组织模板<select aria-label="组织工作流模板" className="work-input" value={selectedOrganizationTemplateId} onChange={event => setSelectedOrganizationTemplateId(event.target.value)} disabled={!organizationId}><option value="">新模板</option>{organizationTemplates.map(item => <option key={item.id} value={item.id}>{item.name}{item.ownerId === userId ? ' · 我创建' : ''}</option>)}</select></label>
+      <button className="work-command self-end" disabled={busy || !organizationId || !draft.revision || dirty || Boolean(selectedOrganizationTemplateId && !canManageSelectedTemplate)} onClick={() => void publishToOrganization()}>{selectedOrganizationTemplateId ? '更新组织模板' : '发布到组织'}</button>
+      <div className="flex gap-2 self-end"><button className="work-command" disabled={busy || !selectedOrganizationTemplateId} onClick={loadOrganizationTemplate}>载入组织模板</button>{selectedOrganizationTemplateId && canManageSelectedTemplate && <button className="work-command" disabled={busy} onClick={() => void deleteOrganizationTemplate()}>删除</button>}</div>
+    </section>}
     <fieldset disabled={busy} className="min-w-0 space-y-4">
       <label className="work-label">工作流名称<input className="work-input" maxLength={100} value={draft.name} onChange={e => change({ ...draft, name: e.target.value })} /></label>
       <div className="flex flex-wrap gap-2">{(Object.entries(NODE_LABELS) as [WorkflowNodeKind, string][]).map(([kind, label]) => <button key={kind} className="work-command" disabled={draft.nodes.length >= 12} onClick={() => { const next = newWorkflowNode(kind, draft.nodes.length); change({ ...draft, nodes: [...draft.nodes, next] }); setSelected(next.id); }}>添加{label}</button>)}</div>
-      <WorkflowCanvas definition={draft} selected={selected} onSelect={setSelected} onMove={(id, x, y) => patchNode(id, { x, y })} onAutoLayout={autoLayout} />
+      <WorkflowCanvas definition={draft} selected={selected} onSelect={setSelected} onMove={(id, x, y) => patchNode(id, { x, y })} onAutoLayout={autoLayout} onConnect={connectEdge} onDisconnect={edge => change(pruneAgentStepBindings({ ...draft, edges: draft.edges.filter(e => e !== edge) }))} />
       {node && <section className="grid min-w-0 gap-3 rounded border border-line p-4 sm:grid-cols-2" aria-label="步骤配置">
         <label className="work-label">步骤标题<input className="work-input" value={node.title} maxLength={80} onChange={e => patchNode(node.id, { title: e.target.value })} /></label>
-        <button className="work-command justify-self-start self-end" onClick={() => { change({ ...draft, nodes: draft.nodes.filter(n => n.id !== node.id), edges: draft.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelected(''); }}>删除步骤及连线</button>
-        {node.kind === 'create_document' || isWorkflowModelNode(node) ? <>
+        <button className="work-command justify-self-start self-end" onClick={() => removeNode(node.id)}>删除步骤及连线</button>
+        {node.kind === 'create_document' || node.kind === 'function' || isWorkflowModelNode(node) ? <>
           {isWorkflowModelNode(node) && <label className="work-label sm:col-span-2">此步骤模型连接<select aria-label="此步骤模型连接" className="work-input" value={node.profileId || ''} onChange={e => patchNode(node.id, { profileId: e.target.value || undefined })}><option value="">使用工作流默认模型 · {store.profiles.find(p => p.id === chosen)?.name || (chosen === ACCOUNT_MODEL_ID ? '账号云端模型' : '未选择')}</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
-          <label className="work-label sm:col-span-2">{isWorkflowModelNode(node) ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={isWorkflowModelNode(node) ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={isWorkflowModelNode(node) ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
-          <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{isWorkflowModelNode(node) ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
+          {node.kind === 'function' && <FunctionNodeFields key={node.id} node={node} onChange={patch => patchNode(node.id, patch)} />}
+          {['agent', 'agent_condition', 'function'].includes(node.kind) ? <AgentNodeFields node={node} definition={draft} agents={store.agents} onChange={patch => patchNode(node.id, patch)} /> : <>
+            <label className="work-label sm:col-span-2">{isWorkflowModelNode(node) ? '步骤生成要求' : 'Markdown 正文'}<textarea aria-label={isWorkflowModelNode(node) ? '步骤生成要求' : 'Markdown 正文'} className="work-input min-h-28" maxLength={isWorkflowModelNode(node) ? 10000 : 50000} value={node.text} onChange={e => patchNode(node.id, { text: e.target.value })} /></label>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={node.includeInputs} onChange={e => patchNode(node.id, { includeInputs: e.target.checked })} />{isWorkflowModelNode(node) ? '包含本次参考材料与 CSV；连入的步骤结果也会发送给模型' : '附加本次参考材料；连入的步骤结果总会附加到正文'}</label>
+          </>}
           {node.kind === 'loop' && <>
             <label className="work-label">最多迭代轮数<input aria-label="循环最大轮数" className="work-input" type="number" min={1} max={5} value={node.loop?.maxIterations ?? 3} onChange={e => patchNode(node.id, { loop: { maxIterations: Math.max(1, Math.min(5, Number(e.target.value) || 1)), stopWhen: node.loop?.stopWhen ?? '' } })} /></label>
             <label className="work-label">提前停止标记<input aria-label="循环停止标记" className="work-input" maxLength={1000} value={node.loop?.stopWhen ?? ''} onChange={e => patchNode(node.id, { loop: { maxIterations: node.loop?.maxIterations ?? 3, stopWhen: e.target.value } })} /></label>
           </>}
+        </> : node.kind === 'trigger' ? <>
+          <label className="work-label">触发方式<select aria-label="节点触发方式" className="work-input" value={node.trigger?.kind ?? 'manual'} onChange={e => patchNode(node.id, { trigger: e.target.value === 'interval' ? { kind: 'interval', intervalMinutes: 60 } : e.target.value === 'event' ? { kind: 'event', eventName: 'reference.added' } : { kind: 'manual' } })}><option value="manual">手动启动</option><option value="interval">定时间隔</option><option value="event">应用事件</option></select></label>
+          {node.trigger?.kind === 'interval' && <label className="work-label">间隔分钟<input className="work-input" type="number" min={5} max={43200} value={node.trigger.intervalMinutes} onChange={e => patchNode(node.id, { trigger: { kind: 'interval', intervalMinutes: Number(e.target.value) } })} /></label>}
+          {node.trigger?.kind === 'event' && <label className="work-label">事件名称<input className="work-input" maxLength={100} value={node.trigger.eventName} onChange={e => patchNode(node.id, { trigger: { kind: 'event', eventName: e.target.value } })} /></label>}
+          <p className="text-xs text-ink-secondary sm:col-span-2">保存流程后可将此节点添加为下方的触发器入口。应用事件可由下方手动发送、参考资料保存、独立文档或待办完成触发；关闭应用或锁库后不运行。</p>
+          <button type="button" className="work-command" disabled={dirty || !draft.revision || node.trigger?.kind === 'manual'} onClick={() => void addNodeSchedule(node)}>启用此节点触发器</button>
         </> : node.kind === 'condition' ? <>
           <label className="work-label">条件来源<select aria-label="条件来源" className="work-input" value={node.condition?.source || 'reference'} onChange={e => patchNode(node.id, { condition: { source: e.target.value as WorkflowConditionSource, operator: node.condition?.operator || 'contains', value: node.condition?.value || '' } })}><option value="reference">本次参考材料</option><option value="csv">本次 CSV</option><option value="previous">直接前置步骤结果</option></select></label>
           <label className="work-label">条件操作<select aria-label="条件操作" className="work-input" value={node.condition?.operator || 'contains'} onChange={e => patchNode(node.id, { condition: { source: node.condition?.source || 'reference', operator: e.target.value as WorkflowConditionOperator, value: node.condition?.value || '' } })}><option value="contains">包含</option><option value="not_contains">不包含</option><option value="equals">等于</option><option value="not_equals">不等于</option><option value="exists">有内容</option><option value="not_exists">为空</option><option value="gt">数字大于</option><option value="gte">数字大于等于</option><option value="lt">数字小于</option><option value="lte">数字小于等于</option></select></label>
@@ -231,38 +337,42 @@ export function Workflows() {
         </> : <p className="text-sm text-ink-secondary">检查本次 CSV 的表头与数据；不会执行单元格公式。</p>}
       </section>}
       <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
-        <label className="work-label">前置步骤<select aria-label="前置步骤" className="work-input" value={from} onChange={e => { const value = e.target.value; setFrom(value); if (draft.nodes.find(n => n.id === value)?.kind !== 'condition') setEdgeWhen(''); }}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
+        <label className="work-label">前置步骤<select aria-label="前置步骤" className="work-input" value={from} onChange={e => { const value = e.target.value; setFrom(value); if (!draft.nodes.some(n => n.id === value && isBranchNode(n))) setEdgeWhen(''); }}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
         <label className="work-label">后续步骤<select aria-label="后续步骤" className="work-input" value={to} onChange={e => setTo(e.target.value)}><option value="">请选择</option>{draft.nodes.map((n, i) => <option key={n.id} value={n.id}>{i + 1}. {n.title}</option>)}</select></label>
-        {draft.nodes.find(n => n.id === from)?.kind === 'condition' ? <label className="work-label">分支值<select aria-label="分支值" className="work-input" value={edgeWhen} onChange={e => setEdgeWhen(e.target.value as '' | 'true' | 'false')}><option value="">请选择</option><option value="true">true</option><option value="false">false</option></select></label> : <span />}
-        <button className="work-command self-end" disabled={!from || !to || draft.nodes.find(n => n.id === from)?.kind === 'condition' && !edgeWhen} onClick={connect}>连接步骤</button>
+        {draft.nodes.some(n => n.id === from && isBranchNode(n)) ? <label className="work-label">分支值<select aria-label="分支值" className="work-input" value={edgeWhen} onChange={e => setEdgeWhen(e.target.value as '' | 'true' | 'false')}><option value="">请选择</option><option value="true">true</option><option value="false">false</option></select></label> : <span />}
+        <button className="work-command self-end" disabled={!from || !to || draft.nodes.some(n => n.id === from && isBranchNode(n)) && !edgeWhen} onClick={connect}>连接步骤</button>
       </div>
       {!!draft.edges.length && <ul className="space-y-2">{draft.edges.map(e => <li key={e.from + ':' + e.to + ':' + (e.when || '')} className="flex flex-wrap items-center gap-2 text-sm"><span>{draft.nodes.find(n => n.id === e.from)?.title} {e.when ? `(${e.when})` : ''} → {draft.nodes.find(n => n.id === e.to)?.title}</span><button className="work-command" onClick={() => change({ ...draft, edges: draft.edges.filter(edge => edge !== e) })}>移除此连线</button></li>)}</ul>}
       <div className="flex flex-wrap items-center gap-3"><button className="work-command bg-brand text-white" onClick={() => void save()} disabled={!draft.nodes.length}>保存工作流</button><span className="text-sm text-ink-secondary">{draftPending ? '草稿字段暂时不完整，最后一个有效版本仍保留。' : store.workflowDraftSaving ? '正在加密保存本机草稿…' : store.storageError ? '本机草稿未确认保存，请检查存储后重试。' : dirty ? '修改已加密保存为本机草稿；点击“保存工作流”后才能运行。' : draft.revision ? `已保存修订 ${draft.revision}` : '尚未保存'} · 最多 12 个步骤 / 6 个模型步骤</span></div>
     </fieldset>
     <section aria-label="工作流运行输入" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">本次运行输入</h2>
+      {draft.nodes.some(n => n.kind === 'trigger') && <label className="work-label">本次触发入口<select className="work-input" value={input.triggerNodeId ?? ''} onChange={e => { setInput({ ...input, triggerNodeId: e.target.value || undefined }); setConsent(false); }}><option value="">默认手动入口</option>{draft.nodes.filter(n => n.kind === 'trigger').map(n => <option key={n.id} value={n.id}>{n.title} · {n.trigger?.kind}</option>)}</select></label>}
       <label className="work-label">工作流参考材料<textarea aria-label="工作流参考材料" className="work-input min-h-24" maxLength={50000} value={input.reference} onChange={e => { setInput({ ...input, reference: e.target.value }); setConsent(false); }} /></label>
       <label className="work-label">工作流 CSV<textarea aria-label="工作流 CSV" className="work-input min-h-24 font-mono" maxLength={100000} value={input.csv} onChange={e => { inputGeneration.current++; setInput({ ...input, csv: e.target.value }); setInputSheet(''); setInputError(''); setConsent(false); }} placeholder={'月份,销量\n一月,12\n二月,18'} /></label>
       <div className="flex flex-wrap items-center gap-2"><button type="button" className="work-command" onClick={() => inputFile.current?.click()}><FileUp size={16} />导入 CSV / XLSX</button><input ref={inputFile} hidden type="file" accept=".csv,.xlsx" aria-label="选择工作流 CSV 或 XLSX 文件" onChange={e => { void importInputFile(e.target.files?.[0]); e.target.value = ''; }} />{inputSheet && <span role="status" className="text-sm text-ink-secondary">工作表：{inputSheet}</span>}{inputError && <span role="alert" className="text-sm text-danger">{inputError}</span>}</div>
       <p className="text-xs text-ink-secondary">CSV 最多 50 行、12 列；输入随运行快照加密保存。节点不会读取其他文件。执行中可离开页签；锁库/关闭会中断，不自动重放。</p>
       {usesModel && <label className="work-label">工作流默认模型<select aria-label="工作流默认模型" className="work-input" value={chosen} onChange={e => { setProfileId(e.target.value); setConsent(false); }}><option value="">选择模型</option>{store.profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}{store.accountModel && <option value={ACCOUNT_MODEL_ID}>账号云端模型 · {store.accountModel.model}</option>}</select></label>}
-      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果（最多 {maxWorkflowModelRequests(draft.nodes)} 次模型请求，可能计费）</label>}
+      {draft.nodes.flatMap(node => node.agent?.capabilities ?? []).filter(resource => resource.kind === 'mcp').map((resource,index) => <p key={resource.id+index} className="break-all text-xs text-ink-secondary">MCP：{resource.name} · {resource.endpoint} · {resource.toolName}；会发送映射输入，可能产生外部操作。</p>)}
+      {cloud && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />允许本次按已保存工作流向所选云端模型发送节点要求、所选输入与前置结果，并允许绑定MCP服务按映射输入执行（最多 {maxWorkflowModelRequests(draft.nodes)} 次模型请求，可能计费）</label>}
       <button className="work-command bg-brand text-white" disabled={busy || dirty || !draft.revision || Boolean(store.storageError) || needsDefault && !chosen || Boolean(cloud && !consent) || runs.some(r => r.status === 'running' && r.workflow?.definition.id === draft.id)} onClick={() => void start()}>手动运行工作流</button>
     </section>
     <section aria-label="工作流触发器" className="space-y-3 border-t border-line pt-4"><h2 className="font-semibold">触发器</h2>
-      <p className="text-sm text-ink-secondary">触发器只在应用开启、密钥库解锁时运行。客户端关闭或锁库期间到期的任务会标记为待设备，不会后台重放；包含云端模型的触发器会等待本次明确授权。</p>
+      <p className="text-sm text-ink-secondary">触发器只在应用开启、密钥库解锁时运行。应用事件可使用 reference.added（已保存参考资料）、task.completed（独立文档完成）、todo.completed（待办完成）。事件使用保存的输入快照，长任务完成不会广播 task.completed。客户端关闭或锁库期间到期的任务会标记为待设备，不会后台重放；包含云端模型的触发器会等待本次明确授权。</p>
       <div className="grid gap-3 sm:grid-cols-[auto_1fr_auto]"><select aria-label="触发器类型" className="work-input" value={scheduleKind} onChange={e => setScheduleKind(e.target.value as WorkflowScheduleKind)}><option value="interval">定时</option><option value="event">事件</option></select>
         {scheduleKind === 'interval' ? <label className="work-label">间隔（分钟）<input aria-label="触发间隔分钟" className="work-input" type="number" min={5} max={43200} value={scheduleMinutes} onChange={e => setScheduleMinutes(e.target.value)} /></label> : <label className="work-label">事件名称<input aria-label="触发事件名称" className="work-input" maxLength={100} value={scheduleEvent} onChange={e => setScheduleEvent(e.target.value)} /></label>}
         <button className="work-command self-end" disabled={!draft.revision || busy} onClick={() => void addSchedule()}>添加触发器</button></div>
+      {scheduleKind === 'event' && <button type="button" className="work-command" onClick={() => void store.triggerWorkflowEvent(scheduleEvent).then(() => setNotice('事件已发送；远程步骤等待本次授权。')).catch(e => setError(e instanceof Error ? e.message : '事件发送失败'))}>发送此应用事件</button>}
       <ul className="space-y-2">{(store.workflowSchedules ?? []).filter(item => item.workflowId === draft.id).map(item => {
-        const itemCloud = draft.nodes.some(node => {
+        const itemCloud = (store.workflows.find(workflow => workflow.id === item.workflowId && workflow.revision === item.workflowRevision)?.nodes ?? []).some(node => {
+          if (node.agent?.capabilities?.some(resource => resource.kind === 'mcp')) return true;
           if (!isWorkflowModelNode(node)) return false;
           const routeId = node.profileId || item.profileId;
           return routeId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(store.profiles.find(profile => profile.id === routeId)?.mode || '');
         });
         const needsManual = item.status === 'awaiting-device' || item.status === 'awaiting-authorization' || item.status === 'error';
         return <li key={item.id} className="flex flex-wrap items-center gap-2 rounded border border-line p-3 text-sm"><span>{item.kind === 'interval' ? `每 ${item.intervalMinutes} 分钟` : `事件：${item.eventName}`} · {scheduleStatuses[item.status]}{item.nextRunAt ? ` · 下次 ${new Date(item.nextRunAt).toLocaleString()}` : ''}</span>
-          {itemCloud && (item.status === 'awaiting-authorization' || item.status === 'error') && <label className="flex items-center gap-1"><input type="checkbox" checked={Boolean(scheduleConsent[item.id])} onChange={e => setScheduleConsent({ ...scheduleConsent, [item.id]: e.target.checked })} />本次云端授权</label>}
-          {needsManual && <button className="work-command" disabled={itemCloud && !scheduleConsent[item.id]} onClick={() => void store.runWorkflowSchedule(item.id, Boolean(scheduleConsent[item.id])).then(() => setNotice('已按当前触发器创建运行记录。')).catch(e => setError(e instanceof Error ? e.message : '无法执行触发器。'))}>现在运行</button>}
+          {itemCloud && (item.status === 'awaiting-authorization' || item.status === 'error') && <label className="flex items-center gap-1"><input type="checkbox" checked={Boolean(scheduleConsent[item.id])} onChange={e => setScheduleConsent({ ...scheduleConsent, [item.id]: e.target.checked })} />本次云端模型/MCP执行授权</label>}
+          {needsManual && <button className="work-command" disabled={itemCloud && !scheduleConsent[item.id]} onClick={() => { const allowed=Boolean(scheduleConsent[item.id]); setScheduleConsent(current => ({...current,[item.id]:false})); void store.runWorkflowSchedule(item.id, allowed).then(() => setNotice('已按当前触发器创建运行记录。')).catch(e => setError(e instanceof Error ? e.message : '无法执行触发器。')); }}>现在运行</button>}
           {item.status === 'enabled' || item.status === 'paused' ? <button className="work-command" onClick={() => void store.toggleWorkflowSchedule(item.id, item.status === 'paused').catch(e => setError(e instanceof Error ? e.message : '无法修改触发器。'))}>{item.status === 'enabled' ? '暂停' : '恢复'}</button> : null}
           <button className="work-command" onClick={() => void store.removeWorkflowSchedule(item.id).catch(e => setError(e instanceof Error ? e.message : '无法删除触发器。'))}>删除</button></li>;
       })}</ul>

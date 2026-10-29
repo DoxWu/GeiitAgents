@@ -41,6 +41,7 @@ from app.core.security import hash_password
 from app.api.deps import get_current_superuser
 from app.models.user import User
 from app.models.registration import RegistrationApplication
+from app.models.organization import Organization, OrganizationMembership
 from app.models.email_log import EmailLog
 from app.schemas.registration import (
     RegisterApplyRequest,
@@ -191,6 +192,11 @@ def submit_registration_application(
     # 1. 邮箱级 Redis 锁：防止同一邮箱短时间内重复提交
     # 作用：1 小时内同一邮箱只能提交一次申请，防止刷申请
     # 使用 nx=True 原子性获取锁，TTL 3600 秒
+    if data.organization_id is not None and db.query(Organization.id).filter(
+        Organization.id == data.organization_id, Organization.is_active.is_(True)
+    ).first() is None:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+
     apply_lock_key = f"register:apply:lock:{data.email}"
     lock_acquired = RedisManager.set(apply_lock_key, "1", ttl=3600, nx=True)
     if not lock_acquired:
@@ -242,6 +248,7 @@ def submit_registration_application(
     application = RegistrationApplication(
         email=data.email,
         username=data.username,
+        organization_id=data.organization_id,
         status=RegistrationApplication.STATUS_PENDING,
     )
     db.add(application)
@@ -501,6 +508,13 @@ def approve_application(
 
     # 生成密码设置 Token
     # 安全：secrets.token_urlsafe(32) 生成 43 字符的 URL 安全随机串
+    if "organization_id" in body.model_fields_set:
+        if body.organization_id is not None and db.query(Organization.id).filter(
+            Organization.id == body.organization_id, Organization.is_active.is_(True)
+        ).first() is None:
+            raise HTTPException(status_code=404, detail="organization_not_found")
+        application.organization_id = body.organization_id
+
     plain_token = secrets.token_urlsafe(32)
     token_hash = _hash_token(plain_token)
 
@@ -765,6 +779,11 @@ def set_password(
             detail={"error": {"code": "TOKEN_EXPIRED", "message": "设置链接已过期，请联系管理员重新发送"}},
         )
 
+    if application.organization_id is not None and db.query(Organization.id).filter(
+        Organization.id == application.organization_id, Organization.is_active.is_(True)
+    ).first() is None:
+        raise HTTPException(status_code=409, detail="application_organization_unavailable")
+
     # 5. 创建 User 账号
     # 安全：密码经 hash_password（bcrypt）加密存储
     new_user = User(
@@ -774,6 +793,16 @@ def set_password(
     )
     try:
         db.add(new_user)
+        db.flush()
+        if application.organization_id is not None:
+            db.add(OrganizationMembership(
+                organization_id=application.organization_id,
+                user_id=new_user.id,
+                role="member",
+                status="active",
+                reviewed_by=application.reviewed_by,
+                reviewed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
         db.commit()
         db.refresh(new_user)
     except IntegrityError:

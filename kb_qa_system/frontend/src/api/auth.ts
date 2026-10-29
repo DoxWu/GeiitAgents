@@ -218,9 +218,11 @@ export async function listApplications(params?: {
  */
 export async function approveApplication(
   applicationId: number,
+  organizationId?: number | null,
 ): Promise<{ message: string }> {
   return apiClient.post<{ message: string }>(API_PATHS.REGISTER_APPROVE, {
     application_id: applicationId,
+    ...(organizationId !== undefined ? { organization_id: organizationId } : {}),
   });
 }
 

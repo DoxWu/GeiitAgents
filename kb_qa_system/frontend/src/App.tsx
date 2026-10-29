@@ -36,6 +36,7 @@ const DocumentsPage = lazy(() => import("@/pages/DocumentsPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const AdminApplicationsPage = lazy(() => import("@/pages/AdminApplicationsPage"));
+const OrganizationsPage = lazy(() => import("@/pages/OrganizationsPage"));
 const PrivacyPage = lazy(() => import("@/pages/PrivacyPage"));
 const TermsPage = lazy(() => import("@/pages/TermsPage"));
 const HelpPage = lazy(() => import("@/pages/HelpPage"));
@@ -135,6 +136,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/organizations" element={<ProtectedRoute><OrganizationsPage /></ProtectedRoute>} />
           {/* 聊天页面（问答对话） */}
           <Route
             path="/chat"

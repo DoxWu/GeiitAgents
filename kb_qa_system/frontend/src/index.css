@@ -30,6 +30,7 @@
   font-weight: 400;
 
   font-synthesis: none;
+  color-scheme: light;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -45,6 +46,13 @@
   --color-ink-secondary-rgb: 161 161 170;
   --color-ink-tertiary-rgb: 113 113 122;
   --color-brand-light-rgb: 58 42 34;
+  color-scheme: dark;
+}
+
+select,
+option {
+  color: rgb(var(--color-ink-rgb));
+  background-color: rgb(var(--color-surface-rgb));
 }
 
 /* 全局背景色（通过 CSS 变量自动适配暗色模式） */

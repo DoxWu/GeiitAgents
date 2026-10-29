@@ -14,12 +14,16 @@
 """
 
 from datetime import datetime
-from typing import List, Optional, Any
-from sqlalchemy import String, DateTime, Text, Integer, ForeignKey, JSON, Float, Boolean, func, Index
+from typing import TYPE_CHECKING, List, Optional, Any
+from sqlalchemy import String, DateTime, Text, Integer, ForeignKey, JSON, Float, Boolean, func, Index, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.document_folder import DocumentFolder
+
+if TYPE_CHECKING:
+    from app.models.document_chunk import DocumentChunk
+    from app.models.user import User
 
 
 class Document(Base):
@@ -113,6 +117,7 @@ class Document(Base):
     status: Mapped[str] = mapped_column(
         String(20),
         default="pending",
+        server_default="pending",
         index=True
     )
 
@@ -120,12 +125,13 @@ class Document(Base):
     # 作用：精确标识文档处于处理流程的哪一步
     processing_step: Mapped[str] = mapped_column(
         String(50),
-        default="uploaded"
+        default="uploaded",
+        server_default="uploaded",
     )
 
     # 处理进度百分比（0-100）
     # 作用：前端展示处理进度条
-    processing_progress: Mapped[int] = mapped_column(Integer, default=0)
+    processing_progress: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # Celery 任务ID
     # 作用：关联异步任务，便于查询任务状态
@@ -144,10 +150,10 @@ class Document(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # 文档分块数量（向量化后的小块数）
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 文档总 Token 数（用于成本计算）
-    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # 额外元数据（JSON 格式，存储标签、分类、知识库ID等）
     metadata_: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -166,6 +172,14 @@ class Document(Base):
     visibility: Mapped[str] = mapped_column(
         String(20),
         default="private",
+        server_default="private",
+        index=True,
+    )
+
+    organization_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
 
@@ -180,22 +194,24 @@ class Document(Base):
 
     # 软删除标记
     # 作用：不真正删除文档，便于数据恢复和审计
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), index=True)
 
     # 删除时间
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # 创建时间
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=True,
     )
 
     # 更新时间
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
-        onupdate=func.now()
+        onupdate=func.now(),
+        nullable=True,
     )
 
     # ============================================
@@ -230,6 +246,7 @@ class Document(Base):
         # 复合索引：按用户和状态查询（用户文档列表常用）
         Index("ix_documents_user_status",
               "user_id", "status"),
+        Index("ix_documents_visibility_deleted", "visibility", "is_deleted"),
     )
 
     def __repr__(self) -> str:

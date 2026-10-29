@@ -61,6 +61,13 @@ class PrivateModelList(BaseModel):
     base_url: str = Field(min_length=8, max_length=2048)
 
 
+class PrivateImageGeneration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_url: str = Field(min_length=8, max_length=2048)
+    model: str = Field(min_length=1, max_length=200, pattern=r"^[^\r\n]+$")
+    prompt: str = Field(min_length=1, max_length=2000)
+
+
 class AccountCompletion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     messages: list[PrivateMessage] = Field(min_length=1, max_length=100)

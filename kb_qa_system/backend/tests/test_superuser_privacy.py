@@ -75,11 +75,14 @@ class TestListDocumentsPrivacyFix:
         # 查找 "隐私修复" 注释作为锚点
         privacy_fix_pos = source.find("隐私修复：超级管理员也只能看到自己的文档 + 公共文档")
         assert privacy_fix_pos > 0, "应有隐私修复的注释说明"
-        following = source[privacy_fix_pos:privacy_fix_pos + 300]
+        end_pos = source.find("    # 状态筛选", privacy_fix_pos)
+        following = source[privacy_fix_pos:end_pos]
         assert "Document.user_id == current_user.id" in following, \
             "应包含 user_id 过滤"
         assert "Document.visibility == VISIBILITY_PUBLIC" in following, \
             "应包含 visibility=public 过滤"
+        assert "Document.visibility == VISIBILITY_PRIVATE" in following
+        assert "Document.organization_id.in_(organization_ids)" in following
 
     def test_mine_scope_unaffected(self):
         """验证 mine 范围不受影响"""
@@ -135,11 +138,13 @@ class TestGetAccessibleDocumentIdsDesign:
         # 定位 regular 用户处理
         regular_pos = source.find("# 正式用户：个人文档（自己上传的） OR 公共文档")
         assert regular_pos > 0
-        following = source[regular_pos:regular_pos + 200]
+        end_pos = source.find("# 只取已处理完成的文档", regular_pos)
+        following = source[regular_pos:end_pos]
         assert "Document.user_id == user_id" in following, \
             "应包含 user_id 过滤"
         assert "Document.visibility == VISIBILITY_PUBLIC" in following, \
             "应包含 visibility=public 过滤"
+        assert "Document.organization_id.in_(organization_ids)" in following
 
 
 # ============================================

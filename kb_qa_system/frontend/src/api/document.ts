@@ -21,6 +21,7 @@ import type {
   UpdateFolderRequest,
   FolderListResponse,
   DocumentStats,
+  DocumentVisibility,
   ImportUrlParams,
   BatchOperationResponse,
 } from "@/types/document";
@@ -119,7 +120,8 @@ export async function reprocessDocument(
 export async function moveDocument(
   id: number,
   folderId: number | null | undefined,
-  visibility?: "private" | "public",
+  visibility?: DocumentVisibility,
+  organizationId?: number,
 ): Promise<DocumentResponse> {
   const params = new URLSearchParams();
   // folderId 语义处理：
@@ -131,6 +133,7 @@ export async function moveDocument(
     params.set("folder_id", folderId === null ? "0" : String(folderId));
   }
   if (visibility) params.set("visibility", visibility);
+  if (organizationId !== undefined) params.set("organization_id", String(organizationId));
   const query = params.toString() ? `?${params.toString()}` : "";
   return apiClient.patch<DocumentResponse>(
     `${API_PATHS.DOCUMENT_MOVE(id)}${query}`,
@@ -169,7 +172,8 @@ export async function batchDeleteDocuments(
 export async function batchMoveDocuments(
   documentIds: number[],
   folderId?: number | null,
-  visibility?: "private" | "public",
+  visibility?: DocumentVisibility,
+  organizationId?: number,
 ): Promise<BatchOperationResponse> {
   // 修复问题3b：仅在 folderId 非 undefined 时包含 folder_id 字段
   // 作用：JSON body 中不包含 folder_id 字段时，后端不会修改分支归属，
@@ -181,6 +185,7 @@ export async function batchMoveDocuments(
   if (visibility) {
     payload.visibility = visibility;
   }
+  if (organizationId !== undefined) payload.organization_id = organizationId;
   return apiClient.post<BatchOperationResponse>(
     API_PATHS.DOCUMENT_BATCH_MOVE,
     payload,
@@ -210,6 +215,7 @@ export async function uploadDocument(
   if (params.title) formData.append("title", params.title);
   if (params.category) formData.append("category", params.category);
   if (params.visibility) formData.append("visibility", params.visibility);
+  if (params.organization_id !== undefined) formData.append("organization_id", String(params.organization_id));
   // 修复问题3a：folder_id=0 是合法值（未分类哨兵），不能用 if(params.folder_id) 判断（0 是 falsy）
   // 必须用 !== undefined 判断，否则用户上传到"未分类"分支时 folder_id 不会被传递
   if (params.folder_id !== undefined) {
@@ -276,6 +282,7 @@ export async function importFromUrl(
   if (params.title) formData.append("title", params.title);
   formData.append("category", params.category || "web");
   formData.append("visibility", params.visibility || "private");
+  if (params.organization_id !== undefined) formData.append("organization_id", String(params.organization_id));
 
   return apiClient.upload<DocumentResponse>(
     API_PATHS.DOCUMENT_URL,

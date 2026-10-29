@@ -22,6 +22,7 @@ import {
   MessageSquare,
   FileText,
   Download,
+  Building2,
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { useAuthStore } from "@/store/authStore";
@@ -150,6 +151,9 @@ export default function SettingsPage() {
           <div className="grid grid-cols-2 gap-3">
             <button onClick={() => navigate("/workbench")} className="flex items-center gap-3 rounded-md border border-line p-3 text-left text-sm hover:bg-muted">
               <FileText className="h-4 w-4 text-brand" />办公工作台
+            </button>
+            <button onClick={() => navigate("/organizations")} className="flex items-center gap-3 rounded-md border border-line p-3 text-left text-sm transition-colors hover:bg-muted">
+              <Building2 className="h-4 w-4 text-brand" />组织与成员
             </button>
             <button
               onClick={handleGoDocuments}

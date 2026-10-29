@@ -27,9 +27,11 @@ from app.models import (
     QAEvent,
     Reminder,
     ReminderDelivery,
+    SharedAgent,
     Todo,
     User,
 )
+from app.api.routes.agents import router as agents_router
 from app.services.document_lifecycle import activate_replacement
 from app.services.file_cleanup import run_cleanup
 
@@ -60,6 +62,7 @@ def fixture(monkeypatch, tmp_path):
     monkeypatch.setattr(auth, 'blacklist_token', lambda *args, **kwargs: True)
     monkeypatch.setattr(RedisManager, 'increment', lambda *args, **kwargs: 1)
     monkeypatch.setattr(RedisManager, 'acquire_lock', lambda *args, **kwargs: 'fixture-lock')
+    monkeypatch.setattr(RedisManager, 'renew_lock', lambda *args, **kwargs: True)
     monkeypatch.setattr(RedisManager, 'release_lock', lambda *args: True)
     from app.tasks.document_tasks import process_document_task
     monkeypatch.setattr(process_document_task, 'delay', lambda *args: SimpleNamespace(id='fixture-task'))
@@ -75,6 +78,7 @@ def fixture(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(auth.router)
     app.include_router(docs.router)
+    app.include_router(agents_router)
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_current_active_user] = user
     app.dependency_overrides[get_current_regular_user] = user
@@ -94,6 +98,28 @@ def seed_document(f, name='report.txt'):
         db.add(DocumentChunk(document_id=document.id, chunk_index=0, content='original indexed content'))
         db.commit()
         return document.id
+
+
+@pytest.mark.parametrize('raced_status', ['pending', 'processing'])
+def test_reprocess_rechecks_status_under_lock_before_dispatch(fixture, monkeypatch, raced_status):
+    f = fixture
+    doc_id = seed_document(f)
+    from app.tasks.document_tasks import reprocess_document_task
+    dispatch = Mock()
+    monkeypatch.setattr(reprocess_document_task, 'delay', dispatch)
+    def acquire(*_args, **_kwargs):
+        with f.factory() as db:
+            db.get(Document, doc_id).status = raced_status
+            db.commit()
+        return 'fixture-lock'
+    monkeypatch.setattr(RedisManager, 'acquire_lock', acquire)
+    response = f.client.post(f'/documents/{doc_id}/reprocess')
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['error']['code'] == 'DOCUMENT_ALREADY_PROCESSING'
+    dispatch.assert_not_called()
+    with f.factory() as db:
+        assert db.get(Document, doc_id).status == raced_status
+        assert db.query(DocumentChunk).count() == 1
 
 
 def test_account_commit_failure_keeps_files_and_qa(fixture):
@@ -116,6 +142,7 @@ def test_account_delete_erases_payloads_and_queues_files(fixture, monkeypatch):
     image_dir.mkdir()
     (image_dir / 'image.png').write_bytes(b'fixture')
     with f.factory() as db:
+        db.add(SharedAgent(id='agent-delete-fixture', owner_id=1, name='Private definition', summary='', definition='{}'))
         db.add(QAEvent(user_id=1, question='personal secret', answer='private', status='success'))
         db.add(QAEvent(user_id=2, question='', status='success'))
         db.add(AuditLog(user_id=1, action='old', resource_type='user', resource_id=1,
@@ -129,6 +156,7 @@ def test_account_delete_erases_payloads_and_queues_files(fixture, monkeypatch):
     assert (f.root / 'report.txt').exists()
     with f.factory() as db:
         assert db.get(User, 1) is None
+        assert db.get(SharedAgent, 'agent-delete-fixture') is None
         assert db.query(Note).count() == 0
         assert db.query(QAEvent).count() == 1
         assert all(log.detail is None or log.detail == {'result': 'deleted'} for log in db.query(AuditLog))
@@ -234,6 +262,8 @@ def test_account_export_includes_personal_and_archived_modules(fixture):
     seed_document(f)
     with f.factory() as db:
         db.add(Note(user_id=1, title='note', content='content'))
+        db.add(SharedAgent(id='agent-export-fixture', owner_id=1, name='Reviewer', summary='fixture',
+                           definition='{"name":"Reviewer","summary":"fixture","instructions":"review","inputFields":[{"key":"context","label":"Context","type":"string","required":true,"description":""}],"outputFields":[{"key":"result","label":"Result","type":"string","required":true,"description":""}]}'))
         db.add(Note(user_id=2, title='other-private', content='must not export'))
         db.add(Todo(user_id=1, title='todo', status='archived'))
         db.add(Conversation(user_id=1, title='inactive', is_active=False))
@@ -254,7 +284,28 @@ def test_account_export_includes_personal_and_archived_modules(fixture):
     assert payload['conversations'][0]['is_active'] is False
     assert 'other-private' not in response.text
     assert 'client_local_knowledge' in payload['coverage']['excluded']
+    assert payload['shared_agents'][0]['id'] == 'agent-export-fixture'
+    assert 'owned_shared_agents' in payload['coverage']['included']
     assert response.headers['cache-control'] == 'no-store'
+
+
+def test_shared_agent_library_enforces_owner_permissions_and_strict_contract(fixture):
+    f = fixture
+    payload = {'agent': {'name': 'Reviewer', 'summary': 'Review reports', 'instructions': 'Review safely.',
+        'inputFields': [{'key': 'context', 'label': 'Context', 'type': 'string', 'required': True, 'description': ''}],
+        'outputFields': [{'key': 'result', 'label': 'Result', 'type': 'string', 'required': True, 'description': ''}]}}
+    response = f.client.post('/agents/public', json=payload)
+    assert response.status_code == 201, response.text
+    agent_id = response.json()['id']
+    assert response.headers['cache-control'] == 'no-store'
+    assert f.client.get('/agents/mine').json()[0]['id'] == agent_id
+    assert f.client.put('/agents/public/' + agent_id, json=payload).status_code == 200
+    assert f.client.post('/agents/public', json={**payload, 'credential': 'unexpected'}).status_code == 422
+    with f.factory() as db:
+        db.add(SharedAgent(id='other-owner-agent', owner_id=2, name='Other', summary='', definition='{}'))
+        db.commit()
+    assert f.client.put('/agents/public/other-owner-agent', json=payload).status_code == 404
+    assert f.client.delete('/agents/public/other-owner-agent').status_code == 404
 
 
 def test_document_filters_use_literal_name_search_and_inclusive_dates(fixture):

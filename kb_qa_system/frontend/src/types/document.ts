@@ -17,7 +17,7 @@ export type DocumentStatus =
   | "low_quality";
 
 /** 文档可见性 */
-export type DocumentVisibility = "private" | "public";
+export type DocumentVisibility = "private" | "public" | "organization";
 
 /** 排序字段 */
 export type SortField = "created_at" | "updated_at" | "file_name" | "file_type";
@@ -41,6 +41,8 @@ export interface DocumentResponse {
   status: DocumentStatus;
   /** 可见性：private 个人文档库 / public 公共文档库 */
   visibility: DocumentVisibility;
+  /** 所属组织 ID，仅组织共享文档有值 */
+  organization_id?: number | null;
   /** 所属文档库分支ID（null 表示未分类） */
   folder_id: number | null;
   /** 当前处理步骤描述 */
@@ -119,6 +121,8 @@ export interface UploadDocumentParams {
   category?: string;
   /** 可见性，默认 "private" */
   visibility?: DocumentVisibility;
+  /** 组织共享目标 ID */
+  organization_id?: number;
   /** 所属分支ID */
   folder_id?: number;
   /**
@@ -215,6 +219,7 @@ export interface ImportUrlParams {
   category?: string;
   /** 可见性，默认 "private" */
   visibility?: DocumentVisibility;
+  organization_id?: number;
 }
 
 // ============================================
@@ -233,6 +238,7 @@ export interface BatchMoveRequest {
   document_ids: number[];
   /** 目标分支ID（null 表示移出分支，归入未分类） */
   folder_id: number | null;
+  organization_id?: number;
 }
 
 /** 批量操作响应 */

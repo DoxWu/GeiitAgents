@@ -84,7 +84,7 @@ def _resolve_env_placeholders(
 
         # 优先取环境变量
         env_value = (os.environ if environment is None else environment).get(var_name)
-        if env_value is not None:
+        if env_value is not None and env_value.strip():
             return env_value
 
         # 环境变量不存在，用默认值
@@ -177,6 +177,8 @@ class ConfigLoader:
 
             config = ModelProviderConfig(**raw_dict)
             config = _convert_env_strings(config)
+            _ensure_primary_embedding_space_id(config)
+            _disable_incompatible_embedding_fallbacks(config)
 
             logger.info(
                 f"模型提供者配置已加载: "
@@ -209,6 +211,34 @@ class ConfigLoader:
             ModelProviderConfig - 从环境变量构建的配置对象
         """
         from app.core.config import settings
+        from dotenv import dotenv_values
+
+        environment = {key: value for key, value in dotenv_values(".env").items() if value is not None}
+        environment.update(os.environ)
+
+        def env_value(name: str, *fallbacks: str, default: str = "") -> str:
+            for value in (environment.get(name), *fallbacks):
+                if value is not None and str(value).strip():
+                    return str(value).strip()
+            return default
+
+        def env_bool(name: str, default: bool) -> bool:
+            value = environment.get(name)
+            if value is None or not str(value).strip():
+                return default
+            normalized = str(value).strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            return default
+
+        def env_int(name: str, default: int) -> int:
+            try:
+                value = int(environment.get(name, default))
+                return value if value > 0 else default
+            except (TypeError, ValueError):
+                return default
 
         aliyun_api_key = settings.ALIYUN_API_KEY or settings.OPENAI_API_KEY
         aliyun_api_base = settings.ALIYUN_API_BASE or settings.OPENAI_API_BASE
@@ -216,13 +246,16 @@ class ConfigLoader:
         aliyun_embedding_model = settings.ALIYUN_EMBEDDING_MODEL or settings.EMBEDDING_MODEL_NAME
         deepseek_enabled = settings.DEEPSEEK_LLM_ENABLED or settings.LLM_FALLBACK_ENABLED
 
+        language_primary_key = env_value("MODEL_LANGUAGE_PRIMARY_API_KEY", aliyun_api_key)
+        language_primary_base = env_value("MODEL_LANGUAGE_PRIMARY_API_URL", aliyun_api_base)
+        language_primary_model = env_value("MODEL_LANGUAGE_PRIMARY_MODEL", aliyun_llm_model)
         llm_providers = [
             ProviderEndpointConfig(
                 name="primary",
                 type="openai",
-                model=aliyun_llm_model,
-                api_key=aliyun_api_key,
-                api_base=aliyun_api_base,
+                model=language_primary_model,
+                api_key=language_primary_key,
+                api_base=language_primary_base,
                 temperature=0.1,
                 timeout=settings.LLM_TIMEOUT,
                 max_retries=settings.LLM_MAX_RETRIES,
@@ -233,13 +266,13 @@ class ConfigLoader:
             ProviderEndpointConfig(
                 name="fallback",
                 type="openai",
-                model=settings.DEEPSEEK_LLM_MODEL or settings.LLM_FALLBACK_MODEL_NAME,
-                api_key=settings.DEEPSEEK_API_KEY or settings.LLM_FALLBACK_API_KEY or settings.OPENAI_API_KEY,
-                api_base=settings.DEEPSEEK_API_BASE or settings.LLM_FALLBACK_API_BASE or settings.OPENAI_API_BASE,
+                model=env_value("MODEL_LANGUAGE_FALLBACK_MODEL", settings.DEEPSEEK_LLM_MODEL or settings.LLM_FALLBACK_MODEL_NAME),
+                api_key=env_value("MODEL_LANGUAGE_FALLBACK_API_KEY", settings.DEEPSEEK_API_KEY or settings.LLM_FALLBACK_API_KEY or settings.OPENAI_API_KEY),
+                api_base=env_value("MODEL_LANGUAGE_FALLBACK_API_URL", settings.DEEPSEEK_API_BASE or settings.LLM_FALLBACK_API_BASE or settings.OPENAI_API_BASE),
                 temperature=0.1,
                 timeout=settings.LLM_TIMEOUT,
                 max_retries=1,
-                enabled=deepseek_enabled,
+                enabled=env_bool("MODEL_LANGUAGE_FALLBACK_ENABLED", deepseek_enabled),
             ),
         ]
 
@@ -247,13 +280,28 @@ class ConfigLoader:
             ProviderEndpointConfig(
                 name="primary",
                 type="openai",
-                model=aliyun_embedding_model,
-                api_key=aliyun_api_key,
-                api_base=aliyun_api_base,
-                dimension=settings.EMBEDDING_DIMENSION,
+                model=env_value("MODEL_EMBEDDING_PRIMARY_MODEL", aliyun_embedding_model),
+                api_key=env_value("MODEL_EMBEDDING_PRIMARY_API_KEY", aliyun_api_key),
+                api_base=env_value("MODEL_EMBEDDING_PRIMARY_API_URL", aliyun_api_base),
+                dimension=env_int("MODEL_EMBEDDING_PRIMARY_DIMENSION", settings.EMBEDDING_DIMENSION),
+                vector_space_id=env_value("MODEL_EMBEDDING_PRIMARY_VECTOR_SPACE") or None,
+                supports_dimensions=env_bool("MODEL_EMBEDDING_PRIMARY_SUPPORTS_DIMENSIONS", False),
                 timeout=settings.EMBEDDING_TIMEOUT,
                 max_retries=2,
                 enabled=True,
+            ),
+            ProviderEndpointConfig(
+                name="cloud_fallback",
+                type="openai",
+                model=env_value("MODEL_EMBEDDING_FALLBACK_MODEL"),
+                api_key=env_value("MODEL_EMBEDDING_FALLBACK_API_KEY"),
+                api_base=env_value("MODEL_EMBEDDING_FALLBACK_API_URL"),
+                dimension=env_int("MODEL_EMBEDDING_FALLBACK_DIMENSION", env_int("MODEL_EMBEDDING_PRIMARY_DIMENSION", settings.EMBEDDING_DIMENSION)),
+                vector_space_id=env_value("MODEL_EMBEDDING_FALLBACK_VECTOR_SPACE") or None,
+                supports_dimensions=env_bool("MODEL_EMBEDDING_FALLBACK_SUPPORTS_DIMENSIONS", False),
+                timeout=settings.EMBEDDING_TIMEOUT,
+                max_retries=2,
+                enabled=env_bool("MODEL_EMBEDDING_FALLBACK_ENABLED", False),
             ),
             ProviderEndpointConfig(
                 name="local_fallback",
@@ -263,6 +311,7 @@ class ConfigLoader:
                 timeout=30,
                 max_retries=1,
                 enabled=False,
+                vector_space_id=None,
                 health_check=HealthCheckConfig(enabled=False),
             ),
         ]
@@ -271,21 +320,105 @@ class ConfigLoader:
             ProviderEndpointConfig(
                 name="primary",
                 type="openai",
-                model=settings.VISION_MODEL_NAME,
-                api_key=aliyun_api_key,
-                api_base=aliyun_api_base,
+                model=env_value("MODEL_VISION_PRIMARY_MODEL", settings.VISION_MODEL_NAME),
+                api_key=env_value("MODEL_VISION_PRIMARY_API_KEY", aliyun_api_key),
+                api_base=env_value("MODEL_VISION_PRIMARY_API_URL", aliyun_api_base),
                 timeout=30,
                 max_retries=2,
                 max_tokens=500,
                 temperature=0.3,
-                enabled=settings.ENABLE_VISION,
+                enabled=env_bool("MODEL_VISION_PRIMARY_ENABLED", settings.ENABLE_VISION),
+            ),
+            ProviderEndpointConfig(
+                name="fallback",
+                type="openai",
+                model=env_value("MODEL_VISION_FALLBACK_MODEL"),
+                api_key=env_value("MODEL_VISION_FALLBACK_API_KEY"),
+                api_base=env_value("MODEL_VISION_FALLBACK_API_URL"),
+                timeout=30,
+                max_retries=1,
+                max_tokens=500,
+                temperature=0.3,
+                enabled=env_bool("MODEL_VISION_FALLBACK_ENABLED", False),
             ),
         ]
 
-        return ModelProviderConfig(
+        reranker_providers = [
+            ProviderEndpointConfig(
+                name="primary", type="dashscope_rerank",
+                model=env_value("MODEL_RERANK_PRIMARY_MODEL", default="qwen3.7-text-rerank"),
+                api_key=env_value("MODEL_RERANK_PRIMARY_API_KEY", aliyun_api_key),
+                api_base=env_value("MODEL_RERANK_PRIMARY_API_URL", aliyun_api_base),
+                enabled=env_bool("MODEL_RERANK_PRIMARY_ENABLED", True),
+                timeout=8, max_retries=0, health_check=HealthCheckConfig(enabled=False),
+            ),
+            ProviderEndpointConfig(
+                name="fallback", type="dashscope_rerank",
+                model=env_value("MODEL_RERANK_FALLBACK_MODEL"),
+                api_key=env_value("MODEL_RERANK_FALLBACK_API_KEY"),
+                api_base=env_value("MODEL_RERANK_FALLBACK_API_URL"),
+                enabled=env_bool("MODEL_RERANK_FALLBACK_ENABLED", False),
+                timeout=8, max_retries=0, health_check=HealthCheckConfig(enabled=False),
+            ),
+        ]
+        image_generation_providers = [
+            ProviderEndpointConfig(
+                name="primary", type="openai_images",
+                model=env_value("MODEL_IMAGE_GENERATION_PRIMARY_MODEL"),
+                api_key=env_value("MODEL_IMAGE_GENERATION_PRIMARY_API_KEY"),
+                api_base=env_value("MODEL_IMAGE_GENERATION_PRIMARY_API_URL"),
+                enabled=env_bool("MODEL_IMAGE_GENERATION_PRIMARY_ENABLED", False),
+                timeout=60, max_retries=0, health_check=HealthCheckConfig(enabled=False),
+            ),
+            ProviderEndpointConfig(
+                name="fallback", type="openai_images",
+                model=env_value("MODEL_IMAGE_GENERATION_FALLBACK_MODEL"),
+                api_key=env_value("MODEL_IMAGE_GENERATION_FALLBACK_API_KEY"),
+                api_base=env_value("MODEL_IMAGE_GENERATION_FALLBACK_API_URL"),
+                enabled=env_bool("MODEL_IMAGE_GENERATION_FALLBACK_ENABLED", False),
+                timeout=60, max_retries=0, health_check=HealthCheckConfig(enabled=False),
+            ),
+        ]
+
+        config = ModelProviderConfig(
             providers={
                 "llm": llm_providers,
                 "embedding": embedding_providers,
                 "vision": vision_providers,
+                "reranker": reranker_providers,
+                "image_generation": image_generation_providers,
             }
         )
+        _ensure_primary_embedding_space_id(config)
+        _disable_incompatible_embedding_fallbacks(config)
+        return config
+
+
+def _ensure_primary_embedding_space_id(config: ModelProviderConfig) -> None:
+    endpoints = config.providers.get("embedding", [])
+    if endpoints and not (endpoints[0].vector_space_id or "").strip():
+        primary = endpoints[0]
+        primary.vector_space_id = f"model:{primary.model}:{primary.dimension or ''}"
+
+
+def _disable_incompatible_embedding_fallbacks(config: ModelProviderConfig) -> None:
+    """Never fail over into a different vector space or dimension."""
+    endpoints = config.providers.get("embedding", [])
+    if not endpoints:
+        return
+    primary = endpoints[0]
+    for endpoint in endpoints[1:]:
+        if not endpoint.enabled:
+            continue
+        compatible = (
+            endpoint.dimension == primary.dimension
+            and bool(primary.vector_space_id)
+            and bool(endpoint.vector_space_id)
+            and endpoint.vector_space_id == primary.vector_space_id
+        )
+        if not compatible:
+            endpoint.enabled = False
+            logger.error(
+                "Embedding fallback disabled: incompatible vector space or dimension (%s)",
+                endpoint.name,
+            )
