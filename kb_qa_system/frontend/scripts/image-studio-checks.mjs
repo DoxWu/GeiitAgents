@@ -15,6 +15,7 @@ export async function checkImageStudio(page, output, bodies, png, checks = []) {
   await expect(studio.getByRole('img', { name: 'synthetic-reference.png', exact: true })).toBeVisible();
   await button('生成图片并放入设计').click();
   await expect(studio.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible();
+  await expect.poll(() => studio.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(image => image.naturalWidth)).toBe(1024);
   await expect.poll(() => bodies.at(-1)?.size).toBe('1536x864');
   expect(bodies.at(-1).prompt).toContain('左上角(14.79%,16.11%)');
   expect(bodies.at(-1).prompt).toContain('旋转30°，层3');
@@ -90,6 +91,15 @@ export async function checkImageStudio(page, output, bodies, png, checks = []) {
   await expect(field('图片提示词')).toHaveValue('锁库前最后一刻输入');
   await expect(field('图片宽度（像素）')).toHaveValue('1008');
   checks.push('custom dimensions validate; immediate lock and encrypted reload preserve latest task');
+  await field('图片任务').selectOption(firstId);
+  await expect(field('图片任务')).toHaveValue(firstId);
+  await expect(field('图片任务名称')).toBeEnabled();
+  await expect(studio.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible();
+  await expect.poll(() => studio.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(image => image.naturalWidth)).toBe(1024);
+  await field('图片任务').selectOption(secondId);
+  await expect(field('图片任务')).toHaveValue(secondId);
+  await expect(field('图片任务名称')).toBeEnabled();
+  checks.push('generated PNG above 1.5 MB remains decodable after encrypted save, lock and full reload');
   // A reopened saved task must accept results even without editing its prompt.
   await studio.getByText('由模型生成图片', { exact: true }).click();
   await button('生成图片并放入设计').click();

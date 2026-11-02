@@ -6,8 +6,10 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::{header::CONTENT_LENGTH, Url};
 
-const MAX_RESPONSE_BYTES: usize = 3 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 1_500_000;
+const MAX_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_BYTES: usize = 1_500_000;
+const MAX_ENCODED_IMAGE_BYTES: usize = (MAX_IMAGE_BYTES + 2) / 3 * 4;
 
 enum GeneratedImage {
     Embedded(String),
@@ -16,45 +18,50 @@ enum GeneratedImage {
 
 fn parse_image_result(body: &[u8], endpoint: &Url) -> Result<GeneratedImage, String> {
     let value: serde_json::Value =
-        serde_json::from_slice(body).map_err(|_| "Invalid image response")?;
+        serde_json::from_slice(body).map_err(|_| "IMAGE_RESULT_INVALID_FORMAT")?;
     let image = if let Some(images) = value["data"].as_array().filter(|items| items.len() == 1) {
         images[0].clone()
     } else {
         let choices = value["output"]["choices"]
             .as_array()
             .filter(|items| items.len() == 1)
-            .ok_or("Invalid image response")?;
+            .ok_or("IMAGE_RESULT_INVALID_FORMAT")?;
         let images: Vec<&str> = choices[0]["message"]["content"]
             .as_array()
-            .ok_or("Invalid image response")?
+            .ok_or("IMAGE_RESULT_INVALID_FORMAT")?
             .iter()
             .filter_map(|part| part["image"].as_str())
             .collect();
         if images.len() != 1 {
-            return Err("Invalid image response".into());
+            return Err("IMAGE_RESULT_INVALID_FORMAT".into());
         }
         serde_json::json!({"url": images[0]})
     };
-    if let Some(encoded) = image["b64_json"]
-        .as_str()
-        .filter(|text| !text.is_empty() && text.len() <= 2_100_000)
-    {
+    if let Some(encoded) = image["b64_json"].as_str() {
+        if encoded.len() > MAX_ENCODED_IMAGE_BYTES {
+            return Err("IMAGE_RESULT_TOO_LARGE".into());
+        }
+        if encoded.is_empty() {
+            return Err("IMAGE_RESULT_INVALID_FORMAT".into());
+        }
         return Ok(GeneratedImage::Embedded(encoded.into()));
     }
     let value = image["url"]
         .as_str()
         .filter(|url| !url.is_empty() && url.len() <= 2048)
-        .ok_or("Missing image data")?;
-    let url = endpoint.join(value).map_err(|_| "Invalid image URL")?;
+        .ok_or("IMAGE_RESULT_INVALID_FORMAT")?;
+    let url = endpoint
+        .join(value)
+        .map_err(|_| "IMAGE_RESULT_DOWNLOAD_FAILED")?;
     if !url.username().is_empty()
         || url.password().is_some()
         || url.fragment().is_some()
         || url.host_str().is_none()
         || !["https", "http"].contains(&url.scheme())
     {
-        return Err("Invalid image URL".into());
+        return Err("IMAGE_RESULT_DOWNLOAD_FAILED".into());
     }
-    validate_image_url(&url, endpoint)?;
+    validate_image_url(&url, endpoint).map_err(|_| "IMAGE_RESULT_DOWNLOAD_FAILED")?;
     Ok(GeneratedImage::Url(url))
 }
 
@@ -184,7 +191,7 @@ async fn download_image(url: Url, endpoint: &Url) -> Result<Vec<u8>, String> {
         .and_then(|value| value.parse::<usize>().ok())
         .is_some_and(|length| length == 0 || length > MAX_IMAGE_BYTES)
     {
-        return Err("Image size is invalid".into());
+        return Err("IMAGE_RESULT_TOO_LARGE".into());
     }
     let mut bytes = Vec::new();
     let mut response = response;
@@ -194,12 +201,12 @@ async fn download_image(url: Url, endpoint: &Url) -> Result<Vec<u8>, String> {
         .map_err(|_| "Invalid image response")?
     {
         if bytes.len() + chunk.len() > MAX_IMAGE_BYTES {
-            return Err("Image too large".into());
+            return Err("IMAGE_RESULT_TOO_LARGE".into());
         }
         bytes.extend_from_slice(&chunk);
     }
     if bytes.is_empty() || image_mime(&bytes).is_none() {
-        return Err("Unsupported image format".into());
+        return Err("IMAGE_RESULT_INVALID_FORMAT".into());
     }
     Ok(bytes)
 }
@@ -214,6 +221,13 @@ fn image_mime(bytes: &[u8]) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn validate_generated_image(bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("IMAGE_RESULT_TOO_LARGE".into());
+    }
+    image_mime(bytes).ok_or_else(|| "IMAGE_RESULT_INVALID_FORMAT".into())
 }
 
 pub fn validate_size(size: &str) -> Result<(), String> {
@@ -252,7 +266,9 @@ fn reference_bytes(references: &[String]) -> Result<Vec<(&'static str, Vec<u8>)>
             let bytes = STANDARD
                 .decode(encoded)
                 .map_err(|_| "Invalid reference images")?;
-            if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES || image_mime(&bytes) != Some(mime)
+            if bytes.is_empty()
+                || bytes.len() > MAX_REFERENCE_IMAGE_BYTES
+                || image_mime(&bytes) != Some(mime)
             {
                 return Err("Invalid reference images".into());
             }
@@ -415,7 +431,7 @@ pub async fn generate(
         .map_err(|_| "Invalid image response")?
     {
         if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return Err("Image response too large".into());
+            return Err("IMAGE_RESPONSE_TOO_LARGE".into());
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -428,17 +444,18 @@ pub async fn generate(
         GeneratedImage::Embedded(encoded) => {
             let bytes = STANDARD
                 .decode(&encoded)
-                .map_err(|_| "Invalid image data")?;
-            if bytes.len() > MAX_IMAGE_BYTES || image_mime(&bytes).is_none() {
-                return Err("Invalid image data".into());
-            }
+                .map_err(|_| "IMAGE_RESULT_INVALID_FORMAT")?;
+            validate_generated_image(&bytes)?;
             Ok(encoded)
         }
         GeneratedImage::Url(image_url) => {
-            let bytes = download_image(image_url, &provider_endpoint).await?;
-            if bytes.len() > MAX_IMAGE_BYTES {
-                return Err("Image too large".into());
-            }
+            let bytes = download_image(image_url, &provider_endpoint)
+                .await
+                .map_err(|error| match error.as_str() {
+                    "IMAGE_RESULT_TOO_LARGE" | "IMAGE_RESULT_INVALID_FORMAT" => error,
+                    _ => "IMAGE_RESULT_DOWNLOAD_FAILED".into(),
+                })?;
+            validate_generated_image(&bytes)?;
             Ok(STANDARD.encode(bytes))
         }
     }
@@ -541,6 +558,22 @@ mod tests {
             STANDARD.encode(vec![0u8; MAX_IMAGE_BYTES + 1])
         )])
         .is_err());
+    }
+
+    #[test]
+    fn accepts_generated_images_above_upload_limit_but_under_workspace_limit() {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.resize(1_600_000, 0);
+        assert_eq!(validate_generated_image(&bytes), Ok("image/png"));
+        bytes.resize(MAX_IMAGE_BYTES + 1, 0);
+        assert_eq!(
+            validate_generated_image(&bytes),
+            Err("IMAGE_RESULT_TOO_LARGE".into())
+        );
+        assert_eq!(
+            validate_generated_image(b"not an image"),
+            Err("IMAGE_RESULT_INVALID_FORMAT".into())
+        );
     }
 
     #[test]

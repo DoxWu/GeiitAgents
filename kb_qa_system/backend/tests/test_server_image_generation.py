@@ -1,5 +1,6 @@
 import base64
 import json
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -103,6 +104,20 @@ async def test_server_image_downloads_provider_result_url(monkeypatch):
     result = await image_generation.generate_server_image("primary", "A test illustration")
 
     assert downloaded == ["https://images.example/signed-result"]
+    assert result == {"data_url": data_url, "model": "image-main"}
+
+
+@pytest.mark.asyncio
+async def test_server_image_accepts_provider_result_larger_than_upload_limit(monkeypatch):
+    primary = ProviderEndpointConfig(name="primary", type="openai_images", model="image-main", api_key="main-key", api_base="https://image-main.example/v1", enabled=True)
+    monkeypatch.setattr(image_generation.ConfigLoader, "load", lambda: ModelProviderConfig(providers={"image_generation": [primary]}))
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [{"url": "https://images.example/result"}]}))
+    monkeypatch.setattr(image_generation.httpx, "AsyncClient", lambda **kwargs: original(transport=transport, **kwargs))
+    image = b"\x89PNG\r\n\x1a\n" + b"x" * 5_000_000
+    data_url = "data:image/png;base64," + base64.b64encode(image).decode()
+    monkeypatch.setattr(image_generation, "_image_data_url_from_provider_url", AsyncMock(return_value=data_url))
+    result = await image_generation.generate_server_image("primary", "synthetic")
     assert result == {"data_url": data_url, "model": "image-main"}
 
 

@@ -46,6 +46,10 @@ export const IMAGE_REQUEST_ERRORS: Record<string, string> = {
   IMAGE_REFERENCE_UNSUPPORTED: '参考图生成请求被拒绝，请确认所选模型支持图片编辑及当前接口格式；参考图未被丢弃重试。',
   IMAGE_AUTH_REJECTED: '图像服务拒绝认证，请检查 API Key 和模型权限。',
   IMAGE_RATE_LIMIT: '图像服务额度或速率已达上限。',
+  IMAGE_RESULT_TOO_LARGE: '模型已经返回图片，但图片超过工作台8 MiB的保存上限。请降低画布输出尺寸后重试。',
+  IMAGE_RESULT_INVALID_FORMAT: '模型已返回结果，但图片不是有效的PNG、JPEG或WebP文件。',
+  IMAGE_RESULT_DOWNLOAD_FAILED: '模型已返回图片地址，但工作台无法安全下载该图片。请重试或检查模型返回的图片地址。',
+  IMAGE_RESPONSE_TOO_LARGE: '模型返回数据超过工作台12 MiB传输上限。请使用图片地址响应或降低输出尺寸。',
 };
 
 export function imageRequestError(status: number, body: Uint8Array, references: boolean): Error {

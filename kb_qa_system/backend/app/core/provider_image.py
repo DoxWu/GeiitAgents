@@ -10,7 +10,8 @@ from urllib.parse import urlsplit
 
 from app.core.public_http import public_get
 
-MAX_IMAGE_BYTES = 1_500_000
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_REFERENCE_IMAGE_BYTES = 1_500_000
 MAX_IMAGE_DOWNLOAD_SECONDS = 15
 
 
@@ -18,13 +19,23 @@ class ProviderImageError(Exception):
     pass
 
 
-def image_data_url(encoded: str) -> str:
+def _size_error(max_image_bytes: int) -> ProviderImageError:
+    if max_image_bytes == MAX_IMAGE_BYTES:
+        return ProviderImageError("模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。")
+    return ProviderImageError(f"图片超过{max_image_bytes:,}字节限制。")
+
+
+def image_data_url(encoded: str, *, max_image_bytes: int = MAX_IMAGE_BYTES) -> str:
+    if len(encoded) > ((max_image_bytes + 2) // 3) * 4:
+        raise _size_error(max_image_bytes)
     try:
         image = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError):
         raise ProviderImageError("图片服务返回无效内容。") from None
-    if not image or len(image) > MAX_IMAGE_BYTES:
-        raise ProviderImageError("图片服务返回的文件超出大小限制。")
+    if not image:
+        raise ProviderImageError("图片服务返回无效内容。")
+    if len(image) > max_image_bytes:
+        raise _size_error(max_image_bytes)
     if image.startswith(b"\x89PNG\r\n\x1a\n"):
         mime = "image/png"
     elif image.startswith(b"\xff\xd8\xff"):
@@ -78,8 +89,10 @@ def download_provider_image_url(
         if content_length:
             try:
                 length = int(content_length)
-                if length < 1 or length > max_image_bytes:
-                    raise ProviderImageError("图片服务返回的文件超出大小限制。")
+                if length > max_image_bytes:
+                    raise _size_error(max_image_bytes)
+                if length < 1:
+                    raise ProviderImageError("图片服务返回了无效文件大小。")
             except ValueError:
                 raise ProviderImageError("图片服务返回了无效文件大小。") from None
 
@@ -91,12 +104,12 @@ def download_provider_image_url(
                 continue
             image.extend(chunk)
             if len(image) > max_image_bytes:
-                raise ProviderImageError("图片服务返回的文件超出大小限制。")
+                raise _size_error(max_image_bytes)
     finally:
         response.close()
 
     encoded = base64.b64encode(image).decode("ascii")
-    return image_data_url(encoded)
+    return image_data_url(encoded, max_image_bytes=max_image_bytes)
 
 
 async def image_data_url_from_provider_url(image_url: str) -> str:

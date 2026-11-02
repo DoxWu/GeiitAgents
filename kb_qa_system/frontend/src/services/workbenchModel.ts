@@ -3,7 +3,7 @@ import { apiClient, getStoredTokens } from "@/api/client";
 
 import type { ModelMessageContent, ModelProfile } from "@/types/workbench";
 import { finishReason, readModelResponse, type FinishReason } from './modelStream';
-import { imageType, workImageFromDataUrl } from './workbenchImages';
+import { imageType, MAX_GENERATED_IMAGE_BYTES, workImageFromDataUrl } from './workbenchImages';
 import type { WorkImage } from '@/types/workbench';
 import { imageSizeValue, validateImagePrompt, type ImageSize } from './imageGeneration';
 import { imageReferenceData, imageRequest, imageResult, imageRequestError, IMAGE_REQUEST_ERRORS } from './imageRequest';
@@ -39,9 +39,10 @@ export function validateImageModel(value: string | undefined): string | undefine
   return model;
 }
 
-async function readBoundedBody(response: Response, limit: number, signal: AbortSignal): Promise<Uint8Array> {
+async function readBoundedBody(response: Response, limit: number, signal: AbortSignal, tooLarge = '图片服务响应超过大小限制。'): Promise<Uint8Array> {
   const declared = Number(response.headers.get('content-length') ?? 0);
-  if (declared > limit || !response.body) throw new Error('图片服务响应无效或超过大小限制。');
+  if (declared > limit) { await response.body?.cancel(); throw new Error(tooLarge); }
+  if (!response.body) throw new Error('图片服务响应无效或超过大小限制。');
   const reader = response.body.getReader(), chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -50,7 +51,7 @@ async function readBoundedBody(response: Response, limit: number, signal: AbortS
       const { done, value } = await reader.read();
       if (done) break;
       total += value.length;
-      if (total > limit) throw new Error('图片服务响应超过大小限制。');
+      if (total > limit) throw new Error(tooLarge);
       chunks.push(value);
     }
   } catch (error) {
@@ -79,9 +80,11 @@ function providerImageUrl(value: string, baseUrl: string): string {
 }
 
 async function providerImageDataUrl(image: { b64_json?: unknown; url?: unknown }, baseUrl: string, signal: AbortSignal): Promise<string> {
-  if (typeof image.b64_json === 'string' && image.b64_json.length <= 2_100_000) {
+  if (typeof image.b64_json === 'string') {
+    if (image.b64_json.length > Math.ceil(MAX_GENERATED_IMAGE_BYTES / 3) * 4) throw new Error('模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。');
     let bytes: Uint8Array;
     try { bytes = Uint8Array.from(atob(image.b64_json), character => character.charCodeAt(0)); } catch { throw new Error('图片服务返回了无效的图片数据。'); }
+    if (bytes.length > MAX_GENERATED_IMAGE_BYTES) throw new Error('模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。');
     const mime = imageType(bytes);
     if (!mime) throw new Error('图片服务返回了不支持的图片格式。');
     return `data:${mime};base64,${image.b64_json}`;
@@ -90,7 +93,7 @@ async function providerImageDataUrl(image: { b64_json?: unknown; url?: unknown }
   const url = providerImageUrl(image.url, baseUrl);
   const response = await fetch(url, { method: 'GET', signal, credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { Accept: 'image/png,image/jpeg,image/webp' } });
   if (response.status !== 200) { await response.body?.cancel(); throw new Error('生成图片下载失败。'); }
-  const bytes = await readBoundedBody(response, 1_500_000, signal);
+  const bytes = await readBoundedBody(response, MAX_GENERATED_IMAGE_BYTES, signal, '模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。');
   const mime = imageType(bytes);
   if (!mime) throw new Error('图片服务返回了不支持的图片格式。');
   let binary = '';
@@ -202,7 +205,8 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     try {
       if (signal.aborted) throw new Error();
       const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt, size, referenceImages, direct: profile.mode === 'direct' });
-      if (signal.aborted || typeof encoded !== 'string' || encoded.length > 2_000_000) throw new Error();
+      if (signal.aborted) throw new Error();
+      if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_GENERATED_IMAGE_BYTES / 3) * 4) throw new Error('IMAGE_RESULT_TOO_LARGE');
       const mime = imageType(Uint8Array.from(atob(encoded), character => character.charCodeAt(0)));
       if (!mime) throw new Error();
       return workImageFromDataUrl(`data:${mime};base64,${encoded}`, 'generated-image.png');
@@ -226,7 +230,7 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     const request = imageRequest(baseUrl, model, prompt, size, referenceImages);
     const response = await fetch(request.url, { method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
       headers: { ...(request.json ? { 'Content-Type': 'application/json' } : {}), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) }, body: request.body });
-    const data = response.body ? await readBoundedBody(response, 3 * 1024 * 1024, signal) : new Uint8Array();
+    const data = response.body ? await readBoundedBody(response, 12 * 1024 * 1024, signal, '图像服务返回数据超过12 MiB传输上限。') : new Uint8Array();
     if (!response.ok) throw imageRequestError(response.status, data, referenceImages.length > 0);
     const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data));
     const dataUrl = await providerImageDataUrl(imageResult(payload), baseUrl, signal);
@@ -235,7 +239,8 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
     if (error instanceof Error && [...Object.values(IMAGE_REQUEST_ERRORS), '生成图片下载失败。', '图片服务返回的图片地址无效。', '图片服务返回了不安全的图片地址。',
       '图片服务返回了无效的图片数据。', '图片服务返回了不支持的图片格式。', '图片服务响应无效或超过大小限制。',
-      '图片服务响应超过大小限制。', '图片服务没有返回可用图片。'].includes(error.message)) throw error;
+      '图片服务响应超过大小限制。', '图片服务没有返回可用图片。', '模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。',
+      '图像服务返回数据超过12 MiB传输上限。'].includes(error.message)) throw error;
     throw new Error('生图接口请求失败或未返回可用图片，请检查模型、接口兼容性和跨域设置。');
   }
 }

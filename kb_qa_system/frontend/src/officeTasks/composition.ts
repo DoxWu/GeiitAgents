@@ -1,4 +1,4 @@
-import { validateWorkImage } from '@/services/workbenchImages';
+import { MAX_VAULT_IMAGE_BYTES, validateGeneratedWorkImage, validateWorkImage } from '@/services/workbenchImages';
 import type { WorkImage } from '@/types/workbench';
 import { imageSizeValue, validateImagePrompt, type ImageSize } from '@/services/imageGeneration';
 export interface CompositionShape { id: string; kind: 'rectangle' | 'ellipse' | 'triangle' | 'text' | 'image'; x: number; y: number; w: number; h: number; rotation: number; layer: number; color: string; text: string; description: string; imageIndex?: number }
@@ -53,8 +53,8 @@ export function validateImageStudio(value: unknown): ImageStudioDraft {
   const d = value as ImageStudioDraft;
   if (!d || typeof d !== 'object' || Object.keys(d).some(k => !['prompt','shapes','references','canvas','result'].includes(k)) || typeof d.prompt !== 'string' || d.prompt.length > 1000 || !Array.isArray(d.references) || d.references.length > 2) throw new Error('图片草稿无效。');
   imageCanvas(d.canvas);
-  validateShapes(d.shapes); d.references.forEach(validateWorkImage); if (d.result) validateWorkImage(d.result);
-  if ([...d.references, ...(d.result ? [d.result] : [])].reduce((n,i) => n+i.bytes,0) > 4*1024*1024) throw new Error('图片草稿素材总量超过4 MiB。');
+  validateShapes(d.shapes); d.references.forEach(validateWorkImage); if (d.result) validateGeneratedWorkImage(d.result);
+  if ([...d.references, ...(d.result ? [d.result] : [])].reduce((n,i) => n+i.bytes,0) > MAX_VAULT_IMAGE_BYTES) throw new Error('图片草稿素材总量超过8 MiB。');
   return structuredClone(d);
 }
 export function compositionPrompt(draft: ImageStudioDraft, prompt = draft.prompt): string {

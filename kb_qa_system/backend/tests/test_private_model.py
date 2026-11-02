@@ -87,6 +87,20 @@ async def test_private_image_downloads_provider_result_url(monkeypatch):
     assert result == {"data_url": f"data:image/png;base64,{png}"}
 
 
+@pytest.mark.asyncio
+async def test_private_image_accepts_provider_result_larger_than_upload_limit(monkeypatch):
+    request = PrivateImageGeneration(base_url="https://models.example/v1", model="image-model", prompt="synthetic")
+    monkeypatch.setattr("app.services.private_model.public_endpoint", AsyncMock(return_value=("https://1.1.1.1/v1/images/generations", "models.example", "models.example")))
+    image = b"\x89PNG\r\n\x1a\n" + b"x" * 5_000_000
+    data_url = "data:image/png;base64," + base64.b64encode(image).decode()
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [{"url": "https://images.example/result"}]}))
+    monkeypatch.setattr("app.services.private_model.httpx.AsyncClient", lambda **kwargs: original(transport=transport, **kwargs))
+    monkeypatch.setattr("app.services.private_model.image_data_url_from_provider_url", AsyncMock(return_value=data_url))
+    result = await generate_private_image(request, "fixture-key")
+    assert result == {"data_url": data_url}
+
+
 @pytest.mark.parametrize("size", ["1024x513", "256x1024", "2048x2064", "1024x1", "1024x1024\n"])
 def test_image_request_schemas_reject_invalid_dimensions(size):
     from app.schemas.image_generation import ServerImageRequest

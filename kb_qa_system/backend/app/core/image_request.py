@@ -4,7 +4,7 @@ import base64
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-from app.core.provider_image import ProviderImageError, image_data_url
+from app.core.provider_image import MAX_REFERENCE_IMAGE_BYTES, ProviderImageError, image_data_url
 
 IMAGE_EDIT_PATH = '/api/v1/services/aigc/multimodal-generation/generation'
 
@@ -17,7 +17,7 @@ def validate_reference_images(images: list[str]) -> list[str]:
             raise ValueError('参考图片无效或超限。')
         match = re.fullmatch(r'data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})', value)
         try:
-            if not match or len(match[2]) % 4 or image_data_url(match[2]) != value:
+            if not match or len(match[2]) % 4 or image_data_url(match[2], max_image_bytes=MAX_REFERENCE_IMAGE_BYTES) != value:
                 raise ValueError('参考图片内容与类型不匹配。')
         except ProviderImageError:
             raise ValueError('参考图片内容无效或超过1.5 MB。') from None

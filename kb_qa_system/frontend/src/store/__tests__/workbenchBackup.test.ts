@@ -10,6 +10,7 @@ import { personalDraft } from '@/personal/itemDraft';
 import { MemoryDirectory } from '@/fileOrganizer/testDirectory';
 import { snapshotText } from '@/fileOrganizer/textEdit';
 import { newCompositionShape } from '@/officeTasks/composition';
+import { workImageFromDataUrl } from '@/services/workbenchImages';
 
 beforeEach(async () => {
   vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); vi.stubGlobal('TextDecoder', TextDecoder); vi.stubGlobal('Blob', NodeBlob);
@@ -17,6 +18,22 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.restoreAllMocks(); await store.getState().lock(); vi.unstubAllGlobals(); });
 async function fixture() { return (await backup.exportVaultBackup(await vaultBackupFixture(), '1234', true)).file; }
+
+it('persists a generated result larger than the upload limit through lock and encrypted backup restore', async () => {
+  const result = workImageFromDataUrl(`data:image/png;base64,${btoa('\x89PNG\r\n\x1a\n' + '\0'.repeat(5_000_000 - 8))}`, 'large-generated.png');
+  const task = { id: 'large-image', name: 'Large generated image', updatedAt: new Date().toISOString(), draft: { prompt: 'synthetic', shapes: [], references: [], result } };
+  await store.getState().unlock('old-pass');
+  await store.getState().saveImageTask(task);
+  await store.getState().lock();
+  await store.getState().unlock('old-pass');
+  expect(store.getState().imageTasks[0].draft.result).toEqual(result);
+  const exported = await store.getState().exportWorkbenchBackup('1234', false);
+  await store.getState().lock();
+  await store.getState().prepareWorkbenchRestore(exported.file, '1234', 'new-pass');
+  await store.getState().commitWorkbenchRestore(store.getState().vaultRestorePreview!.id);
+  await store.getState().unlock('new-pass');
+  expect(store.getState().imageTasks[0].draft.result).toEqual(result);
+});
 
 it('exports current debounced drafts even when persistence is out of quota', async () => {
   await store.getState().unlock('old-pass');

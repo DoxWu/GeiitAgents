@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { readWorkImages, validateWorkImage } from '../workbenchImages';
+import { readWorkImages, validateWorkImage, workImageFromDataUrl } from '../workbenchImages';
+import { validateImageStudio } from '@/officeTasks/composition';
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -13,4 +14,14 @@ it('rejects MIME mismatches, spoofed data URLs, and too many attachments', async
   await expect(readWorkImages([new File([png], 'chart.png', { type: 'image/jpeg' })])).rejects.toThrow('类型一致');
   expect(() => validateWorkImage({ name: 'chart.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,AAAAAAAAAAA=', bytes: 8 })).toThrow('内容与类型不匹配');
   await expect(readWorkImages(Array.from({ length: 4 }, (_, index) => new File([png], `${index}.png`, { type: 'image/png' })))).rejects.toThrow('最多附加 3 张');
+});
+
+it('accepts generated results up to the 8 MiB vault budget while keeping uploaded references at 1.5 MiB', async () => {
+  const large = new Uint8Array(5_000_000); large.set(png);
+  const encoded = btoa(Array.from(large, byte => String.fromCharCode(byte)).join(''));
+  const image = workImageFromDataUrl(`data:image/png;base64,${encoded}`, 'generated.png');
+  expect(image.bytes).toBe(5_000_000);
+  expect(() => validateWorkImage(image)).toThrow('超限');
+  expect(() => validateImageStudio({ prompt: '', references: [], shapes: [], result: image })).not.toThrow();
+  await expect(readWorkImages([new File([large], 'reference.png', { type: 'image/png' })])).rejects.toThrow('1.5 MiB');
 });

@@ -4,6 +4,7 @@ import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { parseArgs, parseEnv } from 'node:util';
@@ -24,13 +25,36 @@ const root = path.resolve(values.output);
 await mkdir(root, { recursive: true });
 const output = await mkdtemp(path.join(root, 'run-'));
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==', 'base64');
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const name = Buffer.from(type), checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([name, data])));
+  const size = Buffer.alloc(4); size.writeUInt32BE(data.length);
+  return Buffer.concat([size, name, data, checksum]);
+}
+function largeGeneratedPng(width, height) {
+  const scanlines = Buffer.alloc((width * 3 + 1) * height); let state = 0x7f4a7c15;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width * 3; x++) {
+    state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
+    scanlines[y * (width * 3 + 1) + x + 1] = state & 255;
+  }
+  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', header), pngChunk('IDAT', deflateSync(scanlines)), pngChunk('IEND', Buffer.alloc(0))]);
+}
+const generatedPng = largeGeneratedPng(1600, 1024);
+if (generatedPng.length <= 4 * 1024 * 1024 || generatedPng.length > 8 * 1024 * 1024) throw new Error('Synthetic large PNG fixture has an unexpected size');
+const studioPng = largeGeneratedPng(1024, 1024);
+if (studioPng.length <= 1_500_000 || studioPng.length > 4 * 1024 * 1024) throw new Error('Synthetic image-studio PNG fixture has an unexpected size');
 const requests = [], bodies = [], checks = [], errors = [];
-let liveProvider;
+let liveProvider, useLargeGeneratedPng = true;
 const fixture = createServer(async (request, response) => {
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
   requests.push({ path: request.url, authorization: request.headers.authorization ?? null });
   if (request.url === '/image.png') {
-    response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(png); return;
+    response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(useLargeGeneratedPng ? generatedPng : studioPng); return;
   }
   let body;
   if (request.headers['content-type']?.startsWith('multipart/form-data')) {
@@ -48,6 +72,14 @@ const fixture = createServer(async (request, response) => {
   }
   bodies.push(body);
   expect(body.model).toBe('native-image-fixture');
+  if (body.prompt.includes('OVERSIZE_RESULT')) {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ data: [{ b64_json: Buffer.alloc(8 * 1024 * 1024 + 3).toString('base64') }] })); return;
+  }
+  if (body.prompt.includes('INVALID_RESULT')) {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ data: [{ b64_json: Buffer.from('synthetic invalid image').toString('base64') }] })); return;
+  }
   if (body.prompt.includes('UNSUPPORTED_REFERENCE')) { response.writeHead(404); response.end('synthetic unsupported'); return; }
   if (body.prompt.includes('DELAYED')) await new Promise(resolve => setTimeout(resolve, 1200));
   response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -82,7 +114,8 @@ try {
       const encoded = await window.__TAURI_INTERNALS__.invoke('generate_local_image', {
         requestId: crypto.randomUUID(), baseUrl, apiKey: 'synthetic-image-key', model: 'native-image-fixture', prompt: 'Synthetic image', direct: false,
       });
-      return { ok: true, encoded };
+      const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0)), dimensions = new DataView(bytes.buffer);
+      return { ok: true, bytes: bytes.length, width: dimensions.getUint32(16), height: dimensions.getUint32(20) };
     } catch (error) { return { ok: false, error: String(error) }; }
   }, { baseUrl });
   if (values['expect-denied']) {
@@ -92,7 +125,9 @@ try {
     checks.push('old build rejects image command before any provider request');
   } else {
     expect(result.ok, result.error).toBe(true);
-    expect(result.encoded).toBe(png.toString('base64'));
+    expect(result.bytes).toBe(generatedPng.length);
+    expect(result.bytes).toBeGreaterThan(4 * 1024 * 1024);
+    expect([result.width, result.height]).toEqual([1600, 1024]);
     expect(requests).toEqual([{ path: '/v1/images/generations', authorization: 'Bearer synthetic-image-key' }, { path: '/image.png', authorization: null }]);
     checks.push('native image command allowed and URL downloaded without API key');
     const prior = requests.length;
@@ -102,9 +137,9 @@ try {
       let error;
       try { await invoke('generate_local_image', { requestId: crypto.randomUUID(), baseUrl, apiKey: 'synthetic-image-key', model: 'native-image-fixture', prompt: 'UNSUPPORTED_REFERENCE', referenceImages: [reference] }); }
       catch (reason) { error = String(reason); }
-      return { encoded, error };
+      return { bytes: atob(encoded).length, error };
     }, { baseUrl, reference: `data:image/png;base64,${png.toString('base64')}` });
-    expect(edit.encoded).toBe(png.toString('base64')); expect(edit.error).toBe('IMAGE_REFERENCE_UNSUPPORTED');
+    expect(edit.bytes).toBe(generatedPng.length); expect(edit.error).toBe('IMAGE_REFERENCE_UNSUPPORTED');
     expect(requests.length - prior).toBe(3);
     checks.push('native multipart sends two original images; unsupported edit is explicit with no text retry');
     await page.getByLabel('解锁口令', { exact: true }).fill('synthetic-image-passphrase');
@@ -119,9 +154,18 @@ try {
     await page.getByLabel('生图模型（可选）', { exact: true }).fill('native-image-fixture');
     await page.getByRole('button', { name: '保存连接', exact: true }).click();
     await expect(page.getByRole('status')).toHaveText('连接已加密保存到本机。');
+    useLargeGeneratedPng = false;
     await page.getByRole('tab', { name: '任务', exact: true }).click();
     await page.getByRole('tab', { name: '图片生成', exact: true }).click();
     await page.getByText('由模型生成图片', { exact: true }).click();
+    const studio = page.getByRole('region', { name: '图片生成工作室' });
+    for (const [prompt, message] of [['OVERSIZE_RESULT', '8 MiB'], ['INVALID_RESULT', 'PNG']]) {
+      await page.getByLabel('图片提示词', { exact: true }).fill(prompt);
+      await page.getByRole('button', { name: '生成图片并放入设计', exact: true }).click();
+      await expect(studio.getByRole('alert')).toContainText(message);
+      await expect(studio.getByRole('img', { name: '模型生成结果', exact: true })).toHaveCount(0);
+    }
+    checks.push('native UI reports output size and invalid file errors explicitly without generic configuration advice');
     await page.getByLabel('图片提示词', { exact: true }).fill('Synthetic native UI image');
     await page.getByRole('button', { name: '生成图片并放入设计', exact: true }).click();
     await expect(page.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible({ timeout: 15000 });
@@ -156,7 +200,7 @@ try {
           const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0)), dimensions = new DataView(bytes.buffer);
           return { ok: true, bytes: bytes.length, png: bytes[0] === 137 && bytes[1] === 80, width: dimensions.getUint32(16), height: dimensions.getUint32(20) };
         } catch (error) {
-          return { ok: false, code: ['IMAGE_EDIT_QUOTA', 'IMAGE_AUTH_REJECTED', 'IMAGE_REFERENCE_UNSUPPORTED', 'IMAGE_RATE_LIMIT'].includes(String(error)) ? String(error) : 'IMAGE_REQUEST_FAILED' };
+          return { ok: false, code: ['IMAGE_EDIT_QUOTA', 'IMAGE_AUTH_REJECTED', 'IMAGE_REFERENCE_UNSUPPORTED', 'IMAGE_RATE_LIMIT', 'IMAGE_RESULT_TOO_LARGE', 'IMAGE_RESULT_INVALID_FORMAT', 'IMAGE_RESULT_DOWNLOAD_FAILED', 'IMAGE_RESPONSE_TOO_LARGE'].includes(String(error)) ? String(error) : 'IMAGE_REQUEST_FAILED' };
         }
       }, connection);
       liveProvider = { kind: 'reference-image-edit', model: connection.model, requests: 1, referenceImages: 1, ...result, imagesSaved: false, credentialsSaved: false };

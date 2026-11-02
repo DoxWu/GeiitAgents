@@ -120,7 +120,7 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
                     chunks = bytearray()
                     async for chunk in response.aiter_bytes():
                         chunks.extend(chunk)
-                        if len(chunks) > 3 * 1024 * 1024:
+                        if len(chunks) > 12 * 1024 * 1024:
                             raise PrivateModelError(502, "图像服务响应超过大小限制。")
                     try:
                         data = json.loads(chunks)
@@ -135,8 +135,8 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
                         data_url = await image_data_url_from_provider_url(image["url"])
                         encoded = data_url.split(",", 1)[1]
                     raw = base64.b64decode(encoded, validate=True)
-                    if len(raw) > 1_500_000:
-                        raise PrivateModelError(413, "生成图片超过本机附件的 1.5 MiB 限制。")
+                    if len(raw) > 8 * 1024 * 1024:
+                        raise PrivateModelError(413, "模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。")
                     if raw.startswith(b"\x89PNG\r\n\x1a\n"):
                         mime = "image/png"
                     elif raw.startswith(b"\xff\xd8\xff"):
@@ -148,8 +148,9 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
                     return {"data_url": f"data:{mime};base64,{encoded}"}
     except PrivateModelError:
         raise
-    except ImageGenerationError:
-        raise PrivateModelError(502, "图像服务返回的图片地址无法安全下载或图片格式不受支持。") from None
+    except ImageGenerationError as exc:
+        status = 413 if "超过8 MiB" in str(exc) else 502
+        raise PrivateModelError(status, str(exc)) from None
     except (KeyError, IndexError, TypeError, ValueError, binascii.Error, json.JSONDecodeError):
         raise PrivateModelError(502, "图像服务未返回有效的内嵌 PNG、JPEG 或 WebP 图片。") from None
     except Exception:

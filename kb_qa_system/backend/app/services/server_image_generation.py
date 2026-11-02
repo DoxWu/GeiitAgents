@@ -24,7 +24,7 @@ from app.core.provider_image import (
 from app.core.public_http import public_get
 from app.schemas.image_generation import validate_image_size
 
-MAX_RESPONSE_BYTES = 3 * 1024 * 1024
+MAX_RESPONSE_BYTES = 12 * 1024 * 1024
 
 
 def configured_image_endpoints() -> list[dict[str, str]]:
@@ -119,18 +119,21 @@ async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024
             encoded = data.get("b64_json")
             if isinstance(encoded, str):
                 try:
-                    data_url = _image_data_url(encoded)
-                except ImageGenerationError:
+                    data_url = _image_data_url(encoded, max_image_bytes=MAX_IMAGE_BYTES)
+                except ImageGenerationError as exc:
+                    failure = str(exc)
                     continue
             elif isinstance(data.get("url"), str):
                 try:
                     data_url = await _image_data_url_from_provider_url(data["url"])
-                except ImageGenerationError:
+                except ImageGenerationError as exc:
+                    failure = str(exc)
                     continue
             else:
                 continue
             return {"data_url": data_url, "model": endpoint.model}
-        except ImageGenerationError:
+        except ImageGenerationError as exc:
+            failure = str(exc)
             continue
         except Exception:
             continue
