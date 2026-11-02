@@ -1,5 +1,6 @@
 """Exercise the actual router with isolated auth/rate-limit dependencies."""
 import importlib.util
+import base64
 import sys
 import types
 from pathlib import Path
@@ -126,6 +127,25 @@ def test_authenticated_route_validation_no_cache_and_key_header(monkeypatch):
         assert account_completion.await_args.args[0].messages[0].content == image_content
         assert client.post(account_url + "/complete", json=body).status_code == 422
         assert account_completion.await_count == 2
+
+    # Two reference images exceed the former 64 KiB cap but remain bounded.
+    reference = 'data:image/png;base64,' + base64.b64encode(b'\x89PNG\r\n\x1a\n' + b'x' * 60_000).decode()
+    image_body = {'prompt': 'edit subject', 'reference_images': [reference, reference]}
+    image_mock = AsyncMock(return_value={'data_url': 'data:image/png;base64,iVBORw0KGgo='})
+    with patch.object(module, 'generate_private_image', image_mock), patch.object(module, 'generate_server_image', image_mock):
+        private_url = '/api/v1/private-models/images/generate'
+        server_url = '/api/v1/private-models/server-images/generate'
+        response = client.post(private_url, json={**image_body, 'base_url': body['base_url'], 'model': 'edit'}, headers={'X-Model-Api-Key': 'synthetic'})
+        assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+        assert image_mock.await_args.args[0].reference_images == [reference, reference]
+        response = client.post(server_url, json={**image_body, 'endpoint_id': 'primary', 'consent': True})
+        assert response.status_code == 200 and image_mock.await_args.args[3] == [reference, reference]
+        assert client.post(server_url, json={**image_body, 'endpoint_id': 'primary', 'consent': False}).status_code == 400
+        invalid = client.post(server_url, json={**image_body, 'endpoint_id': 'primary', 'consent': True, 'reference_images': ['synthetic-secret-not-an-image']})
+        assert invalid.status_code == 422 and 'synthetic-secret-not-an-image' not in invalid.text
+        assert image_mock.await_count == 2
+        for image_url in [private_url, server_url]:
+            assert client.post(image_url, content=b'x' * (5 * 1024 * 1024 + 1)).status_code == 413
 
     async def account_chunks(data, completion):
         yield "账号"

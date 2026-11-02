@@ -17,7 +17,9 @@ const { values } = parseArgs({ options: {
   // Explicit opt-in only: one billed synthetic request, credentials stay in
   // memory and are never saved into the test vault, logs, images or reports.
   'provider-env': { type: 'string' },
+  'provider-reference-env': { type: 'string' },
 } });
+if (values['provider-env'] && values['provider-reference-env']) throw new Error('Select only one real provider test per run');
 const root = path.resolve(values.output);
 await mkdir(root, { recursive: true });
 const output = await mkdtemp(path.join(root, 'run-'));
@@ -30,9 +32,23 @@ const fixture = createServer(async (request, response) => {
   if (request.url === '/image.png') {
     response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(png); return;
   }
-  const body = JSON.parse(Buffer.concat(chunks).toString());
+  let body;
+  if (request.headers['content-type']?.startsWith('multipart/form-data')) {
+    expect(request.url).toBe('/v1/images/edits');
+    const form = await new Response(Buffer.concat(chunks), { headers: { 'Content-Type': request.headers['content-type'] } }).formData();
+    body = Object.fromEntries([...form.entries()].filter(([, value]) => typeof value === 'string'));
+    const files = [...form.getAll('image'), ...form.getAll('image[]')];
+    expect(files.length).toBeGreaterThan(0); expect(files.length).toBeLessThanOrEqual(2);
+    for (const file of files) expect(Buffer.from(await file.arrayBuffer()).equals(png)).toBe(true);
+    body.referenceCount = files.length;
+  } else {
+    expect(request.url).toBe('/v1/images/generations');
+    body = JSON.parse(Buffer.concat(chunks).toString());
+    body.referenceCount = 0;
+  }
   bodies.push(body);
   expect(body.model).toBe('native-image-fixture');
+  if (body.prompt.includes('UNSUPPORTED_REFERENCE')) { response.writeHead(404); response.end('synthetic unsupported'); return; }
   if (body.prompt.includes('DELAYED')) await new Promise(resolve => setTimeout(resolve, 1200));
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({ data: [{ url: '/image.png' }] }));
@@ -79,6 +95,18 @@ try {
     expect(result.encoded).toBe(png.toString('base64'));
     expect(requests).toEqual([{ path: '/v1/images/generations', authorization: 'Bearer synthetic-image-key' }, { path: '/image.png', authorization: null }]);
     checks.push('native image command allowed and URL downloaded without API key');
+    const prior = requests.length;
+    const edit = await page.evaluate(async ({ baseUrl, reference }) => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      const encoded = await invoke('generate_local_image', { requestId: crypto.randomUUID(), baseUrl, apiKey: 'synthetic-image-key', model: 'native-image-fixture', prompt: 'Edit two references', referenceImages: [reference, reference] });
+      let error;
+      try { await invoke('generate_local_image', { requestId: crypto.randomUUID(), baseUrl, apiKey: 'synthetic-image-key', model: 'native-image-fixture', prompt: 'UNSUPPORTED_REFERENCE', referenceImages: [reference] }); }
+      catch (reason) { error = String(reason); }
+      return { encoded, error };
+    }, { baseUrl, reference: `data:image/png;base64,${png.toString('base64')}` });
+    expect(edit.encoded).toBe(png.toString('base64')); expect(edit.error).toBe('IMAGE_REFERENCE_UNSUPPORTED');
+    expect(requests.length - prior).toBe(3);
+    checks.push('native multipart sends two original images; unsupported edit is explicit with no text retry');
     await page.getByLabel('解锁口令', { exact: true }).fill('synthetic-image-passphrase');
     await page.getByLabel('确认口令', { exact: true }).fill('synthetic-image-passphrase');
     await page.getByRole('button', { name: '创建', exact: true }).click();
@@ -115,6 +143,32 @@ try {
     expect(denied).toBe(true);
     expect(requests.filter(request => request.path === '/image.png').every(request => request.authorization === null)).toBe(true);
     checks.push('sandboxed preview still rejects native image commands');
+    if (values['provider-reference-env']) {
+      const config = parseEnv(await readFile(path.resolve(values['provider-reference-env']), 'utf8'));
+      const connection = { baseUrl: config.MODEL_IMAGE_GENERATION_PRIMARY_API_URL, apiKey: config.MODEL_IMAGE_GENERATION_PRIMARY_API_KEY, model: config.MODEL_IMAGE_GENERATION_PRIMARY_MODEL };
+      if (!connection.baseUrl || !connection.apiKey || !connection.model) throw new Error('Primary image connection is incomplete');
+      const result = await page.evaluate(async connection => {
+        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
+        const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 512, 512); ctx.fillStyle = 'red'; ctx.fillRect(100, 100, 300, 300);
+        const reference = canvas.toDataURL('image/png');
+        try {
+          const encoded = await window.__TAURI_INTERNALS__.invoke('generate_local_image', { ...connection, requestId: crypto.randomUUID(), prompt: 'Change the red square to blue. Preserve its shape, position and white background. No other objects.', size: '1024x1024', direct: true, referenceImages: [reference] });
+          const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0)), dimensions = new DataView(bytes.buffer);
+          return { ok: true, bytes: bytes.length, png: bytes[0] === 137 && bytes[1] === 80, width: dimensions.getUint32(16), height: dimensions.getUint32(20) };
+        } catch (error) {
+          return { ok: false, code: ['IMAGE_EDIT_QUOTA', 'IMAGE_AUTH_REJECTED', 'IMAGE_REFERENCE_UNSUPPORTED', 'IMAGE_RATE_LIMIT'].includes(String(error)) ? String(error) : 'IMAGE_REQUEST_FAILED' };
+        }
+      }, connection);
+      liveProvider = { kind: 'reference-image-edit', model: connection.model, requests: 1, referenceImages: 1, ...result, imagesSaved: false, credentialsSaved: false };
+      if (result.ok) {
+        expect(result.png).toBe(true); expect(result.bytes).toBeGreaterThan(100);
+        checks.push('real provider returned PNG for a native reference-image edit');
+      } else {
+        // Report the block separately; passing synthetic checks do not imply
+        // successful real-provider image editing.
+        expect(result.code).toBe('IMAGE_EDIT_QUOTA');
+      }
+    }
     if (values['provider-env']) {
       const config = parseEnv(await readFile(path.resolve(values['provider-env']), 'utf8'));
       const connection = {

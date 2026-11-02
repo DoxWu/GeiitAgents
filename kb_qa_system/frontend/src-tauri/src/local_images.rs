@@ -17,17 +17,31 @@ enum GeneratedImage {
 fn parse_image_result(body: &[u8], endpoint: &Url) -> Result<GeneratedImage, String> {
     let value: serde_json::Value =
         serde_json::from_slice(body).map_err(|_| "Invalid image response")?;
-    let images = value["data"]
-        .as_array()
-        .filter(|items| items.len() == 1)
-        .ok_or("Invalid image response")?;
-    if let Some(encoded) = images[0]["b64_json"]
+    let image = if let Some(images) = value["data"].as_array().filter(|items| items.len() == 1) {
+        images[0].clone()
+    } else {
+        let choices = value["output"]["choices"]
+            .as_array()
+            .filter(|items| items.len() == 1)
+            .ok_or("Invalid image response")?;
+        let images: Vec<&str> = choices[0]["message"]["content"]
+            .as_array()
+            .ok_or("Invalid image response")?
+            .iter()
+            .filter_map(|part| part["image"].as_str())
+            .collect();
+        if images.len() != 1 {
+            return Err("Invalid image response".into());
+        }
+        serde_json::json!({"url": images[0]})
+    };
+    if let Some(encoded) = image["b64_json"]
         .as_str()
         .filter(|text| !text.is_empty() && text.len() <= 2_100_000)
     {
         return Ok(GeneratedImage::Embedded(encoded.into()));
     }
-    let value = images[0]["url"]
+    let value = image["url"]
         .as_str()
         .filter(|url| !url.is_empty() && url.len() <= 2048)
         .ok_or("Missing image data")?;
@@ -204,13 +218,170 @@ fn image_mime(bytes: &[u8]) -> Option<&'static str> {
 
 pub fn validate_size(size: &str) -> Result<(), String> {
     let dimensions: Vec<&str> = size.split('x').collect();
-    if dimensions.len() != 2 || dimensions.iter().any(|value| {
-        value.is_empty() || !value.bytes().all(|c| c.is_ascii_digit())
-            || value.parse::<u32>().map_or(true, |n| !(512..=2048).contains(&n) || n % 16 != 0 || n.to_string() != *value)
-    }) {
+    if dimensions.len() != 2
+        || dimensions.iter().any(|value| {
+            value.is_empty()
+                || !value.bytes().all(|c| c.is_ascii_digit())
+                || value.parse::<u32>().map_or(true, |n| {
+                    !(512..=2048).contains(&n) || n % 16 != 0 || n.to_string() != *value
+                })
+        })
+    {
         return Err("Invalid image size".into());
     }
     Ok(())
+}
+
+fn reference_bytes(references: &[String]) -> Result<Vec<(&'static str, Vec<u8>)>, String> {
+    if references.len() > 2 {
+        return Err("Invalid reference images".into());
+    }
+    references
+        .iter()
+        .map(|image| {
+            if image.len() > 2_000_050 {
+                return Err("Invalid reference images".into());
+            }
+            let (header, encoded) = image.split_once(',').ok_or("Invalid reference images")?;
+            let mime = match header {
+                "data:image/png;base64" => "image/png",
+                "data:image/jpeg;base64" => "image/jpeg",
+                "data:image/webp;base64" => "image/webp",
+                _ => return Err("Invalid reference images".into()),
+            };
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| "Invalid reference images")?;
+            if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES || image_mime(&bytes) != Some(mime)
+            {
+                return Err("Invalid reference images".into());
+            }
+            Ok((mime, bytes))
+        })
+        .collect()
+}
+
+fn dashscope_endpoint(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or("");
+    [
+        "dashscope.aliyuncs.com",
+        "dashscope-intl.aliyuncs.com",
+        "dashscope-us.aliyuncs.com",
+    ]
+    .contains(&host)
+        || [
+            ".cn-beijing.maas.aliyuncs.com",
+            ".ap-southeast-1.maas.aliyuncs.com",
+        ]
+        .iter()
+        .any(|suffix| {
+            host.strip_suffix(suffix).is_some_and(|prefix| {
+                !prefix.is_empty()
+                    && prefix
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+            })
+        })
+}
+
+fn image_request(
+    client: &reqwest::Client,
+    mut url: Url,
+    model: &str,
+    prompt: &str,
+    size: &str,
+    references: &[String],
+) -> Result<reqwest::RequestBuilder, String> {
+    let images = reference_bytes(references)?;
+    if images.is_empty() {
+        return Ok(client.post(url).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size, "response_format": "b64_json" })));
+    }
+    if dashscope_endpoint(&url) {
+        url.set_path("/api/v1/services/aigc/multimodal-generation/generation");
+        let mut content: Vec<serde_json::Value> = references
+            .iter()
+            .map(|image| serde_json::json!({"image": image}))
+            .collect();
+        content.push(serde_json::json!({"text": prompt}));
+        return Ok(client.post(url).json(&serde_json::json!({ "model": model, "input": {"messages": [{"role": "user", "content": content}]},
+            "parameters": {"n": 1, "size": size.replace('x', "*"), "prompt_extend": false, "watermark": false} })));
+    }
+    let path = url
+        .path()
+        .strip_suffix("images/generations")
+        .ok_or("Invalid image endpoint")?
+        .to_owned();
+    url.set_path(&format!("{path}images/edits"));
+    // Bounded multipart with fixed field/filenames; avoid adding platform dependencies.
+    // Ensure the delimiter cannot occur in user text or decoded image bytes.
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut sequence = 0;
+    let boundary = loop {
+        let candidate = format!("geiit-image-{nonce:x}-{sequence}");
+        if !model.contains(&candidate)
+            && !prompt.contains(&candidate)
+            && images.iter().all(|(_, bytes)| {
+                !bytes
+                    .windows(candidate.len())
+                    .any(|part| part == candidate.as_bytes())
+            })
+        {
+            break candidate;
+        }
+        sequence += 1;
+    };
+    let mut body = Vec::new();
+    for (field, value) in [
+        ("model", model),
+        ("prompt", prompt),
+        ("n", "1"),
+        ("size", size),
+        ("response_format", "b64_json"),
+    ] {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n{value}\r\n").as_bytes());
+    }
+    for (index, (mime, bytes)) in images.iter().enumerate() {
+        let field = if images.len() == 1 {
+            "image"
+        } else {
+            "image[]"
+        };
+        let extension = if *mime == "image/jpeg" {
+            "jpg"
+        } else {
+            &mime[6..]
+        };
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"reference-{}.{extension}\"\r\nContent-Type: {mime}\r\n\r\n", index + 1).as_bytes());
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Ok(client
+        .post(url)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body))
+}
+
+fn provider_error(status: u16, body: &[u8], references: bool) -> &'static str {
+    let value: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    let code = value["code"]
+        .as_str()
+        .or_else(|| value["error"]["code"].as_str());
+    if code == Some("AllocationQuota.FreeTierOnly") {
+        return "IMAGE_EDIT_QUOTA";
+    }
+    match status {
+        401 | 403 => "IMAGE_AUTH_REJECTED",
+        429 => "IMAGE_RATE_LIMIT",
+        400 | 404 | 405 | 415 | 422 if references => "IMAGE_REFERENCE_UNSUPPORTED",
+        _ => "Image generation failed",
+    }
 }
 
 pub async fn generate(
@@ -219,6 +390,7 @@ pub async fn generate(
     model: String,
     prompt: String,
     size: String,
+    references: Vec<String>,
 ) -> Result<String, String> {
     validate_size(&size)?;
     let client = reqwest::Client::builder()
@@ -227,7 +399,7 @@ pub async fn generate(
         .timeout(Duration::from_secs(115))
         .build()
         .map_err(|_| "Image client unavailable")?;
-    let mut request = client.post(url.clone()).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size, "response_format": "b64_json" }));
+    let mut request = image_request(&client, url.clone(), &model, &prompt, &size, &references)?;
     if !api_key.is_empty() {
         request = request.bearer_auth(api_key);
     }
@@ -235,9 +407,7 @@ pub async fn generate(
         .send()
         .await
         .map_err(|_| "Image generation failed")?;
-    if !response.status().is_success() {
-        return Err("Image generation failed".into());
-    }
+    let status = response.status();
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
@@ -249,10 +419,21 @@ pub async fn generate(
         }
         bytes.extend_from_slice(&chunk);
     }
+    if !status.is_success() {
+        return Err(provider_error(status.as_u16(), &bytes, !references.is_empty()).into());
+    }
     let provider_endpoint = url;
     let image = parse_image_result(&bytes, &provider_endpoint)?;
     match image {
-        GeneratedImage::Embedded(encoded) => Ok(encoded),
+        GeneratedImage::Embedded(encoded) => {
+            let bytes = STANDARD
+                .decode(&encoded)
+                .map_err(|_| "Invalid image data")?;
+            if bytes.len() > MAX_IMAGE_BYTES || image_mime(&bytes).is_none() {
+                return Err("Invalid image data".into());
+            }
+            Ok(encoded)
+        }
         GeneratedImage::Url(image_url) => {
             let bytes = download_image(image_url, &provider_endpoint).await?;
             if bytes.len() > MAX_IMAGE_BYTES {
@@ -267,10 +448,136 @@ pub async fn generate(
 mod tests {
     use super::*;
 
+    fn reference() -> String {
+        format!(
+            "data:image/png;base64,{}",
+            STANDARD.encode(b"\x89PNG\r\n\x1a\n")
+        )
+    }
+
+    #[test]
+    fn sends_original_reference_bytes_in_multipart_edits() {
+        let client = reqwest::Client::new();
+        for count in [1, 2] {
+            let endpoint = Url::parse("http://127.0.0.1:9001/v1/images/generations").unwrap();
+            let request = image_request(
+                &client,
+                endpoint,
+                "edit",
+                "keep subject",
+                "1536x864",
+                &vec![reference(); count],
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+            assert_eq!(
+                request.url().as_str(),
+                "http://127.0.0.1:9001/v1/images/edits"
+            );
+            assert!(request.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/form-data; boundary="));
+            let body = request.body().unwrap().as_bytes().unwrap();
+            assert_eq!(
+                body.windows(8)
+                    .filter(|part| *part == b"\x89PNG\r\n\x1a\n")
+                    .count(),
+                count
+            );
+            let text = String::from_utf8_lossy(body);
+            assert!(text.contains(if count == 1 {
+                "name=\"image\""
+            } else {
+                "name=\"image[]\""
+            }));
+            assert!(text.contains("1536x864") && text.contains("keep subject"));
+        }
+    }
+
+    #[test]
+    fn sends_qwen_reference_data_to_the_same_official_origin() {
+        let client = reqwest::Client::new();
+        let endpoint = Url::parse(
+            "https://ws-fixture.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/images/generations",
+        )
+        .unwrap();
+        let request = image_request(
+            &client,
+            endpoint,
+            "qwen-image-3.0-pro",
+            "keep subject",
+            "1536x864",
+            &[reference(), reference()],
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(request.url().as_str(), "https://ws-fixture.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
+        let body: serde_json::Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(
+            body["input"]["messages"][0]["content"],
+            serde_json::json!([{"image": reference()}, {"image": reference()}, {"text": "keep subject"}])
+        );
+        assert_eq!(body["parameters"]["size"], "1536*864");
+        let result = parse_image_result(br#"{"output":{"choices":[{"message":{"content":[{"image":"https://cdn.example/result.png"}]}}]}}"#, request.url()).unwrap();
+        assert!(
+            matches!(result, GeneratedImage::Url(url) if url.host_str() == Some("cdn.example"))
+        );
+        assert!(!dashscope_endpoint(
+            &Url::parse("https://dashscope.aliyuncs.com.evil.example/v1").unwrap()
+        ));
+    }
+
+    #[test]
+    fn rejects_mismatched_oversized_and_excessive_references() {
+        assert!(reference_bytes(&vec![reference(); 3]).is_err());
+        assert!(reference_bytes(&[reference().replace("image/png", "image/jpeg")]).is_err());
+        assert!(reference_bytes(&["https://cdn.example/input.png".into()]).is_err());
+        assert!(reference_bytes(&[format!(
+            "data:image/png;base64,{}",
+            STANDARD.encode(vec![0u8; MAX_IMAGE_BYTES + 1])
+        )])
+        .is_err());
+    }
+
+    #[test]
+    fn maps_only_fixed_provider_errors() {
+        assert_eq!(
+            provider_error(
+                403,
+                br#"{"code":"AllocationQuota.FreeTierOnly","message":"secret"}"#,
+                true
+            ),
+            "IMAGE_EDIT_QUOTA"
+        );
+        assert_eq!(
+            provider_error(404, b"secret", true),
+            "IMAGE_REFERENCE_UNSUPPORTED"
+        );
+        assert_eq!(
+            provider_error(500, b"secret", true),
+            "Image generation failed"
+        );
+    }
+
     #[test]
     fn validates_dimensions_before_provider_requests() {
-        for size in ["1024x1024", "1536x864", "864x1536", "2048x2048"] { assert!(validate_size(size).is_ok()); }
-        for size in ["1x1", "1025x1024", "4096x1024", "1024x1024x1", " 1024x1024", "0512x1024"] { assert!(validate_size(size).is_err()); }
+        for size in ["1024x1024", "1536x864", "864x1536", "2048x2048"] {
+            assert!(validate_size(size).is_ok());
+        }
+        for size in [
+            "1x1",
+            "1025x1024",
+            "4096x1024",
+            "1024x1024x1",
+            " 1024x1024",
+            "0512x1024",
+        ] {
+            assert!(validate_size(size).is_err());
+        }
     }
 
     #[test]

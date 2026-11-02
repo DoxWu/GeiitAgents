@@ -7,6 +7,7 @@ import json
 from urllib.parse import urlsplit
 
 import httpx
+from app.core.image_request import image_target, image_request_options, image_result, image_error_message, validate_reference_images
 
 from app.core.model_provider.config_loader import ConfigLoader
 from app.core.provider_image import (
@@ -34,7 +35,7 @@ def configured_image_endpoints() -> list[dict[str, str]]:
     ]
 
 
-def _generation_url(base_url: str) -> str:
+def _generation_url(base_url: str, resource: str = 'images/generations') -> str:
     parsed = urlsplit(base_url)
     if (
         parsed.scheme != "https"
@@ -46,7 +47,7 @@ def _generation_url(base_url: str) -> str:
         or parsed.fragment
     ):
         raise ImageGenerationError("生图 API 地址必须为有效 HTTPS 地址。")
-    return base_url.rstrip("/") + "/images/generations"
+    return base_url.rstrip("/") + "/" + resource
 
 
 def _download_provider_image_url(image_url: str) -> str:
@@ -67,13 +68,14 @@ async def _image_data_url_from_provider_url(image_url: str) -> str:
         raise ImageGenerationError("图片下载失败。") from None
 
 
-async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024x1024") -> dict[str, str]:
+async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024x1024", reference_images: list[str] | None = None) -> dict[str, str]:
     if len(prompt.strip()) == 0 or len(prompt) > 6000:
         raise ImageGenerationError("最终生图提示词需要1–6000个字符。")
     try:
         validate_image_size(size)
+        reference_images = validate_reference_images([] if reference_images is None else reference_images)
     except ValueError:
-        raise ImageGenerationError("图片尺寸无效。") from None
+        raise ImageGenerationError("图片尺寸或参考图片无效。") from None
     endpoints = [
         endpoint
         for endpoint in ConfigLoader.load().providers.get("image_generation", [])
@@ -85,9 +87,12 @@ async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024
     if start is None:
         raise ImageGenerationError("所选服务端生图模型不可用。")
 
+    failure = '生图请求失败，请检查模型配置或稍后重试。'
     for endpoint in endpoints[start:]:
         try:
-            url = _generation_url(endpoint.api_base)
+            base, resource, dashscope = image_target(endpoint.api_base, reference_images)
+            url = _generation_url(base, resource)
+            options = image_request_options(endpoint.model, prompt.strip(), size, reference_images, dashscope)
             timeout = httpx.Timeout(60.0, connect=5.0)
             async with httpx.AsyncClient(
                 timeout=timeout, follow_redirects=False, trust_env=False
@@ -96,34 +101,30 @@ async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024
                     "POST",
                     url,
                     headers={"Authorization": f"Bearer {endpoint.api_key}"},
-                    json={
-                        "model": endpoint.model,
-                        "prompt": prompt.strip(),
-                        "n": 1,
-                        "size": size,
-                        "response_format": "b64_json",
-                    },
+                    **options,
                 ) as response:
-                    if response.status_code < 200 or response.status_code >= 300:
-                        continue
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body.extend(chunk)
                         if len(body) > MAX_RESPONSE_BYTES:
                             raise ImageGenerationError("图片服务响应超出大小限制。")
-            payload = json.loads(body)
-            data = payload.get("data")
-            if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+            try:
+                payload = json.loads(body)
+            except ValueError:
+                payload = {}
+            if response.status_code < 200 or response.status_code >= 300:
+                failure = image_error_message(response.status_code, payload, bool(reference_images))
                 continue
-            encoded = data[0].get("b64_json")
+            data = image_result(payload)
+            encoded = data.get("b64_json")
             if isinstance(encoded, str):
                 try:
                     data_url = _image_data_url(encoded)
                 except ImageGenerationError:
                     continue
-            elif isinstance(data[0].get("url"), str):
+            elif isinstance(data.get("url"), str):
                 try:
-                    data_url = await _image_data_url_from_provider_url(data[0]["url"])
+                    data_url = await _image_data_url_from_provider_url(data["url"])
                 except ImageGenerationError:
                     continue
             else:
@@ -133,4 +134,4 @@ async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024
             continue
         except Exception:
             continue
-    raise ImageGenerationError("生图请求失败，请检查模型配置或稍后重试。")
+    raise ImageGenerationError(failure)

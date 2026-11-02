@@ -192,7 +192,7 @@ fn cancel_local_model(request_id: String, state: State<'_, Requests>) {
 }
 
 #[tauri::command]
-async fn generate_local_image(request_id: String, base_url: String, api_key: String, model: String, prompt: String, direct: Option<bool>, size: Option<String>, state: State<'_, Requests>) -> Result<String, String> {
+async fn generate_local_image(request_id: String, base_url: String, api_key: String, model: String, prompt: String, direct: Option<bool>, size: Option<String>, reference_images: Option<Vec<String>>, state: State<'_, Requests>) -> Result<String, String> {
     let url = model_endpoint(&base_url, "images/generations", direct.unwrap_or(false))?;
     let size = size.unwrap_or_else(|| "1024x1024".into());
     local_images::validate_size(&size)?;
@@ -205,7 +205,7 @@ async fn generate_local_image(request_id: String, base_url: String, api_key: Str
         if active.len() >= 4 || active.contains_key(&request_id) { return Err("Too many active requests".into()); }
         active.insert(request_id.clone(), cancel);
     }
-    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = local_images::generate(url, api_key, model, prompt, size) => result };
+    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = local_images::generate(url, api_key, model, prompt, size, reference_images.unwrap_or_default()) => result };
     if let Ok(mut active) = state.0.lock() { active.remove(&request_id); }
     result
 }

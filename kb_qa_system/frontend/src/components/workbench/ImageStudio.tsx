@@ -109,7 +109,7 @@ export function ImageStudio() {
         </div>
         <p className="text-xs text-ink-secondary">每个任务独立保存构图、提示词、参考图及生成结果；切换时取消当前生图。最多50个任务，所有任务共用本机图片容量。</p>
       </div>
-      <p className="text-sm text-ink-secondary">设置画布尺寸、背景和区域构图。生图会自动携带当前区域的坐标、大小、旋转与层级；参考图可先交给视觉模型整理为描述。当前采用文字生图，构图属于提示约束，模型仍可能产生位置偏差。</p>
+      <p className="text-sm text-ink-secondary">设置画布尺寸、背景和区域构图。生图会携带当前区域的坐标、大小、旋转与层级，并直接发送上传的参考原图；视觉整理提示词为可选步骤。参考图需要模型支持图片编辑，构图仍可能产生位置偏差。</p>
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-2">
         <div className="grid min-w-0 content-start gap-4" data-image-editor>
           <ImageCanvasSettings value={canvas} onChange={canvas => setDraft(d => ({ ...d, canvas }))} />
@@ -128,7 +128,7 @@ export function ImageStudio() {
           <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />允许本次发送构图、区域描述及参考图到所选模型</label>
           <button type="button" className="work-command justify-self-start" disabled={!model || !consent} onClick={() => void summarize()}>根据构图整理提示词</button>
           {promptError && <p role="alert" className="text-xs text-danger">{promptError}</p>}
-          <ImageGenerator key={taskId} contextKey={taskId} requestPrompt={requestPrompt} size={canvas} disabled={Boolean(promptError) || switching} onImage={image => {
+          <ImageGenerator key={taskId} contextKey={taskId} requestPrompt={requestPrompt} size={canvas} referenceImages={draft.references} disabled={Boolean(promptError) || switching} onImage={image => {
             if (taskEpoch.current !== currentEpoch || activeTask.current !== taskId) return;
             setDraft(validateImageStudio({ ...latest.current, result: image })); setNotice('图片已生成，草稿正在加密保存。');
           }} />

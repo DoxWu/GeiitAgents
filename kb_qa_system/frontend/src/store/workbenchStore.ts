@@ -186,7 +186,7 @@ interface WorkbenchState {
   testProfile: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileToolSupport: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileVision: (id: string, signal?: AbortSignal) => Promise<boolean>;
-  generateImage: (profileId: string, prompt: string, allowCloud: boolean, signal?: AbortSignal, size?: ImageSize) => Promise<WorkImage>;
+  generateImage: (profileId: string, prompt: string, allowCloud: boolean, signal?: AbortSignal, size?: ImageSize, references?: WorkImage[]) => Promise<WorkImage>;
   discoverProfileModels: (input: ModelEndpoint, apiKey: string, clearKey: boolean, signal: AbortSignal) => Promise<ModelCatalog>;
   newConversation: (profileId?: string) => string;
   select: (id: string) => void;
@@ -1163,13 +1163,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
     return supported;
   },
-  generateImage: async (profileId, prompt, allowCloud, signal, size) => {
+  generateImage: async (profileId, prompt, allowCloud, signal, size, references) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const profile = get().profiles.find(item => item.id === profileId), secret = secrets.find(item => item.id === profileId);
     if (!profile || !secret || !profile.imageModel) throw new Error('请选择已配置生图模型的连接。');
-    if (profile.mode !== 'local' && !allowCloud) throw new Error('发送图片生成描述到云端前需要明确授权。');
+    if (profile.mode !== 'local' && !allowCloud) throw new Error('发送图片生成描述及参考图到云端前需要明确授权。');
     const epoch = generation, fingerprint = JSON.stringify(secret);
-    const image = await modelCheck(profile.mode, signal, requestSignal => generateWorkImage(profile, secret.apiKey, prompt, requestSignal, size), 120_000);
+    const image = await modelCheck(profile.mode, signal, requestSignal => generateWorkImage(profile, secret.apiKey, prompt, requestSignal, size, references), 120_000);
     if (epoch !== generation || !get().unlocked || JSON.stringify(secrets.find(item => item.id === profileId)) !== fingerprint) throw new Error('模型连接或密钥库状态已改变，图片未返回。');
     return image;
   },

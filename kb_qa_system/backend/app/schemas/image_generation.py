@@ -2,6 +2,7 @@
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.core.image_request import validate_reference_images
 
 
 def validate_image_size(size: str) -> str:
@@ -16,6 +17,12 @@ class ImageGenerationOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str = Field(min_length=1, max_length=6000)
     size: str = "1024x1024"
+    reference_images: list[str] = Field(default_factory=list, max_length=2)
+
+    @field_validator("reference_images")
+    @classmethod
+    def valid_references(cls, value: list[str]) -> list[str]:
+        return validate_reference_images(value)
 
     @field_validator("size")
     @classmethod

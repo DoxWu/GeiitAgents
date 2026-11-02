@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator
 from urllib.parse import urlsplit
 
 import httpx
+from app.core.image_request import image_target, image_request_options, image_result, image_error_message
 
 from app.core.model_text_stream import read_text_response
 from app.core.provider_image import ProviderImageError as ImageGenerationError
@@ -48,7 +49,7 @@ async def public_endpoint(base_url: str, resource: str = "chat/completions") -> 
             raise ValueError
         ip = ips[0]
         authority = f"[{ip}]" if ip.version == 6 else str(ip)
-        if resource not in ("chat/completions", "models", "images/generations"):
+        if resource not in ("chat/completions", "models", "images/generations", "images/edits", "api/v1/services/aigc/multimodal-generation/generation"):
             raise ValueError
         path = parsed.path.rstrip("/") + "/" + resource
         return f"https://{authority}{path}", hostname, hostname
@@ -108,32 +109,30 @@ def _validate_api_key(api_key: str) -> None:
 async def generate_private_image(request: PrivateImageGeneration, api_key: str) -> dict:
     """Return one bounded image, downloading temporary public provider URLs when needed."""
     _validate_api_key(api_key)
-    url, host, tls_name = await public_endpoint(request.base_url, "images/generations")
-    body = {"model": request.model, "prompt": request.prompt, "n": 1, "size": request.size, "response_format": "b64_json"}
+    base, resource, dashscope = image_target(request.base_url, request.reference_images)
+    url, host, tls_name = await public_endpoint(base, resource)
+    options = image_request_options(request.model, request.prompt, request.size, request.reference_images, dashscope)
     try:
         async with asyncio.timeout(120):
             async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=httpx.Timeout(90, connect=10)) as client:
                 async with client.stream("POST", url, headers={"Authorization": f"Bearer {api_key}", "Host": host},
-                                         json=body, extensions={"sni_hostname": tls_name}) as response:
-                    if response.status_code != 200:
-                        code = response.status_code
-                        if code in (401, 403):
-                            raise PrivateModelError(502, "图像服务拒绝认证，请检查 API Key 和模型权限。")
-                        if code == 429:
-                            raise PrivateModelError(429, "图像服务额度或速率已达上限。")
-                        raise PrivateModelError(502, "图像服务请求失败，请检查接口地址和生图模型名称。")
+                                         **options, extensions={"sni_hostname": tls_name}) as response:
                     chunks = bytearray()
                     async for chunk in response.aiter_bytes():
                         chunks.extend(chunk)
                         if len(chunks) > 3 * 1024 * 1024:
                             raise PrivateModelError(502, "图像服务响应超过大小限制。")
-                    data = json.loads(chunks)
-                    images = data.get("data") if isinstance(data, dict) else None
-                    if not isinstance(images, list) or len(images) != 1 or not isinstance(images[0], dict):
-                        raise ValueError
-                    encoded = images[0].get("b64_json")
-                    if encoded is None and isinstance(images[0].get("url"), str):
-                        data_url = await image_data_url_from_provider_url(images[0]["url"])
+                    try:
+                        data = json.loads(chunks)
+                    except ValueError:
+                        data = {}
+                    if response.status_code != 200:
+                        raise PrivateModelError(429 if response.status_code == 429 else 502,
+                                                image_error_message(response.status_code, data, bool(request.reference_images)))
+                    image = image_result(data)
+                    encoded = image.get("b64_json")
+                    if encoded is None and isinstance(image.get("url"), str):
+                        data_url = await image_data_url_from_provider_url(image["url"])
                         encoded = data_url.split(",", 1)[1]
                     raw = base64.b64decode(encoded, validate=True)
                     if len(raw) > 1_500_000:

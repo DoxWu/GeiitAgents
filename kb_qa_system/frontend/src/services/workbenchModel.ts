@@ -6,6 +6,7 @@ import { finishReason, readModelResponse, type FinishReason } from './modelStrea
 import { imageType, workImageFromDataUrl } from './workbenchImages';
 import type { WorkImage } from '@/types/workbench';
 import { imageSizeValue, validateImagePrompt, type ImageSize } from './imageGeneration';
+import { imageReferenceData, imageRequest, imageResult, imageRequestError, IMAGE_REQUEST_ERRORS } from './imageRequest';
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
@@ -179,15 +180,17 @@ export async function completeModel(
   }
 }
 
-export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal, dimensions?: ImageSize): Promise<WorkImage> {
+export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal, dimensions?: ImageSize, references?: WorkImage[]): Promise<WorkImage> {
   const model = validateImageModel(profile.imageModel);
   const baseUrl = validateProfile(profile);
   if (!model) throw new Error('请先在模型连接中配置兼容的生图模型名称。');
   prompt = validateImagePrompt(prompt);
   const size = imageSizeValue(dimensions);
+  const referenceImages = imageReferenceData(references);
+  if (signal.aborted) throw new DOMException('已取消', 'AbortError');
   if (profile.mode === 'relay') {
     requirePrivateRelay(apiKey);
-    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt, size }, {
+    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt, size, ...(referenceImages.length ? { reference_images: referenceImages } : {}) }, {
       signal, headers: { 'X-Model-Api-Key': apiKey }, cache: 'no-store', redirect: 'error',
     });
     return workImageFromDataUrl(result.data_url, 'generated-image.png');
@@ -198,7 +201,7 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     signal.addEventListener('abort', abort, { once: true });
     try {
       if (signal.aborted) throw new Error();
-      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt, size, direct: profile.mode === 'direct' });
+      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt, size, referenceImages, direct: profile.mode === 'direct' });
       if (signal.aborted || typeof encoded !== 'string' || encoded.length > 2_000_000) throw new Error();
       const mime = imageType(Uint8Array.from(atob(encoded), character => character.charCodeAt(0)));
       if (!mime) throw new Error();
@@ -209,6 +212,7 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
       // permission or an older installed host does not implement it. Never
       // display arbitrary native errors, which could contain request secrets.
       const message = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+      if (Object.prototype.hasOwnProperty.call(IMAGE_REQUEST_ERRORS, message)) throw new Error(IMAGE_REQUEST_ERRORS[message]);
       if (/\bgenerate_local_image\b/i.test(message)) {
         if (/not allowed|denied|not permitted|forbidden/i.test(message)) throw new Error('当前桌面版本未授予生图调用权限，请更新客户端后重试。');
         if (/not found|unknown command/i.test(message)) throw new Error('当前桌面版本不支持生图命令，请更新客户端后重试。');
@@ -219,18 +223,17 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     finally { signal.removeEventListener('abort', abort); }
   }
   try {
-    const response = await fetch(`${baseUrl}/images/generations`, { method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
-      headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({ model, prompt, n: 1, size, response_format: 'b64_json' }) });
-    if (!response.ok) { await response.body?.cancel(); throw new Error(); }
-    const data = await readBoundedBody(response, 3 * 1024 * 1024, signal);
-    const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)) as { data?: { b64_json?: unknown; url?: unknown }[] };
-    if (!Array.isArray(payload.data) || payload.data.length !== 1) throw new Error();
-    const dataUrl = await providerImageDataUrl(payload.data[0], baseUrl, signal);
+    const request = imageRequest(baseUrl, model, prompt, size, referenceImages);
+    const response = await fetch(request.url, { method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
+      headers: { ...(request.json ? { 'Content-Type': 'application/json' } : {}), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) }, body: request.body });
+    const data = response.body ? await readBoundedBody(response, 3 * 1024 * 1024, signal) : new Uint8Array();
+    if (!response.ok) throw imageRequestError(response.status, data, referenceImages.length > 0);
+    const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data));
+    const dataUrl = await providerImageDataUrl(imageResult(payload), baseUrl, signal);
     return workImageFromDataUrl(dataUrl, 'generated-image.png');
   } catch (error) {
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
-    if (error instanceof Error && ['生成图片下载失败。', '图片服务返回的图片地址无效。', '图片服务返回了不安全的图片地址。',
+    if (error instanceof Error && [...Object.values(IMAGE_REQUEST_ERRORS), '生成图片下载失败。', '图片服务返回的图片地址无效。', '图片服务返回了不安全的图片地址。',
       '图片服务返回了无效的图片数据。', '图片服务返回了不支持的图片格式。', '图片服务响应无效或超过大小限制。',
       '图片服务响应超过大小限制。', '图片服务没有返回可用图片。'].includes(error.message)) throw error;
     throw new Error('生图接口请求失败或未返回可用图片，请检查模型、接口兼容性和跨域设置。');

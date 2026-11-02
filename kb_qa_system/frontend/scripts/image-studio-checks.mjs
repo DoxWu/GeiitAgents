@@ -19,7 +19,11 @@ export async function checkImageStudio(page, output, bodies, png, checks = []) {
   expect(bodies.at(-1).prompt).toContain('左上角(14.79%,16.11%)');
   expect(bodies.at(-1).prompt).toContain('旋转30°，层3');
   expect(bodies.at(-1).prompt).toContain('#d8e8f8');
+  expect(bodies.at(-1).referenceCount).toBe(1);
   checks.push('native image request includes selected size, background and exact geometry');
+  checks.push('uploaded reference original reaches the native image edit API without vision summarization');
+  await studio.getByText(/本次将直接发送1张参考原图/).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'reference-forwarding.png') });
   await button('新建图片任务').click();
   await expect(field('图片提示词')).toHaveValue('');
   await expect(field('图片比例')).toHaveValue('1024x1024');

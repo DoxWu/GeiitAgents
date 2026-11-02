@@ -61,7 +61,7 @@ export function compositionPrompt(draft: ImageStudioDraft, prompt = draft.prompt
   const canvas = imageCanvas(draft.canvas);
   const regions = validateShapes(draft.shapes).sort((a, b) => a.layer - b.layer).map((shape, index) => {
     const n = (value: number) => Math.round(value * 100) / 100;
-    return `区域${index + 1}：左上角(${n(shape.x)}%,${n(shape.y)}%)，宽${n(shape.w)}%、高${n(shape.h)}%，旋转${n(shape.rotation)}°，层${shape.layer}，颜色${shape.color}，示意形状${shape.kind}。主题：${shape.description || '未指定'}。${shape.text ? `需要展示的文字：${JSON.stringify(shape.text)}。` : '不绘制示意标签文字。'}${shape.imageIndex !== undefined ? `参考素材${shape.imageIndex + 1}已用于整理文字描述，生图接口不接收原图。` : ''}`;
+    return `区域${index + 1}：左上角(${n(shape.x)}%,${n(shape.y)}%)，宽${n(shape.w)}%、高${n(shape.h)}%，旋转${n(shape.rotation)}°，层${shape.layer}，颜色${shape.color}，示意形状${shape.kind}。主题：${shape.description || '未指定'}。${shape.text ? `需要展示的文字：${JSON.stringify(shape.text)}。` : '不绘制示意标签文字。'}${shape.imageIndex !== undefined ? `使用随请求提供的图${shape.imageIndex + 1}作为此区域的参考素材。` : ''}`;
   });
   return validateImagePrompt([
     `内容与风格：${prompt.trim() || '根据下列区域主题生成图片。'}`,
