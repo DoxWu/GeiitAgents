@@ -3,24 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import json
-import time
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.core.model_provider.config_loader import ConfigLoader
+from app.core.provider_image import (
+    MAX_IMAGE_BYTES,
+    MAX_IMAGE_DOWNLOAD_SECONDS,
+    download_provider_image_url,
+)
+from app.core.provider_image import (
+    ProviderImageError as ImageGenerationError,
+)
+from app.core.provider_image import (
+    image_data_url as _image_data_url,
+)
 from app.core.public_http import public_get
 
 MAX_RESPONSE_BYTES = 3 * 1024 * 1024
-MAX_IMAGE_BYTES = 1_500_000
-MAX_IMAGE_DOWNLOAD_SECONDS = 15
-
-
-class ImageGenerationError(Exception):
-    pass
 
 
 def configured_image_endpoints() -> list[dict[str, str]]:
@@ -29,24 +31,6 @@ def configured_image_endpoints() -> list[dict[str, str]]:
         for endpoint in ConfigLoader.load().providers.get("image_generation", [])
         if endpoint.enabled and endpoint.model and endpoint.api_key and endpoint.api_base
     ]
-
-
-def _image_data_url(encoded: str) -> str:
-    try:
-        image = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError):
-        raise ImageGenerationError("图片服务返回无效内容。") from None
-    if not image or len(image) > MAX_IMAGE_BYTES:
-        raise ImageGenerationError("图片服务返回的文件超出大小限制。")
-    if image.startswith(b"\x89PNG\r\n\x1a\n"):
-        mime = "image/png"
-    elif image.startswith(b"\xff\xd8\xff"):
-        mime = "image/jpeg"
-    elif len(image) >= 12 and image[:4] == b"RIFF" and image[8:12] == b"WEBP":
-        mime = "image/webp"
-    else:
-        raise ImageGenerationError("图片服务返回了不支持的格式。")
-    return f"data:{mime};base64,{encoded}"
 
 
 def _generation_url(base_url: str) -> str:
@@ -65,60 +49,12 @@ def _generation_url(base_url: str) -> str:
 
 
 def _download_provider_image_url(image_url: str) -> str:
-    try:
-        parsed = urlsplit(image_url)
-        port = parsed.port
-    except ValueError:
-        raise ImageGenerationError("图片服务返回了无效地址。") from None
-    if (
-        len(image_url) > 2048
-        or parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or port not in {None, 443}
-        or parsed.fragment
-    ):
-        raise ImageGenerationError("图片服务返回了无效地址。")
-
-    try:
-        deadline = time.monotonic() + MAX_IMAGE_DOWNLOAD_SECONDS
-        response = public_get(
-            image_url,
-            headers={"Accept": "image/png,image/jpeg,image/webp"},
-            timeout=2,
-            stream=True,
-        )
-    except Exception:
-        raise ImageGenerationError("图片下载失败。") from None
-    try:
-        if time.monotonic() > deadline:
-            raise ImageGenerationError("图片下载超时。")
-        if response.status_code != 200:
-            raise ImageGenerationError("图片下载失败。")
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                length = int(content_length)
-                if length < 1 or length > MAX_IMAGE_BYTES:
-                    raise ImageGenerationError("图片服务返回的文件超出大小限制。")
-            except ValueError:
-                raise ImageGenerationError("图片服务返回了无效文件大小。") from None
-
-        image = bytearray()
-        for chunk in response.iter_content(chunk_size=256 * 1024):
-            if time.monotonic() > deadline:
-                raise ImageGenerationError("图片下载超时。")
-            if not chunk:
-                continue
-            image.extend(chunk)
-            if len(image) > MAX_IMAGE_BYTES:
-                raise ImageGenerationError("图片服务返回的文件超出大小限制。")
-    finally:
-        response.close()
-
-    encoded = base64.b64encode(image).decode("ascii")
-    return _image_data_url(encoded)
+    return download_provider_image_url(
+        image_url,
+        request_get=public_get,
+        max_image_bytes=MAX_IMAGE_BYTES,
+        max_download_seconds=MAX_IMAGE_DOWNLOAD_SECONDS,
+    )
 
 
 async def _image_data_url_from_provider_url(image_url: str) -> str:

@@ -37,6 +37,65 @@ export function validateImageModel(value: string | undefined): string | undefine
   return model;
 }
 
+async function readBoundedBody(response: Response, limit: number, signal: AbortSignal): Promise<Uint8Array> {
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  if (declared > limit || !response.body) throw new Error('图片服务响应无效或超过大小限制。');
+  const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > limit) throw new Error('图片服务响应超过大小限制。');
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    if (signal.aborted) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  return bytes;
+}
+
+function providerImageUrl(value: string, baseUrl: string): string {
+  if (value.length > 2048) throw new Error('图片服务返回的图片地址无效。');
+  let url: URL;
+  try { url = new URL(value, `${baseUrl}/`); } catch { throw new Error('图片服务返回的图片地址无效。'); }
+  if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.hash || url.port && url.port !== '443'
+      || url.hostname.startsWith('[') || /^\d+(?:\.\d+){3}$/.test(url.hostname)
+      || ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.hostname.endsWith('.localhost') || url.hostname.endsWith('.local')) {
+    throw new Error('图片服务返回了不安全的图片地址。');
+  }
+  return url.href;
+}
+
+async function providerImageDataUrl(image: { b64_json?: unknown; url?: unknown }, baseUrl: string, signal: AbortSignal): Promise<string> {
+  if (typeof image.b64_json === 'string' && image.b64_json.length <= 2_100_000) {
+    let bytes: Uint8Array;
+    try { bytes = Uint8Array.from(atob(image.b64_json), character => character.charCodeAt(0)); } catch { throw new Error('图片服务返回了无效的图片数据。'); }
+    const mime = imageType(bytes);
+    if (!mime) throw new Error('图片服务返回了不支持的图片格式。');
+    return `data:${mime};base64,${image.b64_json}`;
+  }
+  if (typeof image.url !== 'string') throw new Error('图片服务没有返回可用图片。');
+  const url = providerImageUrl(image.url, baseUrl);
+  const response = await fetch(url, { method: 'GET', signal, credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { Accept: 'image/png,image/jpeg,image/webp' } });
+  if (response.status !== 200) { await response.body?.cancel(); throw new Error('生成图片下载失败。'); }
+  const bytes = await readBoundedBody(response, 1_500_000, signal);
+  const mime = imageType(bytes);
+  if (!mime) throw new Error('图片服务返回了不支持的图片格式。');
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
 export function requirePrivateRelay(apiKey: string): void {
   const api = new URL(getAccountServer(), window.location.href);
   if (api.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(api.hostname)) {
@@ -142,7 +201,19 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
       const mime = imageType(Uint8Array.from(atob(encoded), character => character.charCodeAt(0)));
       if (!mime) throw new Error();
       return workImageFromDataUrl(`data:${mime};base64,${encoded}`, 'generated-image.png');
-    } catch { if (signal.aborted) throw new DOMException('已取消', 'AbortError'); throw new Error('生图模型请求失败，请检查模型名称、密钥与图片接口兼容性。'); }
+    } catch (error) {
+      if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+      // Tauri rejects before sending the request when a command lacks ACL
+      // permission or an older installed host does not implement it. Never
+      // display arbitrary native errors, which could contain request secrets.
+      const message = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+      if (/\bgenerate_local_image\b/i.test(message)) {
+        if (/not allowed|denied|not permitted|forbidden/i.test(message)) throw new Error('当前桌面版本未授予生图调用权限，请更新客户端后重试。');
+        if (/not found|unknown command/i.test(message)) throw new Error('当前桌面版本不支持生图命令，请更新客户端后重试。');
+      }
+      if (message === 'Too many active requests') throw new Error('当前模型任务已达并发上限，请等待其他任务结束后重试。');
+      throw new Error('生图模型请求失败，请检查模型名称、密钥与图片接口兼容性。');
+    }
     finally { signal.removeEventListener('abort', abort); }
   }
   try {
@@ -150,31 +221,17 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify({ model, prompt: prompt.trim(), n: 1, size: '1024x1024', response_format: 'b64_json' }) });
     if (!response.ok) { await response.body?.cancel(); throw new Error(); }
-    if (Number(response.headers.get('content-length') ?? 0) > 3 * 1024 * 1024 || !response.body) { await response.body?.cancel(); throw new Error(); }
-    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let total = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.length;
-        if (total > 3 * 1024 * 1024 || signal.aborted) { await reader.cancel(); throw new Error(); }
-        chunks.push(value);
-      }
-    } finally { reader.releaseLock(); }
-    const data = new Uint8Array(total); let offset = 0;
-    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
-    const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)) as { data?: { b64_json?: string }[] };
+    const data = await readBoundedBody(response, 3 * 1024 * 1024, signal);
+    const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)) as { data?: { b64_json?: unknown; url?: unknown }[] };
     if (!Array.isArray(payload.data) || payload.data.length !== 1) throw new Error();
-    const encoded = payload.data?.[0]?.b64_json;
-    if (typeof encoded !== 'string' || encoded.length > 2_100_000) throw new Error();
-    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-    const mime = imageType(bytes);
-    if (!mime) throw new Error();
-    return workImageFromDataUrl(`data:${mime};base64,${encoded}`, 'generated-image.png');
+    const dataUrl = await providerImageDataUrl(payload.data[0], baseUrl, signal);
+    return workImageFromDataUrl(dataUrl, 'generated-image.png');
   } catch (error) {
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
-    if (error instanceof Error && error.message.includes('生成图片')) throw error;
-    throw new Error('生图接口请求失败或未返回可用的内嵌图片，请检查模型、接口兼容性和跨域设置。');
+    if (error instanceof Error && ['生成图片下载失败。', '图片服务返回的图片地址无效。', '图片服务返回了不安全的图片地址。',
+      '图片服务返回了无效的图片数据。', '图片服务返回了不支持的图片格式。', '图片服务响应无效或超过大小限制。',
+      '图片服务响应超过大小限制。', '图片服务没有返回可用图片。'].includes(error.message)) throw error;
+    throw new Error('生图接口请求失败或未返回可用图片，请检查模型、接口兼容性和跨域设置。');
   }
 }
 

@@ -11,8 +11,10 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from app.schemas.private_model import PrivateCompletion, PrivateImageGeneration, PrivateModelList
 from app.core.model_text_stream import read_text_response
+from app.core.provider_image import ProviderImageError as ImageGenerationError
+from app.core.provider_image import image_data_url_from_provider_url
+from app.schemas.private_model import PrivateCompletion, PrivateImageGeneration, PrivateModelList
 
 
 class PrivateModelError(Exception):
@@ -50,7 +52,7 @@ async def public_endpoint(base_url: str, resource: str = "chat/completions") -> 
             raise ValueError
         path = parsed.path.rstrip("/") + "/" + resource
         return f"https://{authority}{path}", hostname, hostname
-    except (ValueError, UnicodeError, OSError, asyncio.TimeoutError):
+    except (TimeoutError, ValueError, UnicodeError, OSError):
         raise PrivateModelError(400, "仅支持 HTTPS 公网模型地址（443 端口），本机模型请使用本机直连。") from None
 
 
@@ -104,7 +106,7 @@ def _validate_api_key(api_key: str) -> None:
 
 
 async def generate_private_image(request: PrivateImageGeneration, api_key: str) -> dict:
-    """Request one embedded image; provider URLs are never fetched by the relay."""
+    """Return one bounded image, downloading temporary public provider URLs when needed."""
     _validate_api_key(api_key)
     url, host, tls_name = await public_endpoint(request.base_url, "images/generations")
     body = {"model": request.model, "prompt": request.prompt, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
@@ -115,24 +117,40 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
                                          json=body, extensions={"sni_hostname": tls_name}) as response:
                     if response.status_code != 200:
                         code = response.status_code
-                        if code in (401, 403): raise PrivateModelError(502, "图像服务拒绝认证，请检查 API Key 和模型权限。")
-                        if code == 429: raise PrivateModelError(429, "图像服务额度或速率已达上限。")
+                        if code in (401, 403):
+                            raise PrivateModelError(502, "图像服务拒绝认证，请检查 API Key 和模型权限。")
+                        if code == 429:
+                            raise PrivateModelError(429, "图像服务额度或速率已达上限。")
                         raise PrivateModelError(502, "图像服务请求失败，请检查接口地址和生图模型名称。")
                     chunks = bytearray()
                     async for chunk in response.aiter_bytes():
                         chunks.extend(chunk)
-                        if len(chunks) > 3 * 1024 * 1024: raise PrivateModelError(502, "图像服务响应超过大小限制。")
+                        if len(chunks) > 3 * 1024 * 1024:
+                            raise PrivateModelError(502, "图像服务响应超过大小限制。")
                     data = json.loads(chunks)
-                    encoded = data["data"][0]["b64_json"]
+                    images = data.get("data") if isinstance(data, dict) else None
+                    if not isinstance(images, list) or len(images) != 1 or not isinstance(images[0], dict):
+                        raise ValueError
+                    encoded = images[0].get("b64_json")
+                    if encoded is None and isinstance(images[0].get("url"), str):
+                        data_url = await image_data_url_from_provider_url(images[0]["url"])
+                        encoded = data_url.split(",", 1)[1]
                     raw = base64.b64decode(encoded, validate=True)
-                    if len(raw) > 1_500_000: raise PrivateModelError(413, "生成图片超过本机附件的 1.5 MiB 限制。")
-                    if raw.startswith(b"\x89PNG\r\n\x1a\n"): mime = "image/png"
-                    elif raw.startswith(b"\xff\xd8\xff"): mime = "image/jpeg"
-                    elif len(raw) >= 12 and raw.startswith(b"RIFF") and raw[8:12] == b"WEBP": mime = "image/webp"
-                    else: raise ValueError
+                    if len(raw) > 1_500_000:
+                        raise PrivateModelError(413, "生成图片超过本机附件的 1.5 MiB 限制。")
+                    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+                        mime = "image/png"
+                    elif raw.startswith(b"\xff\xd8\xff"):
+                        mime = "image/jpeg"
+                    elif len(raw) >= 12 and raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
+                        mime = "image/webp"
+                    else:
+                        raise ValueError
                     return {"data_url": f"data:{mime};base64,{encoded}"}
     except PrivateModelError:
         raise
+    except ImageGenerationError:
+        raise PrivateModelError(502, "图像服务返回的图片地址无法安全下载或图片格式不受支持。") from None
     except (KeyError, IndexError, TypeError, ValueError, binascii.Error, json.JSONDecodeError):
         raise PrivateModelError(502, "图像服务未返回有效的内嵌 PNG、JPEG 或 WebP 图片。") from None
     except Exception:

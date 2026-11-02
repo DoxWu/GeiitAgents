@@ -10,8 +10,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.privacy import filter_monitoring_event
-from app.schemas.private_model import PrivateCompletion
-from app.services.private_model import PrivateModelError, complete_private, public_endpoint, stream_private
+from app.schemas.private_model import PrivateCompletion, PrivateImageGeneration
+from app.services.private_model import (
+    PrivateModelError,
+    complete_private,
+    generate_private_image,
+    public_endpoint,
+    stream_private,
+)
 
 
 def payload(**changes):
@@ -40,6 +46,40 @@ def test_multimodal_request_rejects_extra_fields_and_too_many_images():
     image = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}}
     with pytest.raises(ValidationError):
         payload(messages=[{"role": "user", "content": [{"type": "text", "text": "inspect"}, image, image, image, image]}])
+
+
+@pytest.mark.asyncio
+async def test_private_image_downloads_provider_result_url(monkeypatch):
+    request = PrivateImageGeneration(
+        base_url="https://models.example/v1",
+        model="image-model",
+        prompt="Synthetic compatibility test",
+    )
+    monkeypatch.setattr(
+        "app.services.private_model.public_endpoint",
+        AsyncMock(return_value=("https://1.1.1.1/v1/images/generations", "models.example", "models.example")),
+    )
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, json={"data": [{"url": "https://images.example/result?sig=test"}]})
+    )
+    monkeypatch.setattr(
+        "app.services.private_model.httpx.AsyncClient",
+        lambda **kwargs: original_client(transport=transport, **kwargs),
+    )
+    downloaded = []
+
+    async def download(url):
+        downloaded.append(url)
+        return f"data:image/png;base64,{png}"
+
+    monkeypatch.setattr("app.services.private_model.image_data_url_from_provider_url", download)
+
+    result = await generate_private_image(request, "fixture-key")
+
+    assert downloaded == ["https://images.example/result?sig=test"]
+    assert result == {"data_url": f"data:image/png;base64,{png}"}
 
 
 def test_resolves_once_and_pins_ip_with_original_tls_hostname():
