@@ -49,7 +49,7 @@ if (generatedPng.length <= 4 * 1024 * 1024 || generatedPng.length > 8 * 1024 * 1
 const studioPng = largeGeneratedPng(1024, 1024);
 if (studioPng.length <= 1_500_000 || studioPng.length > 4 * 1024 * 1024) throw new Error('Synthetic image-studio PNG fixture has an unexpected size');
 const requests = [], bodies = [], checks = [], errors = [];
-let liveProvider, useLargeGeneratedPng = true;
+let liveProvider, imageDownload, useLargeGeneratedPng = true;
 const fixture = createServer(async (request, response) => {
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
   requests.push({ path: request.url, authorization: request.headers.authorization ?? null });
@@ -171,7 +171,21 @@ try {
     await expect(page.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible({ timeout: 15000 });
     expect(await page.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
     checks.push('actual image studio button generates and displays valid PNG');
+    const downloadEvent = page.waitForEvent('download', { timeout: 10000 }).catch(error => error);
+    await studio.getByText('下载图片', { exact: true }).click();
+    const download = await downloadEvent;
+    if (download instanceof Error) throw new Error('Generated-image download did not start after clicking 下载图片', { cause: download });
+    expect(download.suggestedFilename()).toMatch(/\.png$/);
+    const downloaded = await readFile(await download.path());
+    expect(downloaded.equals(studioPng)).toBe(true);
+    await expect(studio.getByRole('status')).toHaveText('图片下载已开始。');
+    imageDownload = { filename: download.suggestedFilename(), bytes: downloaded.length, sha256: createHash('sha256').update(downloaded).digest('hex') };
+    checks.push('actual generated-image download saves the complete original PNG with a matching filename');
     await checkImageStudio(page, output, bodies, png, checks);
+    const restoredDownloadEvent = page.waitForEvent('download', { timeout: 10000 });
+    await studio.getByRole('button', { name: '下载图片', exact: true }).click();
+    expect((await readFile(await (await restoredDownloadEvent).path())).equals(studioPng)).toBe(true);
+    checks.push('download also works after task switching and encrypted reload without another image request');
     await page.screenshot({ path: path.join(output, 'native-image.png') });
     await page.evaluate(() => {
       const frame = document.createElement('iframe'); frame.id = 'image-qa-preview';
@@ -240,7 +254,7 @@ try {
     }
   }
   expect(errors).toEqual([]);
-  const report = { passed: true, checks, syntheticHttpRequests: requests.length, liveProvider, errors,
+  const report = { passed: true, checks, syntheticHttpRequests: requests.length, liveProvider, imageDownload, errors,
     binary: { bytes: binary.length, sha256: createHash('sha256').update(binary).digest('hex') },
     baselineDenial: values['expect-denied'] ? result.error : undefined };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(report, null, 2));

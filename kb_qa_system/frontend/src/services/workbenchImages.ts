@@ -50,6 +50,29 @@ export function validateGeneratedWorkImage(image: WorkImage): void {
   validateImage(image, MAX_GENERATED_IMAGE_BYTES);
 }
 
+export function downloadGeneratedWorkImage(image: WorkImage): void {
+  validateGeneratedWorkImage(image);
+  const encoded = image.dataUrl.slice(image.dataUrl.indexOf(',') + 1);
+  const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+  const extension = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.slice('image/'.length);
+  const baseName = Array.from(image.name, character => character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character) ? '_' : character).join('')
+    .replace(/\.(?:png|jpe?g|webp)$/i, '')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 200) || 'generated-image';
+  const blobUrl = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = `${baseName}.${extension}`;
+  link.hidden = true;
+  try {
+    document.body.append(link);
+    link.click();
+  } finally {
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  }
+}
+
 export function workImageFromDataUrl(dataUrl: string, name: string): WorkImage {
   if (typeof dataUrl !== 'string' || dataUrl.length > MAX_GENERATED_IMAGE_DATA_URL_LENGTH) throw new Error('模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。');
   const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);

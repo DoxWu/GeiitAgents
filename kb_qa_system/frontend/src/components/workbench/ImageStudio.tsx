@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { DEFAULT_IMAGE_CANVAS, compositionPrompt, imageCanvas, newCompositionShape, renderComposition, validateImageStudio, type ImageStudioDraft } from '@/officeTasks/composition';
-import { readWorkImages, workImageFromDataUrl } from '@/services/workbenchImages';
+import { downloadGeneratedWorkImage, readWorkImages, workImageFromDataUrl } from '@/services/workbenchImages';
 import { CompositionCanvas } from './CompositionCanvas';
 import { ImageCanvasSettings } from './ImageCanvasSettings';
 import { ImageGenerator } from './ImageGenerator';
@@ -23,6 +23,15 @@ export function ImageStudio() {
   const previousUnlocked = useRef(store.unlocked);
   const mounted = useRef(true), capture = useWorkbenchFence();
   const canvas = imageCanvas(draft.canvas);
+  function downloadResult() {
+    if (!draft.result) return;
+    try {
+      downloadGeneratedWorkImage(draft.result);
+      setNotice('图片下载已开始。');
+    } catch {
+      setNotice('图片下载失败，请重试。');
+    }
+  }
   let requestPrompt = '', promptError = '';
   try { requestPrompt = compositionPrompt(draft); } catch (error) { promptError = error instanceof Error ? error.message : '构图提示词无效。'; }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -132,7 +141,7 @@ export function ImageStudio() {
             if (taskEpoch.current !== currentEpoch || activeTask.current !== taskId) return;
             setDraft(validateImageStudio({ ...latest.current, result: image })); setNotice('图片已生成，草稿正在加密保存。');
           }} />
-          {draft.result && <figure className="min-w-0 max-w-full"><img className="max-h-96 w-full max-w-full object-contain" src={draft.result.dataUrl} alt="模型生成结果" /><a className="work-command mt-2 inline-flex" href={draft.result.dataUrl} download={draft.result.name}>下载图片</a></figure>}
+          {draft.result && <figure className="min-w-0 max-w-full"><img className="max-h-96 w-full max-w-full object-contain" src={draft.result.dataUrl} alt="模型生成结果" /><button type="button" className="work-command mt-2 inline-flex" onClick={downloadResult}>下载图片</button></figure>}
         </div>
       </div>
     </fieldset>
