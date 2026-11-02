@@ -31,6 +31,24 @@ it('uses the native image command for a desktop direct API connection', async ()
   expect(invoke).toHaveBeenCalledWith('generate_local_image', expect.objectContaining({ baseUrl: 'https://models.example/v1', apiKey: 'fixture-key', model: 'qwen-image-3.0-pro', direct: true }));
 });
 
+it('sends selected output dimensions through desktop, browser and relay image paths', async () => {
+  const direct = { ...profile, mode: 'direct' as const, baseUrl: 'https://models.example/v1', imageModel: 'image' };
+  const dimensions = { width: 1536, height: 864 }, signal = new AbortController().signal;
+  const encoded = 'iVBORw0KGgo=';
+  vi.stubGlobal('__TAURI_INTERNALS__', {}); vi.mocked(invoke).mockResolvedValueOnce(encoded);
+  await generateWorkImage(direct, 'fixture-key', 'a'.repeat(1100), signal, dimensions);
+  expect(invoke).toHaveBeenLastCalledWith('generate_local_image', expect.objectContaining({ size: '1536x864' }));
+  vi.unstubAllGlobals();
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: encoded }] })));
+  vi.stubGlobal('fetch', fetcher);
+  await generateWorkImage(direct, 'fixture-key', 'browser', signal, dimensions);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).size).toBe('1536x864');
+  vi.mocked(apiClient.post).mockResolvedValueOnce({ data_url: `data:image/png;base64,${encoded}` });
+  await generateWorkImage({ ...direct, mode: 'relay' }, 'fixture-key', 'relay', signal, dimensions);
+  expect(apiClient.post).toHaveBeenLastCalledWith('/private-models/images/generate', expect.objectContaining({ size: '1536x864' }), expect.anything());
+  await expect(generateWorkImage(direct, 'fixture-key', 'bad size', signal, { width: 1025, height: 1024 })).rejects.toThrow('16的倍数');
+});
+
 it.each([undefined, 100000])("omits an unset limit and preserves an explicit one in browser requests (%s)", async (limit) => {
   const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] })));
   vi.stubGlobal("fetch", fetcher);

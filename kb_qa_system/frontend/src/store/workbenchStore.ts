@@ -1,4 +1,5 @@
-import { validateImageStudio, type ImageStudioDraft } from '@/officeTasks/composition';
+import { imageStudioBytes, validateImageStudio, validateImageTasks, type ImageStudioDraft, type ImageStudioTask } from '@/officeTasks/composition';
+import type { ImageSize } from '@/services/imageGeneration';
 import { runAgent } from '@/agents/runtime';
 import type { TextBatchInput, TextBatchPlan, TextBatchPreview } from '@/fileOrganizer/textBatch';
 import { artifactSeries } from '@/officeTasks/artifactSeries';
@@ -40,6 +41,9 @@ export const ACCOUNT_MODEL_ID = "$account";
 let vault: PrivateVault | null = null;
 let secrets: VaultData["profiles"] = [];
 let generation = 0;
+let imageTaskTimer: ReturnType<typeof setTimeout> | undefined;
+let pendingImageTask: { task: ImageStudioTask; migrateLegacy: boolean } | null = null;
+function clearPendingImageTask() { clearTimeout(imageTaskTimer); imageTaskTimer = undefined; pendingImageTask = null; }
 let textBatchGeneration = 0;
 let textBatchPlan: { plan: TextBatchPlan; directory: OrganizerDirectoryHandle } | null = null;
 let personalImportGeneration = 0;
@@ -75,6 +79,11 @@ function clearWorkflowDraftTimer() { clearTimeout(workflowDraftTimer); workflowD
 function clearWorkflowScheduleTimer() { clearInterval(workflowScheduleTimer); workflowScheduleTimer = undefined; }
 
 interface WorkbenchState {
+  queueImageTask: (task: ImageStudioTask, migrateLegacy?: boolean) => void;
+  flushImageTask: () => Promise<void>;
+  imageTasks: ImageStudioTask[];
+  saveImageTask: (task: ImageStudioTask, migrateLegacy?: boolean) => Promise<void>;
+  removeImageTask: (id: string) => Promise<void>;
   imageDraft: ImageStudioDraft | null;
   saveImageDraft: (draft: ImageStudioDraft) => Promise<void>;
   capabilities: import('@/agents/capabilities').CapabilityResource[];
@@ -177,7 +186,7 @@ interface WorkbenchState {
   testProfile: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileToolSupport: (id: string, signal?: AbortSignal) => Promise<void>;
   testProfileVision: (id: string, signal?: AbortSignal) => Promise<boolean>;
-  generateImage: (profileId: string, prompt: string, allowCloud: boolean, signal?: AbortSignal) => Promise<WorkImage>;
+  generateImage: (profileId: string, prompt: string, allowCloud: boolean, signal?: AbortSignal, size?: ImageSize) => Promise<WorkImage>;
   discoverProfileModels: (input: ModelEndpoint, apiKey: string, clearKey: boolean, signal: AbortSignal) => Promise<ModelCatalog>;
   newConversation: (profileId?: string) => string;
   select: (id: string) => void;
@@ -269,7 +278,7 @@ async function persist(required = false) {
 
 function vaultSnapshot(): VaultData {
   const state = useWorkbenchStore.getState();
-  return { imageDraft: state.imageDraft, capabilities: state.capabilities, pptxDraft: state.pptxDraft, agents: state.agents, workflows: state.workflows, workflowDraft: state.workflowDraft, workflowSchedules: state.workflowSchedules, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, referenceDocuments: state.referenceDocuments, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
+  return { imageTasks: state.imageTasks, imageDraft: state.imageDraft, capabilities: state.capabilities, pptxDraft: state.pptxDraft, agents: state.agents, workflows: state.workflows, workflowDraft: state.workflowDraft, workflowSchedules: state.workflowSchedules, profiles: secrets, conversations: state.conversations, taskRuns: state.taskRuns, toolRuns: state.toolRuns, artifacts: state.artifacts, referenceDocuments: state.referenceDocuments, personalItems: state.personalItems, personalDrafts: state.personalDrafts, organizerRuns: state.organizerRuns, reminderDrafts: state.reminderDrafts, reminderTemplates: state.reminderTemplates, fileEditDraft: state.fileEditDraft, fileEditVersions: state.fileEditVersions };
 }
 
 async function pollWorkflowSchedules() {
@@ -358,6 +367,7 @@ function capabilityRecorder(taskId: string, agent: AgentDefinition, guard: () =>
 }
 
 function eraseMemory() {
+  clearPendingImageTask();
   textBatchGeneration++; textBatchPlan = null;
   personalImportGeneration++; personalImportPlan = null;
   transferGeneration++; preparedRestore = null;
@@ -375,7 +385,7 @@ function eraseMemory() {
   clearWorkflowDraftTimer();
   clearWorkflowScheduleTimer();
   workflowSchedulesInFlight.clear();
-  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, capabilities: [], pptxDraft: null, agents: [], workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], referenceDocuments: [], workflowSchedules: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+  useWorkbenchStore.setState({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, imageTasks: [], capabilities: [], pptxDraft: null, agents: [], workflows: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], referenceDocuments: [], workflowSchedules: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], organizerRuns: [], organizerBusy: organizerInFlight, fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, vaultTransferBusy: false, vaultRestorePreview: null, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
 }
 
 // Edits and restores share the same task lock, immutable append and persistence semantics.
@@ -427,6 +437,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     // Capture immediately, including debounced drafts and unsaved changes after
     // quota errors. Export must remain usable when local persistence is full.
     const snapshot = JSON.parse(JSON.stringify(vaultSnapshot())) as VaultData;
+    if (pendingImageTask) {
+      snapshot.imageTasks = validateImageTasks([pendingImageTask.task, ...(snapshot.imageTasks ?? []).filter(task => task.id !== pendingImageTask!.task.id)]);
+      if (pendingImageTask.migrateLegacy) snapshot.imageDraft = null;
+    }
     const epoch = generation, token = ++transferGeneration; set({ vaultTransferBusy: true });
     const guard = () => { if (epoch !== generation || token !== transferGeneration || !get().unlocked) throw new Error('备份已取消或密钥库已锁定。'); };
     try {
@@ -880,7 +894,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     await persist(true);
     if (epoch !== generation || !get().unlocked) throw new Error('密钥库已锁定，请重新解锁查看删除结果。');
   },
-  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
+  unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, imageTasks: [], capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null,
   accountModel: null, accountLoading: false, accountError: null,
   refreshAccountModel: async () => {
     accountLookup?.abort();
@@ -925,7 +939,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const recoveredSchedules = workflowSchedules.map(schedule => schedule.enabled && schedule.status === 'enabled'
       && schedule.nextRunAt && Date.parse(schedule.nextRunAt) <= Date.now()
       ? { ...schedule, status: 'awaiting-device' as const, updatedAt: unlockedAt } : schedule);
-    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: data.imageDraft ?? null, capabilities: data.capabilities ?? [], pptxDraft: data.pptxDraft ?? null, agents: (data.agents ?? []).map(validateAgent), workflows: data.workflows ?? [], referenceDocuments: data.referenceDocuments ?? [], workflowSchedules: recoveredSchedules, workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
+    set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: data.imageDraft ?? null, imageTasks: data.imageTasks ?? [], capabilities: data.capabilities ?? [], pptxDraft: data.pptxDraft ?? null, agents: (data.agents ?? []).map(validateAgent), workflows: data.workflows ?? [], referenceDocuments: data.referenceDocuments ?? [], workflowSchedules: recoveredSchedules, workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
     if (recoveredSchedules.some((item, index) => item !== workflowSchedules[index])) await persist();
@@ -933,6 +947,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     workflowScheduleTimer = setInterval(() => { void pollWorkflowSchedules().catch(() => {}); }, 30_000);
   },
   lock: async () => {
+    // Capture the editor's latest debounced draft before clearing unlocked state.
+    void get().flushImageTask().catch(() => {});
     get().cancelVaultTransfer(); get().cancelPersonalImport(); get().cancelFileEditBatch();
     // Queue the current draft snapshot before clearing memory; flush below waits
     // for it even when the 400 ms autosave debounce has not elapsed.
@@ -942,7 +958,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     for (const controller of controllers.values()) controller.abort();
     for (const controller of artifactOperations.values()) controller.abort();
     clearWorkflowScheduleTimer();
-    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
+    set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, imageTasks: [], capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
@@ -951,13 +967,56 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   saveImageDraft: async draft => {
     if (!get().unlocked) throw new Error('请先解锁本机加密库。');
     const clean = validateImageStudio(draft), epoch = generation, previous = get().imageDraft;
-    const bytes = [...clean.references, ...(clean.result ? [clean.result] : [])].reduce((sum, image) => sum + image.bytes, 0)
+    const bytes = imageStudioBytes({ imageDraft: clean, imageTasks: get().imageTasks })
       + get().conversations.flatMap(c => c.messages).flatMap(m => m.images ?? []).reduce((sum,i) => sum+i.bytes,0)
       + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0)
       + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0);
     if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过8 MiB，请删除较早素材。');
     set({ imageDraft: clean });
     try { await persist(true); } catch (e) { if (epoch === generation && get().imageDraft === clean) set({ imageDraft: previous }); throw e; }
+  },
+  queueImageTask: (task, migrateLegacy = false) => {
+    if (!get().unlocked) return;
+    clearPendingImageTask();
+    pendingImageTask = { task, migrateLegacy };
+    imageTaskTimer = setTimeout(() => { void get().flushImageTask().catch(error => {
+      if (get().unlocked) set({ storageError: error instanceof Error ? error.message : '图片任务保存失败。' });
+    }); }, 700);
+  },
+  flushImageTask: async () => {
+    const pending = pendingImageTask, epoch = generation; clearPendingImageTask();
+    if (pending) try { await get().saveImageTask(pending.task, pending.migrateLegacy); }
+    catch (error) {
+      if (epoch === generation && get().unlocked && !pendingImageTask) pendingImageTask = pending;
+      throw error;
+    }
+  },
+  saveImageTask: async (task, migrateLegacy = false) => {
+    if (pendingImageTask?.task.id === task.id) clearPendingImageTask();
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机加密库。');
+    const previous = get().imageTasks, oldDraft = get().imageDraft, epoch = generation;
+    const tasks = validateImageTasks([task, ...previous.filter(item => item.id !== task.id)]);
+    const imageDraft = migrateLegacy ? null : oldDraft;
+    const bytes = imageStudioBytes({ imageTasks: tasks, imageDraft })
+      + get().conversations.flatMap(c => c.messages).flatMap(m => m.images ?? []).reduce((sum, image) => sum + image.bytes, 0)
+      + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0)
+      + (get().pptxDraft?.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0) ?? 0);
+    if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过8 MiB，请删除较早素材。');
+    set({ imageTasks: tasks, imageDraft });
+    try { await persist(true); } catch (error) {
+      if (epoch === generation && get().imageTasks === tasks) set({ imageTasks: previous, imageDraft: oldDraft });
+      throw error;
+    }
+  },
+  removeImageTask: async id => {
+    if (pendingImageTask?.task.id === id) clearPendingImageTask();
+    if (!get().unlocked || !vault) throw new Error('请先解锁本机加密库。');
+    const previous = get().imageTasks, epoch = generation, tasks = previous.filter(task => task.id !== id);
+    set({ imageTasks: tasks });
+    try { await persist(true); } catch (error) {
+      if (epoch === generation && get().imageTasks === tasks) set({ imageTasks: previous });
+      throw error;
+    }
   },
   saveCapability: async input => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
@@ -990,7 +1049,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const otherImages = get().conversations.flatMap(item => item.messages).flatMap(message => message.images ?? [])
       .concat(get().taskRuns.flatMap(task => task.referenceImages ?? [])).reduce((sum, image) => sum + image.bytes, 0);
     const deckImages = clean.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0);
-    if (otherImages + deckImages + [...(get().imageDraft?.references ?? []), ...(get().imageDraft?.result ? [get().imageDraft!.result!] : [])].reduce((sum,i) => sum+i.bytes,0) > MAX_VAULT_IMAGE_BYTES) throw new Error('设计图片会使本机加密库中的图片总量超过 8 MiB，请删除较早的含图对话或任务。');
+    if (otherImages + deckImages + imageStudioBytes(get()) > MAX_VAULT_IMAGE_BYTES) throw new Error('设计图片会使本机加密库中的图片总量超过 8 MiB，请删除较早的含图对话或任务。');
     set({ pptxDraft: clean });
     await persist(true);
   },
@@ -1104,13 +1163,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
     return supported;
   },
-  generateImage: async (profileId, prompt, allowCloud, signal) => {
+  generateImage: async (profileId, prompt, allowCloud, signal, size) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const profile = get().profiles.find(item => item.id === profileId), secret = secrets.find(item => item.id === profileId);
     if (!profile || !secret || !profile.imageModel) throw new Error('请选择已配置生图模型的连接。');
     if (profile.mode !== 'local' && !allowCloud) throw new Error('发送图片生成描述到云端前需要明确授权。');
     const epoch = generation, fingerprint = JSON.stringify(secret);
-    const image = await modelCheck(profile.mode, signal, requestSignal => generateWorkImage(profile, secret.apiKey, prompt, requestSignal), 120_000);
+    const image = await modelCheck(profile.mode, signal, requestSignal => generateWorkImage(profile, secret.apiKey, prompt, requestSignal, size), 120_000);
     if (epoch !== generation || !get().unlocked || JSON.stringify(secrets.find(item => item.id === profileId)) !== fingerprint) throw new Error('模型连接或密钥库状态已改变，图片未返回。');
     return image;
   },
@@ -1152,7 +1211,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const historyImageBytes = conversation.messages.flatMap(message => message.images ?? []).reduce((total, image) => total + image.bytes, 0);
     const vaultImageBytes = get().conversations.flatMap(item => item.messages.flatMap(message => message.images ?? [])).reduce((total, image) => total + image.bytes, 0);
     const newImageBytes = images.reduce((total, image) => total + image.bytes, 0);
-    if (vaultImageBytes + [...(get().imageDraft?.references ?? []), ...(get().imageDraft?.result ? [get().imageDraft!.result!] : [])].reduce((sum,i) => sum+i.bytes,0) + newImageBytes + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0) + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 8 MiB，请先删除不再需要的旧对话。');
+    if (vaultImageBytes + imageStudioBytes(get()) + newImageBytes + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0) + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 8 MiB，请先删除不再需要的旧对话。');
     const isCloud = useAccount || ['relay', 'direct'].includes(profile?.mode || '');
     if (isCloud && (historyImageBytes > 0 || newImageBytes > 0) && !allowCloudImages) throw new Error('云端发送包含本对话中的图片，需重新明确授权。');
     if (useAccount) {
@@ -1228,7 +1287,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const storedImageBytes = get().conversations.flatMap(item => item.messages).flatMap(message => message.images ?? []).reduce((sum, image) => sum + image.bytes, 0)
       + (get().pptxDraft?.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0) ?? 0)
       + get().taskRuns.flatMap(item => item.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0);
-    if (storedImageBytes + [...(get().imageDraft?.references ?? []), ...(get().imageDraft?.result ? [get().imageDraft!.result!] : [])].reduce((sum,i) => sum+i.bytes,0) + (clean.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机加密库中的图片总量将超过 8 MiB，请先删除较早的含图对话或任务。');
+    if (storedImageBytes + imageStudioBytes(get()) + (clean.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机加密库中的图片总量将超过 8 MiB，请先删除较早的含图对话或任务。');
     const messages = buildDocumentMessages(clean);
     const profile = get().profiles.find(item => item.id === profileId);
     const secret = secrets.find(item => item.id === profileId);

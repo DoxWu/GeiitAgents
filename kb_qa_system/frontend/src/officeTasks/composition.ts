@@ -1,7 +1,35 @@
 import { validateWorkImage } from '@/services/workbenchImages';
 import type { WorkImage } from '@/types/workbench';
+import { imageSizeValue, validateImagePrompt, type ImageSize } from '@/services/imageGeneration';
 export interface CompositionShape { id: string; kind: 'rectangle' | 'ellipse' | 'triangle' | 'text' | 'image'; x: number; y: number; w: number; h: number; rotation: number; layer: number; color: string; text: string; description: string; imageIndex?: number }
-export interface ImageStudioDraft { prompt: string; shapes: CompositionShape[]; references: WorkImage[]; result?: WorkImage }
+export interface ImageCanvas extends ImageSize { background: string }
+export const DEFAULT_IMAGE_CANVAS: ImageCanvas = { width: 1024, height: 1024, background: '#f4f3ef' };
+// Old drafts used a fixed 16:9 preview. Preserve their geometry on load.
+export const LEGACY_IMAGE_CANVAS: ImageCanvas = { width: 1536, height: 864, background: '#f4f3ef' };
+export interface ImageStudioDraft { prompt: string; shapes: CompositionShape[]; references: WorkImage[]; canvas?: ImageCanvas; result?: WorkImage }
+export interface ImageStudioTask { id: string; name: string; updatedAt: string; draft: ImageStudioDraft }
+export function validateImageTasks(value: unknown): ImageStudioTask[] {
+  if (!Array.isArray(value) || value.length > 50) throw new Error('最多保存50个图片任务。');
+  const ids = new Set<string>();
+  for (const task of value) {
+    if (!task || typeof task !== 'object' || Object.keys(task).some(k => !['id', 'name', 'updatedAt', 'draft'].includes(k))
+      || typeof task.id !== 'string' || !task.id || task.id.length > 100 || ids.has(task.id)
+      || typeof task.name !== 'string' || !task.name.trim() || task.name.length > 100
+      || typeof task.updatedAt !== 'string' || !Number.isFinite(Date.parse(task.updatedAt))) throw new Error('图片任务无效。');
+    validateImageStudio(task.draft); ids.add(task.id);
+  }
+  return structuredClone(value);
+}
+export function imageStudioBytes(data: { imageDraft?: ImageStudioDraft | null; imageTasks?: ImageStudioTask[] }): number {
+  return [...(data.imageDraft ? [data.imageDraft] : []), ...(data.imageTasks ?? []).map(task => task.draft)]
+    .flatMap(draft => [...draft.references, ...(draft.result ? [draft.result] : [])]).reduce((sum, image) => sum + image.bytes, 0);
+}
+export function imageCanvas(value?: ImageCanvas): ImageCanvas {
+  const canvas = value ?? LEGACY_IMAGE_CANVAS;
+  if (!canvas || typeof canvas !== 'object' || Object.keys(canvas).some(key => !['width', 'height', 'background'].includes(key)) || typeof canvas.background !== 'string' || !/^#[\da-f]{6}$/i.test(canvas.background)) throw new Error('画布设置无效。');
+  imageSizeValue(canvas);
+  return { ...canvas };
+}
 export function newCompositionShape(index: number): CompositionShape {
   return { id: crypto.randomUUID(), kind: 'rectangle', x: 10 + index % 5 * 5, y: 10 + index % 5 * 5, w: 30, h: 22, rotation: 0, layer: index + 1, color: '#c66b39', text: '', description: '' };
 }
@@ -23,23 +51,39 @@ export function validateShapes(value: unknown): CompositionShape[] {
 }
 export function validateImageStudio(value: unknown): ImageStudioDraft {
   const d = value as ImageStudioDraft;
-  if (!d || typeof d !== 'object' || Object.keys(d).some(k => !['prompt','shapes','references','result'].includes(k)) || typeof d.prompt !== 'string' || d.prompt.length > 1000 || !Array.isArray(d.references) || d.references.length > 2) throw new Error('图片草稿无效。');
+  if (!d || typeof d !== 'object' || Object.keys(d).some(k => !['prompt','shapes','references','canvas','result'].includes(k)) || typeof d.prompt !== 'string' || d.prompt.length > 1000 || !Array.isArray(d.references) || d.references.length > 2) throw new Error('图片草稿无效。');
+  imageCanvas(d.canvas);
   validateShapes(d.shapes); d.references.forEach(validateWorkImage); if (d.result) validateWorkImage(d.result);
   if ([...d.references, ...(d.result ? [d.result] : [])].reduce((n,i) => n+i.bytes,0) > 4*1024*1024) throw new Error('图片草稿素材总量超过4 MiB。');
   return structuredClone(d);
 }
-export async function renderComposition(shapes: CompositionShape[], images: WorkImage[] = []): Promise<string> {
-  const canvas = document.createElement('canvas'); canvas.width = 960; canvas.height = 540;
+export function compositionPrompt(draft: ImageStudioDraft, prompt = draft.prompt): string {
+  const canvas = imageCanvas(draft.canvas);
+  const regions = validateShapes(draft.shapes).sort((a, b) => a.layer - b.layer).map((shape, index) => {
+    const n = (value: number) => Math.round(value * 100) / 100;
+    return `区域${index + 1}：左上角(${n(shape.x)}%,${n(shape.y)}%)，宽${n(shape.w)}%、高${n(shape.h)}%，旋转${n(shape.rotation)}°，层${shape.layer}，颜色${shape.color}，示意形状${shape.kind}。主题：${shape.description || '未指定'}。${shape.text ? `需要展示的文字：${JSON.stringify(shape.text)}。` : '不绘制示意标签文字。'}${shape.imageIndex !== undefined ? `参考素材${shape.imageIndex + 1}已用于整理文字描述，生图接口不接收原图。` : ''}`;
+  });
+  return validateImagePrompt([
+    `内容与风格：${prompt.trim() || '根据下列区域主题生成图片。'}`,
+    `构图约束（布局冲突时以此为准）：画布${canvas.width}×${canvas.height}，背景${canvas.background}。坐标从左上角起，x向右、y向下，均按整张画布百分比计算；层号越大越靠前。保留主体大小、位置、重叠及空白，不擅自居中、放大主体或裁切。区域为元素包围框示意，除明确要求外，不把矩形、椭圆、颜色块或区域标签画成实体或文字。旋转绕区域中心，超出画布的部分裁切。`,
+    ...regions,
+  ].join('\n'));
+}
+
+export async function renderComposition(shapes: CompositionShape[], images: WorkImage[] = [], settings: ImageCanvas = LEGACY_IMAGE_CANVAS): Promise<string> {
+  const { width, height, background } = imageCanvas(settings);
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('画布不可用。');
-  ctx.fillStyle = '#f4f3ef'; ctx.fillRect(0,0,960,540);
+  ctx.fillStyle = background; ctx.fillRect(0,0,width,height);
   for (const s of [...validateShapes(shapes)].sort((a,b) => a.layer-b.layer)) {
-    const x=s.x*9.6,y=s.y*5.4,w=s.w*9.6,h=s.h*5.4;
+    const x=s.x*width/100,y=s.y*height/100,w=s.w*width/100,h=s.h*height/100;
     ctx.save(); ctx.translate(x+w/2,y+h/2);ctx.rotate(s.rotation*Math.PI/180);ctx.translate(-w/2,-h/2);ctx.fillStyle=s.color;
     if (s.kind === 'ellipse') {ctx.beginPath();ctx.ellipse(w/2,h/2,w/2,h/2,0,0,Math.PI*2);ctx.fill();}
     else if (s.kind === 'triangle') {ctx.beginPath();ctx.moveTo(w/2,0);ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fill();}
-    else if (s.kind === 'image' && images[s.imageIndex ?? -1]) {const img=new Image();img.src=images[s.imageIndex!].dataUrl;await img.decode();ctx.drawImage(img,0,0,w,h);}
+    else if (s.kind === 'image' && images[s.imageIndex ?? -1]) {const img=new Image();img.src=images[s.imageIndex!].dataUrl;await img.decode();const scale=Math.min(w/img.naturalWidth,h/img.naturalHeight),iw=img.naturalWidth*scale,ih=img.naturalHeight*scale;ctx.fillRect(0,0,w,h);ctx.drawImage(img,(w-iw)/2,(h-ih)/2,iw,ih);}
     else if (s.kind !== 'text') ctx.fillRect(0,0,w,h);
-    ctx.fillStyle=s.kind === 'text' ? s.color : '#202020'; ctx.font='18px sans-serif';ctx.textBaseline='top';
+    ctx.beginPath();ctx.rect(0,0,w,h);ctx.clip();
+    ctx.fillStyle=s.kind === 'text' ? s.color : '#202020'; ctx.font=`${Math.round(width/54)}px sans-serif`;ctx.textBaseline='top';
     const label=s.text || s.description || s.kind; let line='', row=0;
     for (const char of label.slice(0,200)) { if(ctx.measureText(line+char).width>w-12){ctx.fillText(line,6,6+row*24);line='';row++;} if(row*24>h-24)break;line+=char; }ctx.fillText(line,6,6+row*24);ctx.restore();
   }

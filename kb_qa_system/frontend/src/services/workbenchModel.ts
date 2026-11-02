@@ -5,6 +5,7 @@ import type { ModelMessageContent, ModelProfile } from "@/types/workbench";
 import { finishReason, readModelResponse, type FinishReason } from './modelStream';
 import { imageType, workImageFromDataUrl } from './workbenchImages';
 import type { WorkImage } from '@/types/workbench';
+import { imageSizeValue, validateImagePrompt, type ImageSize } from './imageGeneration';
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
@@ -178,14 +179,15 @@ export async function completeModel(
   }
 }
 
-export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal): Promise<WorkImage> {
+export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal, dimensions?: ImageSize): Promise<WorkImage> {
   const model = validateImageModel(profile.imageModel);
   const baseUrl = validateProfile(profile);
   if (!model) throw new Error('请先在模型连接中配置兼容的生图模型名称。');
-  if (!prompt.trim() || prompt.length > 1000) throw new Error('图片生成描述需要 1–1000 个字符。');
+  prompt = validateImagePrompt(prompt);
+  const size = imageSizeValue(dimensions);
   if (profile.mode === 'relay') {
     requirePrivateRelay(apiKey);
-    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt: prompt.trim() }, {
+    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt, size }, {
       signal, headers: { 'X-Model-Api-Key': apiKey }, cache: 'no-store', redirect: 'error',
     });
     return workImageFromDataUrl(result.data_url, 'generated-image.png');
@@ -196,7 +198,7 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     signal.addEventListener('abort', abort, { once: true });
     try {
       if (signal.aborted) throw new Error();
-      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt: prompt.trim(), direct: profile.mode === 'direct' });
+      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt, size, direct: profile.mode === 'direct' });
       if (signal.aborted || typeof encoded !== 'string' || encoded.length > 2_000_000) throw new Error();
       const mime = imageType(Uint8Array.from(atob(encoded), character => character.charCodeAt(0)));
       if (!mime) throw new Error();
@@ -219,7 +221,7 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
   try {
     const response = await fetch(`${baseUrl}/images/generations`, { method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({ model, prompt: prompt.trim(), n: 1, size: '1024x1024', response_format: 'b64_json' }) });
+      body: JSON.stringify({ model, prompt, n: 1, size, response_format: 'b64_json' }) });
     if (!response.ok) { await response.body?.cancel(); throw new Error(); }
     const data = await readBoundedBody(response, 3 * 1024 * 1024, signal);
     const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)) as { data?: { b64_json?: unknown; url?: unknown }[] };

@@ -15,7 +15,7 @@ export interface VaultBackupSummary {
   agents: number; hasPptxDraft: boolean; personalItems: number; personalDrafts: number; reminderDrafts: number; reminderTemplates: number; organizerRuns: number; fileEditVersions: number; fileEditDrafts: number;
 }
 export function summarizeVault(data: VaultData, exportedAt: string): VaultBackupSummary {
-  return { exportedAt, capabilities: data.capabilities?.length ?? 0, hasImageDraft: Boolean(data.imageDraft), workflows: data.workflows?.length ?? 0, profiles: data.profiles.length, apiKeys: data.profiles.filter(p => p.apiKey).length, conversations: data.conversations.length, messages: data.conversations.reduce((n, c) => n + c.messages.length, 0),
+  return { exportedAt, capabilities: data.capabilities?.length ?? 0, hasImageDraft: Boolean(data.imageDraft || data.imageTasks?.length), workflows: data.workflows?.length ?? 0, profiles: data.profiles.length, apiKeys: data.profiles.filter(p => p.apiKey).length, conversations: data.conversations.length, messages: data.conversations.reduce((n, c) => n + c.messages.length, 0),
     tasks: data.taskRuns?.length ?? 0, artifacts: data.artifacts?.length ?? 0, agents: data.agents?.length ?? 0, hasPptxDraft: Boolean(data.pptxDraft), personalItems: data.personalItems?.length ?? 0, personalDrafts: data.personalDrafts?.length ?? 0,
     reminderDrafts: data.reminderDrafts?.length ?? 0, reminderTemplates: data.reminderTemplates?.length ?? 0, organizerRuns: data.organizerRuns?.length ?? 0, fileEditVersions: data.fileEditVersions?.length ?? 0, fileEditDrafts: data.fileEditDraft ? 1 : 0 };
 }

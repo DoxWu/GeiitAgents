@@ -53,7 +53,8 @@ async def test_private_image_downloads_provider_result_url(monkeypatch):
     request = PrivateImageGeneration(
         base_url="https://models.example/v1",
         model="image-model",
-        prompt="Synthetic compatibility test",
+        prompt="合成构图说明" * 500,
+        size="864x1536",
     )
     monkeypatch.setattr(
         "app.services.private_model.public_endpoint",
@@ -61,9 +62,13 @@ async def test_private_image_downloads_provider_result_url(monkeypatch):
     )
     png = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
     original_client = httpx.AsyncClient
-    transport = httpx.MockTransport(
-        lambda _request: httpx.Response(200, json={"data": [{"url": "https://images.example/result?sig=test"}]})
-    )
+    def image_handler(upstream):
+        body = json.loads(upstream.content)
+        assert body["size"] == "864x1536"
+        assert body["prompt"] == request.prompt
+        return httpx.Response(200, json={"data": [{"url": "https://images.example/result?sig=test"}]})
+
+    transport = httpx.MockTransport(image_handler)
     monkeypatch.setattr(
         "app.services.private_model.httpx.AsyncClient",
         lambda **kwargs: original_client(transport=transport, **kwargs),
@@ -80,6 +85,16 @@ async def test_private_image_downloads_provider_result_url(monkeypatch):
 
     assert downloaded == ["https://images.example/result?sig=test"]
     assert result == {"data_url": f"data:image/png;base64,{png}"}
+
+
+@pytest.mark.parametrize("size", ["1024x513", "256x1024", "2048x2064", "1024x1", "1024x1024\n"])
+def test_image_request_schemas_reject_invalid_dimensions(size):
+    from app.schemas.image_generation import ServerImageRequest
+
+    with pytest.raises(ValidationError):
+        PrivateImageGeneration(base_url="https://models.example/v1", model="image", prompt="synthetic", size=size)
+    with pytest.raises(ValidationError):
+        ServerImageRequest(endpoint_id="primary", prompt="synthetic", consent=True, size=size)
 
 
 def test_resolves_once_and_pins_ip_with_original_tls_hostname():

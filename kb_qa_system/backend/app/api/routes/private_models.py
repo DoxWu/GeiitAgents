@@ -92,7 +92,7 @@ async def model_list(request: Request):
                                global_limit=settings.IMAGE_MAX_CONCURRENT_GLOBAL), scope="request"),
 ])
 async def generate_image(request: Request):
-    data = await read_payload(request, PrivateImageGeneration, 16 * 1024)
+    data = await read_payload(request, PrivateImageGeneration, 64 * 1024)
     try:
         result = await generate_private_image(data, request.headers.get("x-model-api-key", ""))
         return JSONResponse(result, headers=NO_STORE)
@@ -111,11 +111,11 @@ async def server_image_models():
                                global_limit=settings.IMAGE_MAX_CONCURRENT_GLOBAL), scope="request"),
 ])
 async def generate_server_configured_image(request: Request):
-    data = await read_payload(request, ServerImageRequest, 16 * 1024)
+    data = await read_payload(request, ServerImageRequest, 64 * 1024)
     if not data.consent:
         raise HTTPException(400, "发送图片描述到服务端模型前需要明确授权。", headers=NO_STORE)
     try:
-        result = await generate_server_image(data.endpoint_id, data.prompt)
+        result = await generate_server_image(data.endpoint_id, data.prompt, data.size)
         return JSONResponse(result, headers=NO_STORE)
     except ImageGenerationError as exc:
         raise HTTPException(502, str(exc), headers=NO_STORE) from None

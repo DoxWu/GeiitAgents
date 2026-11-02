@@ -192,18 +192,20 @@ fn cancel_local_model(request_id: String, state: State<'_, Requests>) {
 }
 
 #[tauri::command]
-async fn generate_local_image(request_id: String, base_url: String, api_key: String, model: String, prompt: String, direct: Option<bool>, state: State<'_, Requests>) -> Result<String, String> {
+async fn generate_local_image(request_id: String, base_url: String, api_key: String, model: String, prompt: String, direct: Option<bool>, size: Option<String>, state: State<'_, Requests>) -> Result<String, String> {
     let url = model_endpoint(&base_url, "images/generations", direct.unwrap_or(false))?;
+    let size = size.unwrap_or_else(|| "1024x1024".into());
+    local_images::validate_size(&size)?;
     if request_id.is_empty() || request_id.len() > 100 || api_key.len() > 4096 || !api_key.bytes().all(|c| (33..=126).contains(&c))
         || model.trim().is_empty() || model.chars().count() > 200 || model.chars().any(|c| c.is_control())
-        || prompt.trim().is_empty() || prompt.chars().count() > 1000 || prompt.contains('\0') { return Err("Invalid image request".into()); }
+        || prompt.trim().is_empty() || prompt.chars().count() > 6000 || prompt.contains('\0') { return Err("Invalid image request".into()); }
     let (cancel, cancelled) = oneshot::channel();
     {
         let mut active = state.0.lock().map_err(|_| "Request state unavailable")?;
         if active.len() >= 4 || active.contains_key(&request_id) { return Err("Too many active requests".into()); }
         active.insert(request_id.clone(), cancel);
     }
-    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = local_images::generate(url, api_key, model, prompt) => result };
+    let result = tokio::select! { biased; _ = cancelled => Err("Cancelled".into()), result = local_images::generate(url, api_key, model, prompt, size) => result };
     if let Ok(mut active) = state.0.lock() { active.remove(&request_id); }
     result
 }

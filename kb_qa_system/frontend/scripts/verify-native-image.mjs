@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { parseArgs, parseEnv } from 'node:util';
 import path from 'node:path';
+import { checkImageStudio } from './image-studio-checks.mjs';
 
 const { values } = parseArgs({ options: {
   exe: { type: 'string', default: 'src-tauri/target-dev/release/geiit-workbench.exe' },
@@ -21,7 +22,7 @@ const root = path.resolve(values.output);
 await mkdir(root, { recursive: true });
 const output = await mkdtemp(path.join(root, 'run-'));
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==', 'base64');
-const requests = [], checks = [], errors = [];
+const requests = [], bodies = [], checks = [], errors = [];
 let liveProvider;
 const fixture = createServer(async (request, response) => {
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -30,7 +31,9 @@ const fixture = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(png); return;
   }
   const body = JSON.parse(Buffer.concat(chunks).toString());
+  bodies.push(body);
   expect(body.model).toBe('native-image-fixture');
+  if (body.prompt.includes('DELAYED')) await new Promise(resolve => setTimeout(resolve, 1200));
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({ data: [{ url: '/image.png' }] }));
 });
@@ -91,11 +94,12 @@ try {
     await page.getByRole('tab', { name: '任务', exact: true }).click();
     await page.getByRole('tab', { name: '图片生成', exact: true }).click();
     await page.getByText('由模型生成图片', { exact: true }).click();
-    await page.getByLabel('图片内容主题', { exact: true }).fill('Synthetic native UI image');
+    await page.getByLabel('图片提示词', { exact: true }).fill('Synthetic native UI image');
     await page.getByRole('button', { name: '生成图片并放入设计', exact: true }).click();
     await expect(page.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible({ timeout: 15000 });
     expect(await page.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
     checks.push('actual image studio button generates and displays valid PNG');
+    await checkImageStudio(page, output, bodies, png, checks);
     await page.screenshot({ path: path.join(output, 'native-image.png') });
     await page.evaluate(() => {
       const frame = document.createElement('iframe'); frame.id = 'image-qa-preview';
@@ -109,7 +113,7 @@ try {
       } catch (error) { return String(error).includes('unavailable in previews'); }
     });
     expect(denied).toBe(true);
-    expect(requests).toHaveLength(4);
+    expect(requests.filter(request => request.path === '/image.png').every(request => request.authorization === null)).toBe(true);
     checks.push('sandboxed preview still rejects native image commands');
     if (values['provider-env']) {
       const config = parseEnv(await readFile(path.resolve(values['provider-env']), 'utf8'));
@@ -122,16 +126,18 @@ try {
       const result = await page.evaluate(async connection => {
         try {
           const encoded = await window.__TAURI_INTERNALS__.invoke('generate_local_image', {
-            ...connection, requestId: crypto.randomUUID(), prompt: 'A simple blue circle on a plain white background, no text.', direct: true,
+            ...connection, requestId: crypto.randomUUID(), prompt: 'A simple small blue circle in the upper left on a plain white background, no text.', size: '1536x864', direct: true,
           });
           const binary = atob(encoded);
-          return { ok: true, bytes: binary.length, png: binary.startsWith('\x89PNG\r\n\x1a\n') };
+          const bytes = Uint8Array.from(binary, c => c.charCodeAt(0)), dimensions = new DataView(bytes.buffer);
+          return { ok: true, bytes: binary.length, png: binary.startsWith('\x89PNG\r\n\x1a\n'), width: dimensions.getUint32(16), height: dimensions.getUint32(20) };
         } catch { return { ok: false }; }
       }, connection);
       expect(result.ok, 'Real provider native image request failed (credentials and provider details withheld)').toBe(true);
       expect(result.bytes).toBeGreaterThan(100);
       expect(result.png).toBe(true);
-      liveProvider = { model: connection.model, requests: 1, bytes: result.bytes, png: result.png, imagesSaved: false, credentialsSaved: false };
+      expect([result.width, result.height]).toEqual([1536, 864]);
+      liveProvider = { model: connection.model, requests: 1, bytes: result.bytes, png: result.png, width: result.width, height: result.height, imagesSaved: false, credentialsSaved: false };
       checks.push('real provider direct API via packaged WebView2 native image command');
     }
   }
@@ -141,6 +147,11 @@ try {
     baselineDenial: values['expect-denied'] ? result.error : undefined };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ output, ...report }));
+} catch (error) {
+  await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
+  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ checks, errors, syntheticHttpRequests: requests.length, error: String(error) }, null, 2));
+  console.error(JSON.stringify({ output, passed: false, checks }));
+  throw error;
 } finally {
   await browser?.close().catch(() => {});
   if (app?.exitCode === null && app.pid) {

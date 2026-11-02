@@ -109,7 +109,7 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
     """Return one bounded image, downloading temporary public provider URLs when needed."""
     _validate_api_key(api_key)
     url, host, tls_name = await public_endpoint(request.base_url, "images/generations")
-    body = {"model": request.model, "prompt": request.prompt, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
+    body = {"model": request.model, "prompt": request.prompt, "n": 1, "size": request.size, "response_format": "b64_json"}
     try:
         async with asyncio.timeout(120):
             async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=httpx.Timeout(90, connect=10)) as client:

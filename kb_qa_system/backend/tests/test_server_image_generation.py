@@ -33,6 +33,7 @@ async def test_server_image_fails_over_to_independently_configured_endpoint(monk
 
     def handler(request):
         calls.append(request)
+        assert json.loads(request.content)["size"] == "1536x864"
         if request.headers["Authorization"] == "Bearer main-key":
             return httpx.Response(503)
         assert request.headers["Authorization"] == "Bearer backup-key"
@@ -48,12 +49,23 @@ async def test_server_image_fails_over_to_independently_configured_endpoint(monk
         lambda **kwargs: original_client(transport=transport, **kwargs),
     )
 
-    result = await image_generation.generate_server_image("primary", "A test illustration")
+    result = await image_generation.generate_server_image("primary", "A test illustration", "1536x864")
 
     assert len(calls) == 2
     assert calls[0].url.host == "image-main.example"
     assert calls[1].url.host == "image-backup.example"
     assert result == {"data_url": f"data:image/png;base64,{png}", "model": "image-backup"}
+
+
+@pytest.mark.parametrize("size", ["0x1024", "513x1024", "4096x1024", "01024x1024", "1024X1024"])
+@pytest.mark.asyncio
+async def test_invalid_dimensions_rejected_before_provider_lookup(size, monkeypatch):
+    def unexpected_lookup():
+        raise AssertionError("Invalid dimensions must not contact a provider")
+
+    monkeypatch.setattr(image_generation.ConfigLoader, "load", unexpected_lookup)
+    with pytest.raises(image_generation.ImageGenerationError):
+        await image_generation.generate_server_image("primary", "synthetic", size)
 
 
 @pytest.mark.asyncio

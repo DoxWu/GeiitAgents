@@ -1,4 +1,4 @@
-import { validateImageStudio } from '@/officeTasks/composition';
+import { imageStudioBytes, validateImageStudio, validateImageTasks } from '@/officeTasks/composition';
 import type { VaultData } from "@/types/workbench";
 import type { VaultStorage } from './privateVaultStorage';
 
@@ -99,6 +99,7 @@ export class PrivateVault {
           data.taskRuns?.forEach(t => { if (t.workflow) { validateWorkflow(t.workflow.definition); validateWorkflowInput(t.workflow.input); } });
         }
         if (data.imageDraft) validateImageStudio(data.imageDraft);
+        if (data.imageTasks !== undefined) validateImageTasks(data.imageTasks);
         if (data.capabilities !== undefined) {
           if (!Array.isArray(data.capabilities) || data.capabilities.length > 100 || new Set(data.capabilities.map(r => r.id)).size !== data.capabilities.length) throw new Error();
           const { validateCapability } = await import('@/agents/capabilities'); data.capabilities.forEach(validateCapability);
@@ -122,7 +123,7 @@ export class PrivateVault {
           for (const image of task.referenceImages ?? []) { validateWorkImage(image); workImageBytes += image.bytes; }
         }
         for (const slide of data.pptxDraft?.slides ?? []) if (slide.image) workImageBytes += slide.image.bytes;
-        for (const image of [...(data.imageDraft?.references ?? []), ...(data.imageDraft?.result ? [data.imageDraft.result] : [])]) workImageBytes += image.bytes;
+        workImageBytes += imageStudioBytes(data);
         if (workImageBytes > MAX_VAULT_IMAGE_BYTES) throw new Error();
       } catch {
         throw new Error("口令错误或本机密钥库已损坏。");

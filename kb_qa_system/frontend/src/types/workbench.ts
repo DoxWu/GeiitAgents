@@ -138,6 +138,7 @@ export interface WorkArtifact {
 
 export interface VaultData {
   imageDraft?: import('@/officeTasks/composition').ImageStudioDraft | null;
+  imageTasks?: import('@/officeTasks/composition').ImageStudioTask[];
   capabilities?: import('@/agents/capabilities').CapabilityResource[];
   pptxDraft?: import('@/officeTasks/pptxDesign').PptxDesignDeck | null;
   agents?: import('@/agents/definition').AgentDefinition[];

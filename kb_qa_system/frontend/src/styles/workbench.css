@@ -4,7 +4,7 @@
 .work-icon:hover, .work-nav:hover { background-color: rgb(var(--color-muted-rgb)); }
 .work-icon:disabled, .work-command:disabled { opacity: .45; cursor: not-allowed; }
 .work-command { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid rgb(var(--color-line-rgb)); border-radius: 4px; font-size: 14px; }
-.work-label { display: grid; gap: 7px; font-size: 13px; }
+.work-label { display: grid; min-width: 0; gap: 7px; font-size: 13px; }
 .work-input { width: 100%; border: 1px solid rgb(var(--color-line-rgb)); border-radius: 4px; padding: 9px 10px; font-size: 14px; color: inherit; background: transparent; min-width: 0; }
 .work-input:is(select) { color: rgb(var(--color-ink-rgb)); background-color: rgb(var(--color-surface-rgb)); color-scheme: light; }
 .dark .work-input:is(select) { color-scheme: dark; }

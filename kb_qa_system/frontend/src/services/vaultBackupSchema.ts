@@ -1,4 +1,4 @@
-import { validateImageStudio } from '@/officeTasks/composition';
+import { imageStudioBytes, validateImageStudio, validateImageTasks } from '@/officeTasks/composition';
 import type { VaultData } from '@/types/workbench';
 import { artifactRoot } from '@/officeTasks/artifactSeries';
 import { validateProfile } from './workbenchModel';
@@ -79,7 +79,7 @@ const fileMerge = obj({ base: snapshot, local: snapshot, current: snapshot });
 const fileDraft = obj({ id, editId: id, ...directory, name: filename, before: snapshot, content: str(256 * 1024), newline: one('lf', 'crlf', 'cr', 'mixed'), bom: bool, restoredFrom: optional(id), restoreText: optional(str(256 * 1024)), merge: optional(fileMerge) });
 const fileVersion = obj({ id, draftId: id, ...directory, name: filename, before: snapshot, after: snapshot, batch: optional(obj({ id, index: num(19), total: num(20, 1) })), status: one('not-started', 'running', 'succeeded', 'not-applied', 'interrupted', 'needs-attention'), createdAt: date, updatedAt: date, restoredFrom: optional(id), error: optional(str(100000)), inspection: optional(obj({ outcome: one('before', 'after', 'different'), checkedAt: date })), merge: optional(fileMerge) });
 const referenceDocument = obj({ id, name: str(255, 1), content: str(100000, 1), createdAt: date, updatedAt: date });
-const schema = obj({ imageDraft: optional(nullable(value => { validateImageStudio(value); })), capabilities: optional(arr(value => { validateCapability(value); }, 100)), pptxDraft: optional(nullable(value => { validatePptxDesign(value); })), agents: optional(arr(agent, 100)), workflows: optional(arr(workflow, 30)), workflowSchedules: optional(arr(workflowSchedule, 30)), workflowDraft: optional(nullable(workflowDraft)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)), referenceDocuments: optional(arr(referenceDocument, 20)),
+const schema = obj({ imageTasks: optional(value => { validateImageTasks(value); }), imageDraft: optional(nullable(value => { validateImageStudio(value); })), capabilities: optional(arr(value => { validateCapability(value); }, 100)), pptxDraft: optional(nullable(value => { validatePptxDesign(value); })), agents: optional(arr(agent, 100)), workflows: optional(arr(workflow, 30)), workflowSchedules: optional(arr(workflowSchedule, 30)), workflowDraft: optional(nullable(workflowDraft)), profiles: arr(profile, 30), conversations: arr(conversation, 5000), taskRuns: optional(arr(task, 100)), toolRuns: optional(arr(tool, 30000)), artifacts: optional(arr(artifact, 5000)), referenceDocuments: optional(arr(referenceDocument, 20)),
   personalItems: optional(arr(personalItem, 500)), personalDrafts: optional(arr(personalDraft, 100)), reminderDrafts: optional(arr(reminderDraft, 20)), reminderTemplates: optional(arr(reminderTemplate, 100)), organizerRuns: optional(arr(organizer, 100)), fileEditDraft: optional(nullable(fileDraft)), fileEditVersions: optional(arr(fileVersion, 50)) });
 
 function unique(values: { id: string }[]) { if (new Set(values.map(v => v.id)).size !== values.length) fail(); }
@@ -126,7 +126,7 @@ export async function validateVaultBackup(value: unknown): Promise<VaultData> {
     }
     for (const task of data.taskRuns ?? []) for (const image of task.referenceImages ?? []) { validateWorkImage(image); workImageBytes += image.bytes; }
     for (const slide of data.pptxDraft?.slides ?? []) if (slide.image) workImageBytes += slide.image.bytes;
-    for (const image of [...(data.imageDraft?.references ?? []), ...(data.imageDraft?.result ? [data.imageDraft.result] : [])]) workImageBytes += image.bytes;
+    workImageBytes += imageStudioBytes(data);
     if (workImageBytes > MAX_VAULT_IMAGE_BYTES) fail();
     for (const p of data.personalItems ?? []) validatePersonalInput(p);
     for (const d of data.personalDrafts ?? []) { validatePersonalDraft(d); if (d.input.kind === 'todo' && (!d.input.status || !d.input.priority || d.input.dueAt === undefined)) fail(); }

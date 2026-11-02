@@ -9,6 +9,7 @@ import { vaultBackupFixture } from '@/test/vaultBackupFixture';
 import { personalDraft } from '@/personal/itemDraft';
 import { MemoryDirectory } from '@/fileOrganizer/testDirectory';
 import { snapshotText } from '@/fileOrganizer/textEdit';
+import { newCompositionShape } from '@/officeTasks/composition';
 
 beforeEach(async () => {
   vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); vi.stubGlobal('TextDecoder', TextDecoder); vi.stubGlobal('Blob', NodeBlob);
@@ -27,6 +28,16 @@ it('exports current debounced drafts even when persistence is out of quota', asy
   const data = (await backup.importVaultBackup(result.file, '1234')).data;
   expect(data.personalDrafts?.[0].input.content).toBe('latest unsaved edit');
   expect(localStorage.getItem(VAULT_STORAGE_KEY)).toBe(saved);
+  write.mockRestore();
+});
+
+it('exports the current image task before its debounce even when storage is full', async () => {
+  await store.getState().unlock('old-pass');
+  const task = { id: 'unsaved-image', name: 'Image draft', updatedAt: new Date().toISOString(), draft: { prompt: 'latest image edit', shapes: [newCompositionShape(0)], references: [] } };
+  store.getState().queueImageTask(task);
+  const write = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  const result = await store.getState().exportWorkbenchBackup('1234', false);
+  expect((await backup.importVaultBackup(result.file, '1234')).data.imageTasks).toEqual([task]);
   write.mockRestore();
 });
 

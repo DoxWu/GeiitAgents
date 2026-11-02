@@ -202,19 +202,32 @@ fn image_mime(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+pub fn validate_size(size: &str) -> Result<(), String> {
+    let dimensions: Vec<&str> = size.split('x').collect();
+    if dimensions.len() != 2 || dimensions.iter().any(|value| {
+        value.is_empty() || !value.bytes().all(|c| c.is_ascii_digit())
+            || value.parse::<u32>().map_or(true, |n| !(512..=2048).contains(&n) || n % 16 != 0 || n.to_string() != *value)
+    }) {
+        return Err("Invalid image size".into());
+    }
+    Ok(())
+}
+
 pub async fn generate(
     url: Url,
     api_key: String,
     model: String,
     prompt: String,
+    size: String,
 ) -> Result<String, String> {
+    validate_size(&size)?;
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(115))
         .build()
         .map_err(|_| "Image client unavailable")?;
-    let mut request = client.post(url.clone()).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": "1024x1024", "response_format": "b64_json" }));
+    let mut request = client.post(url.clone()).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size, "response_format": "b64_json" }));
     if !api_key.is_empty() {
         request = request.bearer_auth(api_key);
     }
@@ -253,6 +266,12 @@ pub async fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_dimensions_before_provider_requests() {
+        for size in ["1024x1024", "1536x864", "864x1536", "2048x2048"] { assert!(validate_size(size).is_ok()); }
+        for size in ["1x1", "1025x1024", "4096x1024", "1024x1024x1", " 1024x1024", "0512x1024"] { assert!(validate_size(size).is_err()); }
+    }
 
     #[test]
     fn parses_embedded_and_url_image_results() {

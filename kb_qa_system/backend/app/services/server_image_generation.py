@@ -21,6 +21,7 @@ from app.core.provider_image import (
     image_data_url as _image_data_url,
 )
 from app.core.public_http import public_get
+from app.schemas.image_generation import validate_image_size
 
 MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 
@@ -66,9 +67,13 @@ async def _image_data_url_from_provider_url(image_url: str) -> str:
         raise ImageGenerationError("图片下载失败。") from None
 
 
-async def generate_server_image(endpoint_id: str, prompt: str) -> dict[str, str]:
-    if len(prompt.strip()) == 0 or len(prompt) > 1000:
-        raise ImageGenerationError("图片描述需要 1–1000 个字符。")
+async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024x1024") -> dict[str, str]:
+    if len(prompt.strip()) == 0 or len(prompt) > 6000:
+        raise ImageGenerationError("最终生图提示词需要1–6000个字符。")
+    try:
+        validate_image_size(size)
+    except ValueError:
+        raise ImageGenerationError("图片尺寸无效。") from None
     endpoints = [
         endpoint
         for endpoint in ConfigLoader.load().providers.get("image_generation", [])
@@ -95,7 +100,7 @@ async def generate_server_image(endpoint_id: str, prompt: str) -> dict[str, str]
                         "model": endpoint.model,
                         "prompt": prompt.strip(),
                         "n": 1,
-                        "size": "1024x1024",
+                        "size": size,
                         "response_format": "b64_json",
                     },
                 ) as response:
