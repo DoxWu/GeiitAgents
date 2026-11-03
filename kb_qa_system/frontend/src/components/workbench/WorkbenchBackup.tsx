@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Hint } from './Hint';
 import { BackupCoverage } from '@/components/common/BackupCoverage';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { MAX_VAULT_BACKUP_BYTES, type VaultBackupSummary } from '@/services/vaultBackup';
@@ -37,8 +38,8 @@ export function WorkbenchBackup({ onUnlock }: { onUnlock: () => void }) {
       }); }}><fieldset disabled={busy} className="space-y-3">
         <label className="work-label">备份口令<input className="work-input" type="password" minLength={4} maxLength={256} required autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></label>
         <label className="work-label">确认备份口令<input className="work-input" type="password" minLength={4} maxLength={256} required autoComplete="new-password" value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label>
-        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={includeKeys} onChange={e => setIncludeKeys(e.target.checked)} />在加密备份中包含模型 API Key</label>
-        <p className="text-xs text-ink-secondary">默认不导出 API Key，恢复后需要重新填写。备份口令至少 4 个字符，建议使用较长口令；遗失后无法解密。仅包含点击导出时的快照，之后的修改需再次备份。</p>
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={includeKeys} onChange={e => setIncludeKeys(e.target.checked)} />在加密备份中包含模型 API Key 及本机 MCP 参数与环境变量</label>
+        <div><Hint label="加密备份与凭据">默认不导出模型 API Key、本机 MCP 参数与环境变量，恢复后需要重新填写；本机 MCP 包需在目标机器重新安装。备份口令至少 4 个字符，建议使用较长口令；遗失后无法解密。仅包含点击导出时的快照，之后的修改需再次备份。</Hint></div>
         <button className="work-command bg-brand text-white" type="submit">下载加密工作台备份</button>
       </fieldset></form> : <div className="space-y-2"><p className="text-sm">导出前需要解锁本机工作台。</p><button className="work-command" disabled={busy} onClick={onUnlock}>前往解锁工作台</button></div>}
       {exported && <Summary summary={exported} />}
@@ -56,6 +57,7 @@ export function WorkbenchBackup({ onUnlock }: { onUnlock: () => void }) {
         <button className="work-command" type="submit" disabled={!file || store.organizerBusy}>解密并预检查备份</button>
       </fieldset></form>}
       {store.vaultRestorePreview && <section className="space-y-3 border-t border-line pt-4" aria-label="工作台恢复预览"><h3 className="font-medium">恢复预览</h3><Summary summary={store.vaultRestorePreview.summary} />
+        {!!store.vaultRestorePreview.summary.localMcpCredentials && <p className="text-sm">此备份包含本机 MCP 参数或环境变量；恢复后需核对本机连接并重新授权。</p>}
         <p className="text-sm">{store.vaultRestorePreview.replacing ? '本机已有密钥库，确认后将替换其中全部工作台数据。' : '本机尚无密钥库，将从备份创建。'}{store.vaultRestorePreview.summary.apiKeys ? '此备份包含模型 API Key；恢复后仅在主动使用相应连接时调用。' : '此备份不包含模型 API Key。'}</p>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={e => setAcknowledged(e.target.checked)} />我已核对备份内容并确认整体恢复到本机工作台</label>
         <button className="work-command bg-brand text-white" disabled={busy || !acknowledged} onClick={() => { const id = store.vaultRestorePreview!.id; void run(async () => { await store.commitWorkbenchRestore(id); if (mounted.current) { setNotice('恢复已完成。请使用刚设置的新解锁口令打开工作台。'); setFile(null); setAcknowledged(false); } }); }}>确认恢复工作台</button>

@@ -1,3 +1,4 @@
+import { Hint } from './Hint';
 import type { AgentDefinition } from '@/agents/definition';
 import { functionContract } from '@/workflows/functions';
 import { nodeContract, type AgentInputBinding, WorkflowDefinition, WorkflowNode } from '@/workflows/definition';
@@ -36,6 +37,6 @@ export function AgentNodeFields({ node, definition, agents, onChange }: {
         </fieldset>;
       })}
     </>}
-    <p className="text-xs text-ink-secondary">步骤使用此处的定义快照；仓库后续修改不会自动改变已保存流程。共有智能体需先审阅并复制到私有仓库。</p>
+    <div><Hint label="智能体步骤快照">步骤使用此处的定义快照；仓库后续修改不会自动改变已保存流程。共有智能体需先审阅并复制到私有仓库。</Hint></div>
   </div>;
 }

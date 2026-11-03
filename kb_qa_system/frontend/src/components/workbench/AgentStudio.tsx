@@ -6,6 +6,7 @@ import { copyPublicAgent, deletePublicAgent, listMyPublicAgents, listPublicAgent
 import { getAccountGeneration } from '@/services/accountServer';
 import { newAgent, validateAgent, type AgentDefinition, type AgentField, type AgentValueType, type PublicAgent } from '@/agents/definition';
 import { useOrganizationOptions } from '@/hooks/useOrganizationOptions';
+import { Hint } from './Hint';
 
 function emptyField(index: number): AgentField { return { key: `field_${index + 1}`, label: `字段 ${index + 1}`, type: 'string', required: true, description: '' }; }
 
@@ -103,7 +104,7 @@ export function AgentStudio() {
       </div>
     </aside>
     <div className="grid content-start gap-5 p-4 sm:p-6">
-      <div><h1 className="text-lg font-semibold">智能体编排</h1><p className="mt-1 text-sm text-ink-secondary">定义任务指令与结构化输入、输出；工作流使用保存时的定义快照。</p></div>
+      <div className="flex items-center gap-1"><h1 className="text-lg font-semibold">智能体编排</h1><Hint label="智能体编排">定义任务指令与结构化输入、输出，绑定的函数、技能、MCP 会作为固定快照；工作流继续使用保存时的定义。可用工具以字段契约作为输入输出边界，运行前需检查它们的访问范围。</Hint></div>
       <label className="work-label">智能体名称<input className="work-input" maxLength={100} value={draft.name} onChange={event => patch({ name: event.target.value })} /></label>
       <label className="work-label">用途说明<input className="work-input" maxLength={300} value={draft.summary} onChange={event => patch({ summary: event.target.value })} /></label>
       <label className="work-label">系统指令<textarea className="work-input min-h-32 resize-y" maxLength={5000} value={draft.instructions} onChange={event => patch({ instructions: event.target.value })} placeholder="说明智能体的职责、处理规则和需要避免的行为" /></label>
@@ -119,7 +120,7 @@ export function AgentStudio() {
         <button className="work-command justify-self-start" disabled={draft[kind].length >= 10} onClick={() => addField(kind)}><Plus size={14} />增加字段</button>
       </fieldset>)}
       <label className="work-label max-w-md">共有仓库发布范围<select className="work-input" value={publishedOrganizationId} onChange={event => setPublishedOrganizationId(event.target.value)} disabled={busy || !authenticated}><option value="">所有已登录用户</option>{organizations.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}</select></label>
-      <fieldset className="grid gap-2 border-t border-line pt-4"><legend className="text-sm font-semibold">绑定工具、技能与 MCP · {draft.capabilities?.length ?? 0}/12</legend>
+      <fieldset className="grid gap-2 border-t border-line pt-4"><legend className="flex items-center text-sm font-semibold">绑定工具、技能与 MCP · {draft.capabilities?.length ?? 0}/12<Hint label="能力仓库">私有工具可直接由当前用户使用。共有能力需经过审批并保持有效授权。本机 stdio 工具仅保存在本机私有库，不会进入共有智能体，且需要在手动任务中再次授权。</Hint></legend>
         {!store.capabilities.length && <p className="text-xs text-ink-secondary">先在资源仓库创建或导入能力。工具函数需检查代码后确认，远程 MCP 需管理员批准。</p>}
         {store.capabilities.map(resource => <label className="flex items-start gap-2 text-sm" key={resource.id}><input type="checkbox" checked={Boolean(draft.capabilities?.some(r => r.id === resource.id))} disabled={busy || !draft.capabilities?.some(r => r.id === resource.id) && (draft.capabilities?.length ?? 0) >= 12} onChange={e => patch({ capabilities: e.target.checked ? [...(draft.capabilities ?? []), structuredClone(resource)] : draft.capabilities?.filter(r => r.id !== resource.id) })} /><span>{resource.name} · {resource.kind} · v{resource.version}<small className="block text-ink-secondary">{resource.description}</small></span></label>)}
         {draft.capabilities?.filter(r => !store.capabilities.some(c => c.id === r.id)).map(r => <label className="flex gap-2 text-sm" key={r.id}><input type="checkbox" checked onChange={() => patch({ capabilities: draft.capabilities?.filter(c => c.id !== r.id) })} />{r.name} · 固定快照</label>)}
@@ -129,7 +130,7 @@ export function AgentStudio() {
         {owned && <button className="work-command" disabled={busy || !authenticated || !store.unlocked} onClick={() => void removePublic()}><Trash2 size={15} />删除共有版本</button>}
         {current && <button className="work-command" disabled={busy} onClick={() => void removePrivate()}><Trash2 size={15} />删除私有副本</button>}
       </div>
-      <p className="text-xs text-ink-secondary">共有智能体仅保存字段契约和指令；每位使用者在本机选择模型连接，模型密钥不会共享。公开内容在执行前仍应由使用者审阅。</p>
+      <Hint label="共有智能体说明">共有智能体仅保存字段契约和指令；每位使用者在本机选择模型连接，模型密钥不会共享。公开内容在执行前仍应由使用者审阅。</Hint>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}{notice && <p role="status" className="text-sm text-ink-secondary">{notice}</p>}
     </div>
   </section>;

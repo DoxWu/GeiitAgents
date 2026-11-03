@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-local-mcp"
+description = "Manage explicitly installed MCP packages and session-approved stdio tools in the bundled desktop window."
+commands.allow = ["mcp_packages", "mcp_install", "mcp_remove", "mcp_discover", "mcp_approve", "mcp_status", "mcp_call", "mcp_cancel", "mcp_disconnect", "mcp_lock"]

@@ -3,16 +3,18 @@ import { executeWorkflowFunction, functionContract } from '@/workflows/functions
 import { callMcp, verifyCapability } from '@/api/capabilities';
 import type { FinishReason } from '@/services/modelStream';
 import type { ModelMessageContent } from '@/types/workbench';
+import { ensureLocalMcpConnected } from '@/services/localMcp';
 
 type Reply = { content: string; model: string; finishReason: FinishReason };
 export async function runAgent(agent: AgentDefinition, inputs: Record<string, string | number | boolean>, signal: AbortSignal,
   model: (messages: { role: string; content: ModelMessageContent }[]) => Promise<Reply>, allowExternal = false,
-  onCall?: (id: string, phase: 'started' | 'succeeded') => Promise<void>): Promise<Reply> {
+  onCall?: (id: string, phase: 'started' | 'succeeded') => Promise<void>, sessionId = crypto.randomUUID()): Promise<Reply> {
   const messages: { role: string; content: ModelMessageContent }[] = agentMessages(agent, inputs);
+  if (allowExternal) await ensureLocalMcpConnected(agent.capabilities ?? [], sessionId, signal);
   for (const resource of agent.capabilities ?? []) {
     await verifyCapability(resource, signal);
     if (resource.fn && !resource.fn.reviewed) throw new Error('请先检查确认绑定的工具函数。');
-    if (resource.kind === 'mcp' && !allowExternal) throw new Error('本次智能体包含远程 MCP，需要允许发送材料到绑定服务。');
+    if (resource.kind === 'mcp' && !allowExternal) throw new Error('本次智能体包含 MCP，运行前需授权将映射输入发送到该连接。');
   }
   for (let calls = 0; calls <= 6; calls++) {
     signal.throwIfAborted();
@@ -34,7 +36,7 @@ export async function runAgent(agent: AgentDefinition, inputs: Record<string, st
     const contract = resource.kind === 'tool' ? functionContract(resource.fn!) : { ...agent, capabilities: undefined, inputFields: resource.inputFields!, outputFields: resource.outputFields! };
     agentMessages(contract, call.inputs);
     await onCall?.(resource.id, 'started');
-    const output = resource.kind === 'tool' ? await executeWorkflowFunction(resource.fn!, call.inputs, signal) : await callMcp(resource, call.inputs, signal);
+    const output = resource.kind === 'tool' ? await executeWorkflowFunction(resource.fn!, call.inputs, signal) : await callMcp(resource, call.inputs, signal, sessionId);
     await verifyCapability(resource, signal);
     validateAgentOutput(output, contract); signal.throwIfAborted();
     await onCall?.(resource.id, 'succeeded');

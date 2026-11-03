@@ -1,3 +1,4 @@
+import { Hint } from './Hint';
 import { useState } from 'react';
 import { BookOpen, Save, Trash2 } from 'lucide-react';
 import { useWorkbenchStore } from '@/store/workbenchStore';
@@ -44,7 +45,7 @@ export function ReferenceLibrary({ valueName, valueContent, maxCharacters = 1000
       <button type="button" className="work-icon" title="载入所选材料" aria-label="载入所选材料" disabled={disabled || !selected || selected.content.length > maxCharacters} onClick={() => selected && onLoad(selected.name, selected.content)}><BookOpen size={16} /></button>
       <button type="button" className="work-icon" title="删除所选材料" aria-label="删除所选材料" disabled={disabled || !selected} onClick={() => void remove()}><Trash2 size={16} /></button>
     </div>
-    <p className="text-xs text-ink-secondary">最多保存 20 份解析后的文本，随本机密钥库加密，不会自动发送；任务使用云端模型时仍需逐次授权。</p>
+    <div><Hint label="参考资料保存">最多保存 20 份解析后的文本，随本机密钥库加密，不会自动发送；任务使用云端模型时仍需逐次授权。</Hint></div>
     {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     {notice && <p role="status" className="text-xs text-ink-secondary">{notice}</p>}
   </section>;

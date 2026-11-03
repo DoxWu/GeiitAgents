@@ -11,6 +11,8 @@ import { snapshotText } from '@/fileOrganizer/textEdit';
 import { checkChart, renderChartSvg } from '@/officeTasks/chart';
 import type { VaultData } from '@/types/workbench';
 import { newWorkflow, newWorkflowNode } from '@/workflows/definition';
+import { newAgent } from '@/agents/definition';
+import { localMcpInputContract, localMcpResource } from '../localMcp';
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); vi.stubGlobal('TextDecoder', TextDecoder); vi.stubGlobal('Blob', NodeBlob);
@@ -96,6 +98,24 @@ it('includes keys only by opt-in and uses independent salt/nonces for each expor
   expect((await importVaultBackup(a.file, '1234')).data).toEqual(source);
   const first = JSON.parse(await a.file.text()), second = JSON.parse(await b.file.text());
   expect(first.salt).not.toBe(second.salt); expect(first.iv).not.toBe(second.iv); expect(first.ciphertext).not.toBe(second.ciphertext);
+});
+
+it('omits local MCP arguments and environment across nested snapshots unless explicitly included', async () => {
+  const pkg = { id: crypto.randomUUID(), ecosystem: 'npm' as const, name: '@example/server', version: '1.2.3', entryPoints: ['server'] };
+  const tool = { name: 'query', description: 'query', inputSchema: { type: 'object', properties: {} } };
+  const resource = localMcpResource(pkg, { connectionId: crypto.randomUUID(), installationId: pkg.id, entryPoint: 'server', args: ['synthetic-argument-token'] }, tool, localMcpInputContract(tool), { TOKEN: 'synthetic-env-token' });
+  const agent = { ...newAgent(), instructions: 'Use the tool', capabilities: [structuredClone(resource)] };
+  const node = { ...newWorkflowNode('agent', 0), agent, bindings: { context: { source: 'reference' as const, value: '' } } };
+  const workflow = { ...newWorkflow(), nodes: [node] };
+  const source: VaultData = { profiles: [], conversations: [], capabilities: [resource], agents: [agent], workflows: [workflow], workflowDraft: structuredClone(workflow) };
+  const backup = await exportVaultBackup(source, '1234'), restored = await importVaultBackup(backup.file, '1234');
+  expect(JSON.stringify(restored.data)).not.toContain('synthetic-env-token');
+  expect(JSON.stringify(restored.data)).not.toContain('synthetic-argument-token');
+  expect(backup.summary.localMcpCredentials).toBe(0);
+  expect(source.capabilities![0].localEnv).toEqual({ TOKEN: 'synthetic-env-token' });
+  const complete = await exportVaultBackup(source, '1234', true);
+  expect(complete.summary.localMcpCredentials).toBe(4);
+  expect((await importVaultBackup(complete.file, '1234')).data).toEqual(source);
 });
 
 it('freezes the snapshot before any crypto await', async () => {

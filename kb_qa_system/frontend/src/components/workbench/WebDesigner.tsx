@@ -8,6 +8,7 @@ import { htmlFromArtifact } from './webDesignerOutput';
 import { WebPagePreview } from './WebPagePreview';
 import { ImageGenerator } from './ImageGenerator';
 import { WebDesignCanvas } from './WebDesignCanvas';
+import { Hint } from './Hint';
 import {
   arrangeWebComponents, createWebComponent, defaultWebComponents, initialColors, layouts, normalizeWebComponents,
   webComponentKinds, type WebComponentKind, type WebComponentShape, type WebDesignColors, type WebDesignComponent, type WebLayoutId,
@@ -147,7 +148,7 @@ export function WebDesigner() {
   return <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
     <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[minmax(340px,0.9fr)_minmax(480px,1.1fr)]">
       <form className="grid content-start gap-5" onSubmit={generate}>
-        <div><h1 className="text-xl font-semibold">AI 网页设计</h1><p className="mt-1 text-sm text-ink-secondary">调整版式、色彩、滚动效果和素材，生成可下载的独立网页。</p></div>
+        <div className="flex items-center gap-1"><h1 className="text-xl font-semibold">AI 网页设计</h1><Hint label="网页设计">调整版式、色彩、滚动效果和素材，生成可下载的独立网页。组件可在预览画布移动和缩放，文本说明会随设计一起交给模型。</Hint></div>
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}{notice && <p role="status" className="text-sm text-ink-secondary">{notice}</p>}
         {!!tasks.length && <div className="flex gap-2"><label className="work-label min-w-0 flex-1">已生成网页<select aria-label="已生成网页" className="work-input" value={task?.id ?? ''} onChange={event => setSelectedTaskId(event.target.value)}>{tasks.map(item => <option key={item.id} value={item.id}>{item.title} · {item.status === 'succeeded' ? '已完成' : item.status}</option>)}</select></label><button type="button" className="work-command self-end" onClick={reuseDesign}><RotateCcw size={15} />复用设计</button></div>}
         <label className="work-label">网页名称<input className="work-input" value={pageName} maxLength={80} onChange={event => setPageName(event.target.value)} /></label>

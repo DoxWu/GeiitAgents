@@ -1,4 +1,5 @@
 import { apiClient } from '@/api/client';
+import { workflowHasLocalMcp } from '@/agents/capabilities';
 
 export interface OrganizationSummary {
   id: number;
@@ -103,10 +104,12 @@ export function listOrganizationWorkflows(id: number): Promise<OrganizationWorkf
 }
 
 export function publishOrganizationWorkflow(id: number, name: string, definition: unknown): Promise<OrganizationWorkflowTemplate> {
+  if (workflowHasLocalMcp(definition as Parameters<typeof workflowHasLocalMcp>[0])) throw new Error('含本机 MCP 的工作流只能保存在个人私有仓库。');
   return apiClient.post(`/organizations/${id}/workflows`, { name, definition }, requestOptions);
 }
 
 export function updateOrganizationWorkflow(id: number, workflowId: string, name: string, definition: unknown): Promise<OrganizationWorkflowTemplate> {
+  if (workflowHasLocalMcp(definition as Parameters<typeof workflowHasLocalMcp>[0])) throw new Error('含本机 MCP 的工作流只能保存在个人私有仓库。');
   return apiClient.request(`/organizations/${id}/workflows/${workflowId}`, { ...requestOptions, method: 'PUT', body: JSON.stringify({ name, definition }), headers: { 'Content-Type': 'application/json' } });
 }
 

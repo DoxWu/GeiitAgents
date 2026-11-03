@@ -1,4 +1,5 @@
 import { TaskNavigation } from './TaskNavigation';
+import { Hint } from './Hint';
 import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ClipboardList, FileUp, Loader2, Play, RotateCcw, Square, Trash2, XCircle } from 'lucide-react';
@@ -102,8 +103,7 @@ function DocumentTaskContent({ outputFormat, onFormat }: { outputFormat: Documen
     </aside>
     <div className="min-h-0 overflow-auto p-4 sm:p-6">
       <div className="mx-auto max-w-4xl">
-        <h1 className="text-xl font-semibold">生成文档与文件</h1>
-        <p className="mt-2 text-sm text-ink-secondary">先选择交付格式，模型会按该格式组织内容。任务和可编辑成果保存到本机加密库；关闭或锁定客户端会中断任务，导出文件为明文，请先审阅。</p>
+        <div className="flex items-center gap-1"><h1 className="text-xl font-semibold">生成文档与文件</h1><Hint label="文档生成">先选择交付格式，模型会按该格式组织内容。任务和可编辑成果保存到本机加密库；关闭或锁定客户端会中断任务，导出文件为明文，请先审阅。</Hint></div>
       <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">

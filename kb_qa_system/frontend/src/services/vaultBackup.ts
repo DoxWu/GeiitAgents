@@ -8,6 +8,7 @@ const FORMAT = 'geiit-workbench-backup';
 const ITERATIONS = 600000;
 const encoder = new TextEncoder(), aad = encoder.encode(FORMAT + ':1');
 export interface VaultBackupSummary {
+  localMcpCredentials?: number;
   capabilities?: number; hasImageDraft?: boolean;
   exportedAt: string;
   workflows: number;
@@ -15,9 +16,21 @@ export interface VaultBackupSummary {
   agents: number; hasPptxDraft: boolean; personalItems: number; personalDrafts: number; reminderDrafts: number; reminderTemplates: number; organizerRuns: number; fileEditVersions: number; fileEditDrafts: number;
 }
 export function summarizeVault(data: VaultData, exportedAt: string): VaultBackupSummary {
-  return { exportedAt, capabilities: data.capabilities?.length ?? 0, hasImageDraft: Boolean(data.imageDraft || data.imageTasks?.length), workflows: data.workflows?.length ?? 0, profiles: data.profiles.length, apiKeys: data.profiles.filter(p => p.apiKey).length, conversations: data.conversations.length, messages: data.conversations.reduce((n, c) => n + c.messages.length, 0),
+  return { exportedAt, localMcpCredentials: localMcpCredentials(data), capabilities: data.capabilities?.length ?? 0, hasImageDraft: Boolean(data.imageDraft || data.imageTasks?.length), workflows: data.workflows?.length ?? 0, profiles: data.profiles.length, apiKeys: data.profiles.filter(p => p.apiKey).length, conversations: data.conversations.length, messages: data.conversations.reduce((n, c) => n + c.messages.length, 0),
     tasks: data.taskRuns?.length ?? 0, artifacts: data.artifacts?.length ?? 0, agents: data.agents?.length ?? 0, hasPptxDraft: Boolean(data.pptxDraft), personalItems: data.personalItems?.length ?? 0, personalDrafts: data.personalDrafts?.length ?? 0,
     reminderDrafts: data.reminderDrafts?.length ?? 0, reminderTemplates: data.reminderTemplates?.length ?? 0, organizerRuns: data.organizerRuns?.length ?? 0, fileEditVersions: data.fileEditVersions?.length ?? 0, fileEditDrafts: data.fileEditDraft ? 1 : 0 };
+}
+/** Covers nested immutable agent/workflow/task snapshots as well as the library. */
+function localMcpCredentials(value: unknown, redact = false): number {
+  if (!value || typeof value !== 'object') return 0;
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + localMcpCredentials(item, redact), 0);
+  const record = value as Record<string, unknown>;
+  if (record.kind === 'mcp' && record.transport === 'stdio') {
+    const count = Number(Boolean(Array.isArray(record.localArgs) && record.localArgs.length || record.localEnv && Object.keys(record.localEnv).length));
+    if (redact) { record.localArgs = []; record.localEnv = {}; }
+    return count;
+  }
+  return Object.values(record).reduce<number>((sum, item) => sum + localMcpCredentials(item, redact), 0);
 }
 function fail(): never { throw new Error('备份格式无效或版本不兼容，当前工作台未更改。'); }
 function record(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) fail(); return value as Record<string, unknown>; }
@@ -40,7 +53,7 @@ export async function exportVaultBackup(source: VaultData, password: string, inc
   const serialized = JSON.stringify(source);
   if (serialized.length > MAX_PAYLOAD_BYTES) throw new Error('工作台数据超过 16 MiB 备份上限。');
   const data = JSON.parse(serialized) as VaultData;
-  if (!includeKeys) data.profiles = data.profiles.map(p => ({ ...p, apiKey: '' }));
+  if (!includeKeys) { data.profiles = data.profiles.map(p => ({ ...p, apiKey: '' })); localMcpCredentials(data, true); }
   await validateVaultBackup(data);
   const exportedAt = new Date().toISOString(), payload = encoder.encode(JSON.stringify({ version: 1, exportedAt, data }));
   if (payload.byteLength > MAX_PAYLOAD_BYTES) throw new Error('工作台数据超过 16 MiB 备份上限。');

@@ -1,3 +1,4 @@
+import { Hint } from './Hint';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
 import { pickOrganizerDirectory } from '@/fileOrganizer/directory';
@@ -84,7 +85,7 @@ export function FileTextEditor() {
   }
   return <section className="min-h-0 flex-1 overflow-auto p-4 sm:p-6" aria-label="文本内容编辑"><div className="mx-auto max-w-5xl space-y-4">
     <h2 className="font-semibold">MD/TXT 内容编辑</h2>
-    <p className="text-sm text-ink-secondary">仅在你选择文件后读取内容，支持最多 256 KiB 的 UTF-8 文件。原文、草稿和写入版本加密保存在本机，不发送给模型。写入前先保存版本并复核文件；操作期间请勿用其他程序编辑同一文件。</p>
+    <div><Hint label="本机文本编辑">仅在你选择文件后读取内容，支持最多 256 KiB 的 UTF-8 文件。原文、草稿和写入版本加密保存在本机，不发送给模型。写入前先保存版本并复核文件；操作期间请勿用其他程序编辑同一文件。</Hint></div>
     <fieldset disabled={busy} className="space-y-3">
       <button className="work-command" onClick={() => void act(pick)}>选择文本编辑目录</button>
       <p className="break-all text-sm">已授权目录：{directory?.name || '尚未选择'}。刷新或重新进入后需要重新授权。</p>

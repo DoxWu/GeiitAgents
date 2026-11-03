@@ -6,6 +6,7 @@ import { CompositionCanvas } from './CompositionCanvas';
 import { ImageCanvasSettings } from './ImageCanvasSettings';
 import { ImageGenerator } from './ImageGenerator';
 import { useWorkbenchFence } from '@/hooks/useWorkbenchFence';
+import { Hint } from './Hint';
 
 const fresh = (): ImageStudioDraft => ({ prompt: '', canvas: { ...DEFAULT_IMAGE_CANVAS }, shapes: [newCompositionShape(0)], references: [] });
 export function ImageStudio() {
@@ -116,9 +117,9 @@ export function ImageStudio() {
           <button type="button" className="work-command" onClick={() => setDeleting(true)}>删除图片任务</button>
           {deleting && <><span className="self-center text-sm">确认删除当前任务及图片？</span><button type="button" className="work-command text-danger" onClick={() => void changeTask('delete')}>确认删除图片任务</button><button type="button" className="work-command" onClick={() => setDeleting(false)}>取消删除</button></>}
         </div>
-        <p className="text-xs text-ink-secondary">每个任务独立保存构图、提示词、参考图及生成结果；切换时取消当前生图。最多50个任务，所有任务共用本机图片容量。</p>
+        <Hint label="图片任务">每个任务独立保存构图、提示词、参考图及生成结果；切换时取消当前生图。最多 50 个任务，所有任务共用本机图片容量。</Hint>
       </div>
-      <p className="text-sm text-ink-secondary">设置画布尺寸、背景和区域构图。生图会携带当前区域的坐标、大小、旋转与层级，并直接发送上传的参考原图；视觉整理提示词为可选步骤。参考图需要模型支持图片编辑，构图仍可能产生位置偏差。</p>
+      <div><Hint label="构图与参考图">设置画布尺寸、背景和区域构图。生图会携带当前区域的坐标、大小、旋转与层级，并直接发送上传的参考原图；视觉整理提示词为可选步骤。参考图需要模型支持图片编辑，构图仍可能产生位置偏差。</Hint></div>
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-2">
         <div className="grid min-w-0 content-start gap-4" data-image-editor>
           <ImageCanvasSettings value={canvas} onChange={canvas => setDraft(d => ({ ...d, canvas }))} />

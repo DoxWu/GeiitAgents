@@ -1,4 +1,5 @@
 import { newWorkflow, validateWorkflow, type WorkflowDefinition, type WorkflowNode } from './definition';
+import { workflowHasLocalMcp } from '@/agents/capabilities';
 
 const FORMAT = 'geiit-workflow-definition';
 const VERSION = 4;
@@ -11,6 +12,7 @@ function assertRecord(value: unknown, keys: string[]): asserts value is Record<s
 
 export function exportWorkflowDefinition(value: WorkflowDefinition): string {
   const workflow = validateWorkflow(value);
+  if (workflowHasLocalMcp(workflow)) throw new Error('包含本机 MCP 的工作流不能导出；请移除本机连接以避免泄露配置。');
   const portable = {
     name: workflow.name,
     nodes: workflow.nodes.map(({ profileId: _profileId, ...node }) => node),

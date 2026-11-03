@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Hint } from './Hint';
 import { newCompositionShape, type CompositionShape } from '@/officeTasks/composition';
 import type { WorkImage } from '@/types/workbench';
 const bound = (v: number, min: number, max: number) => Math.max(min, Math.min(max,v));
@@ -30,7 +31,7 @@ export function CompositionCanvas({ shapes, onChange, images = [], background = 
         {shape?.id===s.id&&<><button type="button" aria-label="旋转区域" className="absolute -top-6 left-1/2 h-4 w-4 rounded-full border-2 border-white bg-brand" onPointerDown={e=>start(e,s,'rotate')} /><button type="button" aria-label="调整区域大小" className="absolute -bottom-1 -right-1 h-3 w-3 border border-white bg-brand" onPointerDown={e=>start(e,s,'resize')} /></>}
       </div>)}
     </div>
-    <p className="text-xs text-ink-secondary">拖动区域或右下角改变大小，顶部圆点旋转（Shift 吸附15°）；层号越大越靠前。选中不改变层级，也可从下拉框选取被遮挡区域。</p>
+    <div><Hint label="构图操作">拖动区域或右下角改变大小，顶部圆点旋转（Shift 吸附15°）；层号越大越靠前。选中不改变层级，也可从下拉框选取被遮挡区域。</Hint></div>
     <select aria-label="选择区域" className="work-input" value={shape?.id??''} onChange={e=>setSelected(e.target.value)}><option value="">选择区域</option>{shapes.map((s,i)=><option key={s.id} value={s.id}>区域{i+1} · {s.kind} · 层{s.layer}</option>)}</select>
     {shape&&<div className="grid min-w-0 gap-3 sm:grid-cols-2"><label className="work-label">区域类型<select className="work-input" value={shape.kind} onChange={e=>patch({kind:e.target.value as CompositionShape['kind']})}><option value="rectangle">矩形</option><option value="ellipse">椭圆</option><option value="triangle">三角形</option><option value="text">文字</option><option value="image">图片</option></select></label><label className="work-label">区域颜色<input type="color" className="h-9 w-full bg-transparent" value={shape.color} onChange={e=>patch({color:e.target.value})}/></label>
       {(['x','y','w','h','rotation','layer'] as const).map(k=><label className="work-label" key={k}>{({x:'水平位置 %',y:'垂直位置 %',w:'宽度 %',h:'高度 %',rotation:'旋转角度',layer:'层号'})[k]}<input className="work-input" type="number" aria-label={k==='rotation'?'旋转角度':k==='layer'?'层号':k} value={Math.round(shape[k]*100)/100} min={k==='rotation'?-360:k==='w'||k==='h'?3:0} max={k==='rotation'?360:k==='layer'?999:100} onChange={e=>{const v=Number(e.target.value);if(!Number.isFinite(v))return;patch(k==='x'?{x:bound(v,0,100-shape.w)}:k==='y'?{y:bound(v,0,100-shape.h)}:k==='w'?{w:bound(v,3,100-shape.x)}:k==='h'?{h:bound(v,3,100-shape.y)}:k==='layer'?{layer:Math.round(bound(v,0,999))}:{rotation:bound(v,-360,360)});}}/></label>)}

@@ -1,4 +1,5 @@
 import { TaskNavigation } from './TaskNavigation';
+import { Hint } from './Hint';
 import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { AgentSequence } from './AgentSequence';
@@ -82,7 +83,7 @@ export function OfficeToolTasks() {
     <div className="min-h-0 min-w-0 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-4xl">
       <h1 className="text-xl font-semibold">多步骤办公助手</h1>
       <AgentSequence />
-      <p className="mt-2 text-sm text-ink-secondary">让模型按目标读取本次 CSV/XLSX 表格、生成图表和 Markdown 文档。文档可分别编辑、比较和恢复版本，所有成果保存到本机加密库。需要模型支持工具调用；最多 6 轮模型请求、8 次工具执行，可随时停止。</p>
+      <div><Hint label="多步骤办公助手">让模型按目标读取本次 CSV/XLSX 表格、生成图表和 Markdown 文档。文档可分别编辑、比较和恢复版本，所有成果保存到本机加密库。需要模型支持工具调用；最多 6 轮模型请求、8 次工具执行，可随时停止。</Hint></div>
       <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
       {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
       <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">

@@ -1,3 +1,4 @@
+import { Hint } from './Hint';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FolderOpen, RefreshCw, Undo2 } from 'lucide-react';
 import type { OrganizerDirectoryHandle } from '@/fileOrganizer/apply';
@@ -144,7 +145,7 @@ function RenameFiles() {
   return <section className="flex min-h-0 flex-1 flex-col" aria-label="文件整理">
     <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3"><FolderOpen size={17} /><strong>文件整理</strong><span className="text-xs text-ink-secondary">预览变更、应用、核验与撤销</span></div>
     <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-5xl">
-      <p className="text-sm text-ink-secondary">仅处理明确选择的平面目录，不进入子目录、不上传文件内容。每批最多 500 个文件、256 MiB，单文件最多 64 MiB。采用复制校验后删除源文件，文件修改时间可能变化。操作期间请勿用其他程序编辑目录；发生故障时保留恢复副本。当前环境不支持目录写入时可导出清单。</p>
+      <div><Hint label="本机文件整理">仅处理明确选择的平面目录，不进入子目录、不上传文件内容。每批最多 500 个文件、256 MiB，单文件最多 64 MiB。采用复制校验后删除源文件，文件修改时间可能变化。操作期间请勿用其他程序编辑目录；发生故障时保留恢复副本。当前环境不支持目录写入时可导出清单。</Hint></div>
       <fieldset disabled={busy} className="mt-5">
         <div className="flex flex-wrap gap-2"><button className="work-command" onClick={() => input.current?.click()}>选择文件生成清单</button><button className="work-command" onClick={() => void pickDirectory()}>选择可整理目录</button><button className="work-command" disabled={!directory} onClick={() => void reload()}>重新读取目录</button>
           <input ref={input} hidden type="file" multiple aria-label="选择待整理文件" onChange={event => { if (event.target.files) load(event.target.files); event.target.value = ''; }} /></div>

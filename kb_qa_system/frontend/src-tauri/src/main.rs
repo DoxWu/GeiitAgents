@@ -2,12 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Mutex, time::Duration};
-use tauri::State;
+use tauri::{Manager, State};
 use tokio::sync::oneshot;
 
 mod local_stream;
 mod local_tools;
 mod local_images;
+#[cfg(windows)]
+mod local_mcp;
 mod web_preview;
 #[cfg(windows)]
 mod organizer;
@@ -232,10 +234,19 @@ fn main() {
         .invoke_system(include_str!("ipc-init.js"))
         .register_uri_scheme_protocol("geiit-preview", |_context, request| web_preview::response(request));
     #[cfg(windows)]
-    let builder = builder.manage(organizer::Directories::default()).invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, generate_local_image, cancel_local_model, organizer::organizer_pick_directory, organizer::organizer_release_directory, organizer::organizer_access]);
+    let builder = builder.manage(organizer::Directories::default()).manage(std::sync::Arc::new(local_mcp::McpState::default())).invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, generate_local_image, cancel_local_model, organizer::organizer_pick_directory, organizer::organizer_release_directory, organizer::organizer_access, local_mcp::mcp_packages, local_mcp::mcp_install, local_mcp::mcp_remove, local_mcp::mcp_discover, local_mcp::mcp_approve, local_mcp::mcp_status, local_mcp::mcp_call, local_mcp::mcp_cancel, local_mcp::mcp_disconnect, local_mcp::mcp_lock]);
     #[cfg(not(windows))]
     let builder = builder.invoke_handler(tauri::generate_handler![complete_local_model, stream_local_model, list_local_models, complete_local_tools, generate_local_image, cancel_local_model]);
-    builder.run(tauri::generate_context!()).expect("Desktop runtime failed");
+    let app = builder.build(tauri::generate_context!()).expect("Desktop runtime failed");
+    #[cfg(windows)]
+    {
+        let state = app.state::<std::sync::Arc<local_mcp::McpState>>().inner().clone();
+        app.run(move |_app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { state.lock(); }
+        });
+    }
+    #[cfg(not(windows))]
+    app.run(|_, _| {});
 }
 
 #[cfg(test)]

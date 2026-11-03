@@ -1,3 +1,4 @@
+import { Hint } from './Hint';
 import { TaskNavigation } from './TaskNavigation';
 import { useTaskNavigation } from '@/hooks/useTaskNavigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -102,7 +103,7 @@ export function ChartTasks() {
     </aside>
     <div className="min-h-0 min-w-0 overflow-auto p-4 sm:p-6"><div className="mx-auto max-w-5xl">
       <h1 className="text-xl font-semibold">检查与生成图表</h1>
-      <p className="mt-2 text-sm text-ink-secondary">CSV 检查和图表生成在本机完成，不核验业务真实性。可另行请求模型审阅已生成图表的视觉布局；该审阅不能代替下方本地数值检查。</p>
+      <div><Hint label="图表生成与审阅">CSV 检查和图表生成在本机完成，不核验业务真实性。可另行请求模型审阅已生成图表的视觉布局；该审阅不能代替下方本地数值检查。</Hint></div>
       <TaskNavigation hasTask={Boolean(task)} onResult={taskNavigation.showResult} onInput={taskNavigation.showInput} />
       {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}{notice && <p role="status" className="mt-4 text-sm">{notice}</p>}
       <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">

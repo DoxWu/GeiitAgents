@@ -10,6 +10,7 @@ import { CompositionCanvas } from './CompositionCanvas';
 import { newCompositionShape } from '@/officeTasks/composition';
 import { applyPptxContent, pptxContentTargets } from '@/officeTasks/pptxContent';
 import { useWorkbenchFence } from '@/hooks/useWorkbenchFence';
+import { Hint } from './Hint';
 
 const layouts: { id: PptxSlideLayout; label: string }[] = [
   { id: 'title', label: '标题页' }, { id: 'bullets', label: '要点列表' }, { id: 'split', label: '文字与图片' },
@@ -177,7 +178,7 @@ export function PptxDesigner() {
       </select></label>}
     </aside>
     <div className="grid content-start gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-2"><div><h1 className="text-lg font-semibold">逐页设计 PowerPoint</h1><p className="mt-1 text-sm text-ink-secondary">编辑每页布局和内容主题，或直接写入正文；支持上传或生成图片。最多 50 页、每页一张图片，总计 4 MiB；视觉模型读取前3张。</p></div><button className="work-command" onClick={() => { const next = initialDeck(); setDeck(next); setSelectedSlide(next.slides[0].id); }}>新建设计</button><button className="work-command" onClick={() => { setError(''); void store.savePptxDraft(deck).then(() => setNotice('设计已加密保存；切换页签后可继续编辑。')).catch(reason => setError(reason.message)); }}><Save size={15} />保存设计</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-1"><h1 className="text-lg font-semibold">逐页设计 PowerPoint</h1><Hint label="逐页演示文稿设计">编辑每页布局和内容主题，或直接写入正文；支持上传或生成图片。最多50页、每页一张图片，总计8 MiB。视觉模型读取前3张图片；导出会生成可编辑的PPTX。</Hint></div><button className="work-command" onClick={() => { const next = initialDeck(); setDeck(next); setSelectedSlide(next.slides[0].id); }}>新建设计</button><button className="work-command" onClick={() => { setError(''); void store.savePptxDraft(deck).then(() => setNotice('设计已加密保存；切换页签后可继续编辑。')).catch(reason => setError(reason.message)); }}><Save size={15} />保存设计</button></div>
       <div className="grid gap-5 xl:grid-cols-[minmax(260px,0.8fr)_minmax(360px,1.2fr)]">
         <div className="grid content-start gap-4">
           <label className="work-label">本页标题<input className="work-input" maxLength={120} value={slide.title} onChange={event => patchSlide({ title: event.target.value })} /></label>

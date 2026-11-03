@@ -1,5 +1,6 @@
 import { apiClient } from '@/api/client';
 import type { AgentDefinition, PublicAgent } from '@/agents/definition';
+import { hasLocalMcp } from '@/agents/capabilities';
 
 export async function listPublicAgents(): Promise<PublicAgent[]> {
   return apiClient.get('/agents/public?limit=100', { cache: 'no-store', redirect: 'error' });
@@ -10,6 +11,7 @@ export async function listMyPublicAgents(): Promise<PublicAgent[]> {
 }
 
 export async function savePublicAgent(agent: AgentDefinition, organizationId: number | null = null): Promise<PublicAgent> {
+  if (agent.capabilities?.some(hasLocalMcp)) throw new Error('本机 MCP 只能保存在私有智能体中，无法发布到共有仓库。');
   const { id: _id, sharedId, ...spec } = agent;
   const body = JSON.stringify({ agent: spec, organizationId });
   return sharedId

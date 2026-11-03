@@ -1,6 +1,7 @@
 import { imageStudioBytes, validateImageStudio, validateImageTasks, type ImageStudioDraft, type ImageStudioTask } from '@/officeTasks/composition';
 import type { ImageSize } from '@/services/imageGeneration';
 import { runAgent } from '@/agents/runtime';
+import { disconnectLocalMcpSession, lockLocalMcp } from '@/services/localMcp';
 import type { TextBatchInput, TextBatchPlan, TextBatchPreview } from '@/fileOrganizer/textBatch';
 import { artifactSeries } from '@/officeTasks/artifactSeries';
 import { create } from "zustand";
@@ -13,6 +14,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { ModelProfile, StoredReferenceDocument, TaskRun, ToolRun, VaultData, WorkArtifact, WorkConversation, WorkMessage } from "@/types/workbench";
 import type { WorkImage } from '@/types/workbench';
 import { validateAgent, type AgentDefinition } from '@/agents/definition';
+import { workflowHasLocalMcp } from '@/agents/capabilities';
 import { MAX_IMAGES_PER_MESSAGE, MAX_VAULT_IMAGE_BYTES, validateWorkImage } from '@/services/workbenchImages';
 import type { SearchHit } from '@/localKnowledge/core';
 import { buildKnowledgeMessages, type KnowledgeTurn } from '@/localKnowledge/answer';
@@ -296,6 +298,10 @@ async function pollWorkflowSchedules() {
         useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, status: 'error', lastError: '工作流修订已不存在，请重新配置触发器。', updatedAt: now.toISOString() } : item) }));
         continue;
       }
+      if (workflowHasLocalMcp(definition)) {
+        useWorkbenchStore.setState(current => ({ workflowSchedules: current.workflowSchedules.map(item => item.id === schedule.id ? { ...item, enabled: false, status: 'error', lastError: '本机 MCP 不能用于定时或事件触发，请改为手动运行。', updatedAt: now.toISOString() } : item) }));
+        await persist(); continue;
+      }
       const cloud = definition.nodes.some(node => node.agent?.capabilities?.some(r => r.kind === 'mcp')) || definition.nodes.some(node => {
         if (!isWorkflowModelNode(node)) return false;
         const routeId = node.profileId || schedule.profileId;
@@ -319,6 +325,7 @@ async function executeWorkflowSchedule(id: string, allowCloud: boolean): Promise
   if (!schedule) throw new Error('找不到工作流触发器。');
   const workflow = state.workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
   if (!workflow) throw new Error('触发器引用的工作流修订不存在。');
+  if (workflowHasLocalMcp(workflow)) throw new Error('含本机 MCP 的工作流不能由定时或事件触发。');
   if (workflowSchedulesInFlight.has(id)) throw new Error('触发器运行中，请先等待或停止工作流。');
   const token = Symbol(id);
   workflowSchedulesInFlight.set(id, token);
@@ -938,7 +945,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const workflowSchedules = (data.workflowSchedules ?? []).map(item => validateWorkflowSchedule(item));
     const recoveredSchedules = workflowSchedules.map(schedule => schedule.enabled && schedule.status === 'enabled'
       && schedule.nextRunAt && Date.parse(schedule.nextRunAt) <= Date.now()
-      ? { ...schedule, status: 'awaiting-device' as const, updatedAt: unlockedAt } : schedule);
+      ? { ...schedule, status: 'awaiting-device' as const, updatedAt: unlockedAt } : schedule).map(schedule => {
+        const workflow = (data.workflows ?? []).find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
+        return workflow && workflowHasLocalMcp(workflow)
+          ? { ...schedule, enabled: false, status: 'error' as const, nextRunAt: undefined, lastError: '本机 MCP 不能用于定时或事件触发，请改为手动运行。', updatedAt: unlockedAt }
+          : schedule;
+      });
     set({ unlocked: true, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: data.imageDraft ?? null, imageTasks: data.imageTasks ?? [], capabilities: data.capabilities ?? [], pptxDraft: data.pptxDraft ?? null, agents: (data.agents ?? []).map(validateAgent), workflows: data.workflows ?? [], referenceDocuments: data.referenceDocuments ?? [], workflowSchedules: recoveredSchedules, workflowDraft: data.workflowDraft ?? null, workflowDraftSaving: false, profiles: publicProfiles(), conversations: data.conversations, taskRuns, toolRuns, artifacts: data.artifacts ?? [], personalItems: data.personalItems ?? [], personalDrafts: data.personalDrafts ?? [], personalDraftSaving: false, reminderDrafts: data.reminderDrafts ?? [], reminderTemplates: data.reminderTemplates ?? [], organizerRuns, organizerBusy: organizerInFlight, fileEditDraft: data.fileEditDraft ?? null, fileEditVersions, fileEditSaving: false,
       currentId: data.conversations[0]?.id ?? null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {}, storageError: null });
     if (taskRuns.some((task, index) => task !== (data.taskRuns ?? [])[index]) || toolRuns.some((tool, index) => tool !== (data.toolRuns ?? [])[index]) || organizerRuns.some((run, index) => run !== data.organizerRuns?.[index]) || fileEditVersions.some((r, i) => r !== data.fileEditVersions?.[i])) await persist();
@@ -947,6 +959,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     workflowScheduleTimer = setInterval(() => { void pollWorkflowSchedules().catch(() => {}); }, 30_000);
   },
   lock: async () => {
+    const nativeLock = lockLocalMcp().catch(() => {});
     // Capture the editor's latest debounced draft before clearing unlocked state.
     void get().flushImageTask().catch(() => {});
     get().cancelVaultTransfer(); get().cancelPersonalImport(); get().cancelFileEditBatch();
@@ -962,6 +975,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     secrets = [];
     try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
     lockingVault?.lock();
+    await nativeLock;
     if (epoch === generation) eraseMemory();
   },
   saveImageDraft: async draft => {
@@ -1335,7 +1349,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         return { ...reply, finishReason };
       };
       const guard = () => { if (controller.signal.aborted || epoch !== generation || !get().unlocked) throw new DOMException('任务已停止', 'AbortError'); };
-      const result = clean.agent ? await runAgent(clean.agent, clean.agentInputs!, controller.signal, request, allowCloud, capabilityRecorder(id, clean.agent, guard)) : await request(messages);
+      const result = clean.agent ? await runAgent(clean.agent, clean.agentInputs!, controller.signal, request, allowCloud, capabilityRecorder(id, clean.agent, guard), id) : await request(messages);
       if (controller.signal.aborted || epoch !== generation) throw new DOMException('任务已取消或密钥库已锁定', 'AbortError');
       const content = normalizeDocumentMarkdown(result.content), completedAt = new Date().toISOString();
       const artifact: WorkArtifact = { id: crypto.randomUUID(), taskId: id, kind: 'markdown', version: 1,
@@ -1359,7 +1373,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       }
       throw error;
     } finally {
-      preview.dispose(); clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token);
+      preview.dispose(); clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); await disconnectLocalMcpSession(id).catch(() => {});
     }
   },
   startOfficeToolTask: async (profileId, input, allowCloud, allowWebSearch = false) => {
@@ -1418,7 +1432,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         await persist();
       }
       throw error;
-    } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); }
+    } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); await disconnectLocalMcpSession(id).catch(() => {}); }
   },
   stageWorkflowDraft: definition => {
     if (!get().unlocked || !vault) return false;
@@ -1625,7 +1639,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
               : { content: await completeModel(route.profile!, route.secret!.apiKey, nextMessages, round.signal, preview.push, finish), model: route.profile!.model };
             return { ...reply, finishReason };
           };
-          const result = document.agent ? await runAgent(document.agent, document.agentInputs!, round.signal, request, allowCloud, capabilityRecorder(id, document.agent, guard, node.id)) : await request(messages);
+          const result = document.agent ? await runAgent(document.agent, document.agentInputs!, round.signal, request, allowCloud, capabilityRecorder(id, document.agent, guard, node.id), id) : await request(messages);
           guard(); if (round.signal.aborted) throw new Error('此模型步骤已超时。');
           return { ...result, finishReason };
         } finally { preview.dispose(); clearTimeout(roundTimeout); controller.signal.removeEventListener('abort', abort); }
@@ -1648,7 +1662,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         await persist();
       }
       throw error;
-    } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); }
+    } finally { clearTimeout(timeout); controllers.delete(token); accountRequests.delete(token); await disconnectLocalMcpSession(id).catch(() => {}); }
   },
   resumeWorkflow: async (taskId, fromNodeId, allowCloud) => {
     const source = get().taskRuns.find(task => task.id === taskId);
@@ -1661,6 +1675,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (!get().unlocked || !vault) throw new Error('请先解锁本机密钥库。');
     const clean = validateWorkflowSchedule(schedule), workflow = get().workflows.find(item => item.id === clean.workflowId);
     if (!workflow || workflow.revision !== clean.workflowRevision) throw new Error('触发器引用的工作流修订不存在，请重新保存配置。');
+    if (workflowHasLocalMcp(workflow)) throw new Error('本机 MCP 工具仅可在用户手动启动的长任务中运行，不能用于定时或事件触发。');
     if (!get().workflowSchedules.some(item => item.id === clean.id) && get().workflowSchedules.length >= 30) throw new Error('最多保存 30 个触发器。');
     if (workflowSchedulesInFlight.has(clean.id)) throw new Error('触发器运行中，请先等待或停止工作流。');
     const { prepareWorkflow } = await import('@/workflows/runner');
@@ -1685,6 +1700,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     if (workflowSchedulesInFlight.has(id)) throw new Error('触发器运行中，请先等待或停止工作流。');
     const workflow = get().workflows.find(item => item.id === schedule.workflowId && item.revision === schedule.workflowRevision);
     if (!workflow) throw new Error('触发器引用的工作流修订不存在，请重新保存配置。');
+    if (enabled && workflowHasLocalMcp(workflow)) throw new Error('本机 MCP 工具仅可在用户手动启动的长任务中运行。');
     const now = new Date().toISOString();
     set(state => ({ workflowSchedules: state.workflowSchedules.map(item => item.id === id ? {
       ...item, enabled, status: enabled ? 'enabled' as const : 'paused' as const,

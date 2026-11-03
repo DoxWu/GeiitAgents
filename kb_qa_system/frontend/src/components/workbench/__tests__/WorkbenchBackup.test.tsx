@@ -45,7 +45,7 @@ it('defaults to no keys and does not download a late result after leaving the pa
   vi.mocked(store.getState().exportWorkbenchBackup).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const download = vi.spyOn(URL, 'createObjectURL');
   const view = render(<WorkbenchBackup onUnlock={vi.fn()} />);
-  expect(screen.getByLabelText('在加密备份中包含模型 API Key')).not.toBeChecked();
+  expect(screen.getByLabelText('在加密备份中包含模型 API Key 及本机 MCP 参数与环境变量')).not.toBeChecked();
   fill('备份口令', '1234'); fill('确认备份口令', '1234'); fireEvent.click(screen.getByText('下载加密工作台备份'));
   expect(store.getState().exportWorkbenchBackup).toHaveBeenCalledWith('1234', false);
   view.unmount(); await act(async () => finish({ file: new Blob(['encrypted']), summary }));

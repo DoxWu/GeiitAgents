@@ -2,6 +2,23 @@ import { expect, it } from 'vitest';
 import { newWorkflow, newWorkflowNode } from './definition';
 import { exportWorkflowDefinition, importWorkflowDefinition, MAX_WORKFLOW_FILE_BYTES } from './portable';
 
+it('never exports local stdio MCP installation configuration', () => {
+  const workflow = newWorkflow(), node = newWorkflowNode('agent', 0);
+  node.text = 'Use the bound tool.';
+  const tool = {
+    id: '17171717-1717-4171-8171-171717171717', kind: 'mcp' as const, transport: 'stdio' as const, localInputMode: 'json' as const,
+    name: 'local tool', version: 1, description: '', content: '', toolName: 'list_files',
+    localPackage: { id: '27272727-2727-4272-8272-272727272727', ecosystem: 'npm' as const, name: '@example/server', version: '1.2.3', entryPoints: ['server'] },
+    localConnectionId: '37373737-3737-4373-8373-373737373737', localEntryPoint: 'server', localArgs: [], localEnv: { API_TOKEN: 'sensitive' },
+    inputFields: [{ key: 'arguments', label: 'JSON', type: 'string' as const, required: false, description: '' }],
+    outputFields: [{ key: 'result', label: 'Result', type: 'string' as const, required: true, description: '' }],
+  };
+  node.agent = { id: tool.id, name: 'agent', summary: '', instructions: 'run', inputFields: [{ key: 'context', label: 'Context', type: 'string', required: true, description: '' }], outputFields: [{ key: 'result', label: 'Result', type: 'string', required: true, description: '' }], capabilities: [tool] };
+  node.bindings = { context: { source: 'reference', value: '' } };
+  workflow.nodes = [node];
+  expect(() => exportWorkflowDefinition(workflow)).toThrow('本机 MCP');
+});
+
 it('roundtrips a portable definition with fresh local IDs and without model connection bindings', () => {
   const source = newWorkflowNode('generate_document', 0), target = newWorkflowNode('create_document', 1);
   source.profileId = 'machine-specific-secret-route';
