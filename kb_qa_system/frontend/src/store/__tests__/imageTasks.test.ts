@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useWorkbenchStore as store, VAULT_STORAGE_KEY } from '../workbenchStore';
 import { PrivateVault } from '@/services/privateVault';
 import { newCompositionShape, type ImageStudioTask } from '@/officeTasks/composition';
+import { MAX_VAULT_IMAGE_BYTES } from '@/services/workbenchImages';
 
 vi.mock('@/services/workbenchModel', async original => ({ ...await original<typeof import('@/services/workbenchModel')>(), getAccountModel: vi.fn().mockResolvedValue(null) }));
 const password = 'synthetic-image-task-password';
@@ -68,7 +69,10 @@ it('counts images across every task before admitting more materials', async () =
   const bytes = new Uint8Array(1_500_000); bytes.set([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
   const image = { name: 'synthetic.png', mimeType: 'image/png' as const, dataUrl: `data:image/png;base64,${Buffer.from(bytes).toString('base64')}`, bytes: bytes.length };
   const withImage = (id: string) => { const value = task(id); value.draft.result = image; return value; };
+  // Synthetic existing accounting at the boundary, without allocating 128 MB
+  // in every ordinary store test. The new image still receives full validation.
+  store.setState({ conversations: [{ id: 'budget', profileId: '', title: '', updatedAt: new Date().toISOString(), messages: [{ id: 'budget', role: 'user', content: '', createdAt: new Date().toISOString(), images: [{ ...image, bytes: MAX_VAULT_IMAGE_BYTES - image.bytes * 5 }] }] }] });
   for (let i = 0; i < 5; i++) await store.getState().saveImageTask(withImage(`image-${i}`));
-  await expect(store.getState().saveImageTask(withImage('overflow'))).rejects.toThrow('8 MiB');
+  await expect(store.getState().saveImageTask(withImage('overflow'))).rejects.toThrow('128 MiB');
   expect(store.getState().imageTasks).toHaveLength(5);
 });

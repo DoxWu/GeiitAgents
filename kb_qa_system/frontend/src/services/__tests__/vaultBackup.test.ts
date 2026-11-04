@@ -146,7 +146,7 @@ it('rejects wrong passwords, tampering, unrecognized envelopes and oversized fil
     await expect(importVaultBackup(new Blob([JSON.stringify({ ...original, ...patch })]), '1234')).rejects.toThrow('格式无效');
   }
   const arrayBuffer = vi.fn();
-  await expect(importVaultBackup({ size: MAX_VAULT_BACKUP_BYTES + 1, arrayBuffer } as unknown as Blob, '1234')).rejects.toThrow('24 MiB');
+  await expect(importVaultBackup({ size: MAX_VAULT_BACKUP_BYTES + 1, arrayBuffer } as unknown as Blob, '1234')).rejects.toThrow('260 MiB');
   expect(arrayBuffer).not.toHaveBeenCalled();
   await expect(importVaultBackup(new Blob(), '1234')).rejects.toThrow();
   await expect(importVaultBackup(new Blob([new Uint8Array([0xff])]), '1234')).rejects.toThrow();

@@ -54,7 +54,7 @@ export function validateImageStudio(value: unknown): ImageStudioDraft {
   if (!d || typeof d !== 'object' || Object.keys(d).some(k => !['prompt','shapes','references','canvas','result'].includes(k)) || typeof d.prompt !== 'string' || d.prompt.length > 1000 || !Array.isArray(d.references) || d.references.length > 2) throw new Error('图片草稿无效。');
   imageCanvas(d.canvas);
   validateShapes(d.shapes); d.references.forEach(validateWorkImage); if (d.result) validateGeneratedWorkImage(d.result);
-  if ([...d.references, ...(d.result ? [d.result] : [])].reduce((n,i) => n+i.bytes,0) > MAX_VAULT_IMAGE_BYTES) throw new Error('图片草稿素材总量超过8 MiB。');
+  if ([...d.references, ...(d.result ? [d.result] : [])].reduce((n,i) => n+i.bytes,0) > MAX_VAULT_IMAGE_BYTES) throw new Error('图片草稿素材总量超过128 MiB。');
   return structuredClone(d);
 }
 export function compositionPrompt(draft: ImageStudioDraft, prompt = draft.prompt): string {

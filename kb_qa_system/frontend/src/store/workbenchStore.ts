@@ -41,6 +41,7 @@ import { withTextBatch, assertTextDirectory, assertVersionCapacity, draftText, r
 export const VAULT_STORAGE_KEY = "geiit.workbench.encrypted.v1";
 export const ACCOUNT_MODEL_ID = "$account";
 let vault: PrivateVault | null = null;
+let vaultLock: Promise<void> | null = null;
 let secrets: VaultData["profiles"] = [];
 let generation = 0;
 let imageTaskTimer: ReturnType<typeof setTimeout> | undefined;
@@ -270,7 +271,7 @@ async function persist(required = false) {
       if (workflowVersion === workflowDraftVersion) { clearWorkflowDraftTimer(); useWorkbenchStore.setState({ workflowDraftSaving: false }); }
     }
   } catch (error) {
-    const message = error instanceof Error && error.message.includes('超过 16 MiB 快照上限')
+    const message = error instanceof Error && error.message.includes('超过 192 MiB 快照上限')
       ? error.message
       : "本机保存失败。请导出重要对话，并检查存储空间或其他窗口。";
     if (epoch === generation) useWorkbenchStore.setState({ storageError: message });
@@ -925,6 +926,9 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }
   },
   unlock: async (password) => {
+    // A locked screen can appear before a large final snapshot is committed.
+    // Do not read the previous ciphertext while that write is still in flight.
+    if (vaultLock) await vaultLock;
     if (get().vaultTransferBusy) throw new Error('备份或恢复处理中，请先等待或取消。');
     get().cancelVaultTransfer();
     const epoch = ++generation;
@@ -959,6 +963,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     workflowScheduleTimer = setInterval(() => { void pollWorkflowSchedules().catch(() => {}); }, 30_000);
   },
   lock: async () => {
+    if (vaultLock) return vaultLock;
     const nativeLock = lockLocalMcp().catch(() => {});
     // Capture the editor's latest debounced draft before clearing unlocked state.
     void get().flushImageTask().catch(() => {});
@@ -973,10 +978,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     clearWorkflowScheduleTimer();
     set({ unlocked: false, textBatchPreview: null, personalImportBusy: false, personalImportPreview: null, personalImportResult: null, imageDraft: null, imageTasks: [], capabilities: [], pptxDraft: null, agents: [], workflows: [], referenceDocuments: [], workflowSchedules: [], workflowDraft: null, workflowDraftSaving: false, profiles: [], conversations: [], taskRuns: [], toolRuns: [], artifacts: [], personalItems: [], personalDrafts: [], personalDraftSaving: false, reminderDrafts: [], reminderTemplates: [], reminderDraftSaving: false, organizerRuns: [], fileEditDraft: null, fileEditVersions: [], fileEditSaving: false, currentId: null, running: {}, streamingContent: {}, generationPreviews: {}, errors: {} });
     secrets = [];
-    try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
-    lockingVault?.lock();
-    await nativeLock;
-    if (epoch === generation) eraseMemory();
+    const completion = (async () => {
+      try { await lockingVault?.flush(); } catch { /* Keep the last successfully encrypted snapshot. */ }
+      lockingVault?.lock();
+      await nativeLock;
+      if (epoch === generation) eraseMemory();
+    })();
+    vaultLock = completion;
+    try { await completion; } finally { if (vaultLock === completion) vaultLock = null; }
   },
   saveImageDraft: async draft => {
     if (!get().unlocked) throw new Error('请先解锁本机加密库。');
@@ -985,7 +994,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       + get().conversations.flatMap(c => c.messages).flatMap(m => m.images ?? []).reduce((sum,i) => sum+i.bytes,0)
       + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0)
       + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0);
-    if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过8 MiB，请删除较早素材。');
+    if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过128 MiB，请删除较早素材。');
     set({ imageDraft: clean });
     try { await persist(true); } catch (e) { if (epoch === generation && get().imageDraft === clean) set({ imageDraft: previous }); throw e; }
   },
@@ -1015,7 +1024,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       + get().conversations.flatMap(c => c.messages).flatMap(m => m.images ?? []).reduce((sum, image) => sum + image.bytes, 0)
       + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0)
       + (get().pptxDraft?.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0) ?? 0);
-    if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过8 MiB，请删除较早素材。');
+    if (bytes > MAX_VAULT_IMAGE_BYTES) throw new Error('本机图片总量超过128 MiB，请删除较早素材。');
     set({ imageTasks: tasks, imageDraft });
     try { await persist(true); } catch (error) {
       if (epoch === generation && get().imageTasks === tasks) set({ imageTasks: previous, imageDraft: oldDraft });
@@ -1063,7 +1072,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const otherImages = get().conversations.flatMap(item => item.messages).flatMap(message => message.images ?? [])
       .concat(get().taskRuns.flatMap(task => task.referenceImages ?? [])).reduce((sum, image) => sum + image.bytes, 0);
     const deckImages = clean.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0);
-    if (otherImages + deckImages + imageStudioBytes(get()) > MAX_VAULT_IMAGE_BYTES) throw new Error('设计图片会使本机加密库中的图片总量超过 8 MiB，请删除较早的含图对话或任务。');
+    if (otherImages + deckImages + imageStudioBytes(get()) > MAX_VAULT_IMAGE_BYTES) throw new Error('设计图片会使本机加密库中的图片总量超过 128 MiB，请删除较早的含图对话或任务。');
     set({ pptxDraft: clean });
     await persist(true);
   },
@@ -1225,7 +1234,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const historyImageBytes = conversation.messages.flatMap(message => message.images ?? []).reduce((total, image) => total + image.bytes, 0);
     const vaultImageBytes = get().conversations.flatMap(item => item.messages.flatMap(message => message.images ?? [])).reduce((total, image) => total + image.bytes, 0);
     const newImageBytes = images.reduce((total, image) => total + image.bytes, 0);
-    if (vaultImageBytes + imageStudioBytes(get()) + newImageBytes + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0) + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 8 MiB，请先删除不再需要的旧对话。');
+    if (vaultImageBytes + imageStudioBytes(get()) + newImageBytes + get().taskRuns.flatMap(t => t.referenceImages ?? []).reduce((sum,i) => sum+i.bytes,0) + (get().pptxDraft?.slides.reduce((sum,s) => sum+(s.image?.bytes ?? 0),0) ?? 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机工作台图片总量超过 128 MiB，请先删除不再需要的旧对话。');
     const isCloud = useAccount || ['relay', 'direct'].includes(profile?.mode || '');
     if (isCloud && (historyImageBytes > 0 || newImageBytes > 0) && !allowCloudImages) throw new Error('云端发送包含本对话中的图片，需重新明确授权。');
     if (useAccount) {
@@ -1301,7 +1310,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     const storedImageBytes = get().conversations.flatMap(item => item.messages).flatMap(message => message.images ?? []).reduce((sum, image) => sum + image.bytes, 0)
       + (get().pptxDraft?.slides.reduce((sum, slide) => sum + (slide.image?.bytes ?? 0), 0) ?? 0)
       + get().taskRuns.flatMap(item => item.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0);
-    if (storedImageBytes + imageStudioBytes(get()) + (clean.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机加密库中的图片总量将超过 8 MiB，请先删除较早的含图对话或任务。');
+    if (storedImageBytes + imageStudioBytes(get()) + (clean.referenceImages ?? []).reduce((sum, image) => sum + image.bytes, 0) > MAX_VAULT_IMAGE_BYTES) throw new Error('本机加密库中的图片总量将超过 128 MiB，请先删除较早的含图对话或任务。');
     const messages = buildDocumentMessages(clean);
     const profile = get().profiles.find(item => item.id === profileId);
     const secret = secrets.find(item => item.id === profileId);

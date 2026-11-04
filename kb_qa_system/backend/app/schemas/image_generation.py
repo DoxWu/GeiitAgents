@@ -8,8 +8,8 @@ from app.core.image_request import validate_reference_images
 def validate_image_size(size: str) -> str:
     if not isinstance(size, str) or not re.fullmatch(r"[1-9][0-9]{2,3}x[1-9][0-9]{2,3}", size):
         raise ValueError("图片尺寸无效。")
-    if any(n < 512 or n > 2048 or n % 16 for n in map(int, size.split("x"))):
-        raise ValueError("图片宽高应为512–2048之间的16的倍数。")
+    if any(n < 512 or n > 4096 or n % 16 for n in map(int, size.split("x"))):
+        raise ValueError("图片宽高应为512–4096之间的16的倍数。")
     return size
 
 

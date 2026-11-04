@@ -1,9 +1,11 @@
 import { imageStudioBytes, validateImageStudio, validateImageTasks } from '@/officeTasks/composition';
 import type { VaultData } from "@/types/workbench";
 import type { VaultStorage } from './privateVaultStorage';
+import { decodeBase64 as decode, encodeBase64 as encode } from './binaryBase64';
+import { MAX_VAULT_SNAPSHOT_BYTES } from './workbenchCapacity';
+export { MAX_VAULT_SNAPSHOT_BYTES } from './workbenchCapacity';
 
 const ITERATIONS = 600_000;
-export const MAX_VAULT_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 const encoder = new TextEncoder();
 const context = encoder.encode("geiit-private-workbench-v1");
 
@@ -19,18 +21,6 @@ interface Envelope {
   salt: string;
   iv: string;
   ciphertext: string;
-}
-
-function encode(bytes: Uint8Array): string {
-  let result = "";
-  for (let i = 0; i < bytes.length; i += 8192) {
-    result += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  }
-  return btoa(result);
-}
-
-function decode(value: string): Uint8Array {
-  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
 
 async function derive(password: string, salt: Uint8Array): Promise<CryptoKey> {
@@ -67,6 +57,7 @@ export class PrivateVault {
       try {
         const envelope: Envelope = JSON.parse(stored);
         if (envelope.version !== 1) throw new Error();
+        if (typeof envelope.ciphertext !== 'string' || envelope.ciphertext.length > Math.ceil((MAX_VAULT_SNAPSHOT_BYTES + 16) / 3) * 4) throw new Error();
         salt = decode(envelope.salt);
         if (salt.length !== 16) throw new Error();
         key = await derive(password, salt);
@@ -139,15 +130,18 @@ export class PrivateVault {
 
   save(data: VaultData): Promise<void> {
     const snapshot = JSON.stringify(data);
-    if (encoder.encode(snapshot).byteLength > MAX_VAULT_SNAPSHOT_BYTES) return Promise.reject(new Error("本机工作台数据超过 16 MiB 快照上限，请导出备份后删除不需要的历史或正文。"));
+    const sizeError = () => new Error('本机工作台数据超过 192 MiB 快照上限，请导出备份后删除不需要的历史或正文。');
+    if (snapshot.length > MAX_VAULT_SNAPSHOT_BYTES) return Promise.reject(sizeError());
     const key = this.key;
     const salt = this.salt;
     const epoch = this.epoch;
     const operation = this.pending.catch(() => {}).then(async () => {
       if (!key || !salt || epoch !== this.epoch) throw new Error("密钥库已锁定。");
+      const plaintext = encoder.encode(snapshot);
+      if (plaintext.byteLength > MAX_VAULT_SNAPSHOT_BYTES) throw sizeError();
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const ciphertext = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv, additionalData: context }, key, encoder.encode(snapshot),
+        { name: "AES-GCM", iv, additionalData: context }, key, plaintext,
       );
       const serialized = JSON.stringify({ version: 1, salt: encode(salt), iv: encode(iv), ciphertext: encode(new Uint8Array(ciphertext)) });
       await withVaultWriteLock(this.storageKey, async () => {

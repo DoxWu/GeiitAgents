@@ -10,9 +10,10 @@ from urllib.parse import urlsplit
 
 from app.core.public_http import public_get
 
-MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_IMAGE_BYTES = 64 * 1024 * 1024
+MAX_IMAGE_RESPONSE_BYTES = 88 * 1024 * 1024
 MAX_REFERENCE_IMAGE_BYTES = 1_500_000
-MAX_IMAGE_DOWNLOAD_SECONDS = 15
+MAX_IMAGE_DOWNLOAD_SECONDS = 60
 
 
 class ProviderImageError(Exception):
@@ -21,7 +22,7 @@ class ProviderImageError(Exception):
 
 def _size_error(max_image_bytes: int) -> ProviderImageError:
     if max_image_bytes == MAX_IMAGE_BYTES:
-        return ProviderImageError("模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。")
+        return ProviderImageError("模型生成图片超过64 MiB接收上限，请降低输出尺寸后重试。")
     return ProviderImageError(f"图片超过{max_image_bytes:,}字节限制。")
 
 
@@ -75,7 +76,7 @@ def download_provider_image_url(
         response = request_get(
             image_url,
             headers={"Accept": "image/png,image/jpeg,image/webp"},
-            timeout=2,
+            timeout=10,
             stream=True,
         )
     except Exception:

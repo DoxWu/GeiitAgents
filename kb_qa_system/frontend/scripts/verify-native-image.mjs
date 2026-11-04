@@ -15,6 +15,7 @@ const { values } = parseArgs({ options: {
   exe: { type: 'string', default: 'src-tauri/target-dev/release/geiit-workbench.exe' },
   output: { type: 'string', default: '../../.tools/native-image-20261102' },
   'expect-denied': { type: 'boolean', default: false },
+  'large-4k': { type: 'boolean', default: false },
   // Explicit opt-in only: one billed synthetic request, credentials stay in
   // memory and are never saved into the test vault, logs, images or reports.
   'provider-env': { type: 'string' },
@@ -44,15 +45,19 @@ function largeGeneratedPng(width, height) {
   const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header.set([8, 2, 0, 0, 0], 8);
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', header), pngChunk('IDAT', deflateSync(scanlines)), pngChunk('IEND', Buffer.alloc(0))]);
 }
-const generatedPng = largeGeneratedPng(1600, 1024);
-if (generatedPng.length <= 4 * 1024 * 1024 || generatedPng.length > 8 * 1024 * 1024) throw new Error('Synthetic large PNG fixture has an unexpected size');
-const studioPng = largeGeneratedPng(1024, 1024);
-if (studioPng.length <= 1_500_000 || studioPng.length > 4 * 1024 * 1024) throw new Error('Synthetic image-studio PNG fixture has an unexpected size');
+const dimensions = values['large-4k'] ? [3840, 2160] : [1600, 1024];
+const generatedPng = largeGeneratedPng(...dimensions);
+if (generatedPng.length <= (values['large-4k'] ? 20 : 4) * 1024 * 1024 || generatedPng.length > 64 * 1024 * 1024) throw new Error('Synthetic large PNG fixture has an unexpected size');
+const studioPng = values['large-4k'] ? generatedPng : largeGeneratedPng(1024, 1024);
+if (studioPng.length <= 1_500_000 || studioPng.length > 64 * 1024 * 1024) throw new Error('Synthetic image-studio PNG fixture has an unexpected size');
 const requests = [], bodies = [], checks = [], errors = [];
 let liveProvider, imageDownload, useLargeGeneratedPng = true;
 const fixture = createServer(async (request, response) => {
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
   requests.push({ path: request.url, authorization: request.headers.authorization ?? null });
+  if (request.url === '/oversize.png') {
+    response.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': String(64 * 1024 * 1024 + 1) }); response.end(); return;
+  }
   if (request.url === '/image.png') {
     response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(useLargeGeneratedPng ? generatedPng : studioPng); return;
   }
@@ -74,7 +79,7 @@ const fixture = createServer(async (request, response) => {
   expect(body.model).toBe('native-image-fixture');
   if (body.prompt.includes('OVERSIZE_RESULT')) {
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ data: [{ b64_json: Buffer.alloc(8 * 1024 * 1024 + 3).toString('base64') }] })); return;
+    response.end(JSON.stringify({ data: [{ url: '/oversize.png' }] })); return;
   }
   if (body.prompt.includes('INVALID_RESULT')) {
     response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -83,7 +88,7 @@ const fixture = createServer(async (request, response) => {
   if (body.prompt.includes('UNSUPPORTED_REFERENCE')) { response.writeHead(404); response.end('synthetic unsupported'); return; }
   if (body.prompt.includes('DELAYED')) await new Promise(resolve => setTimeout(resolve, 1200));
   response.writeHead(200, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({ data: [{ url: '/image.png' }] }));
+  response.end(JSON.stringify({ data: [body.prompt.includes('INLINE_RESULT') ? { b64_json: generatedPng.toString('base64') } : { url: '/image.png' }] }));
 });
 await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
 const baseUrl = `http://127.0.0.1:${fixture.address().port}/v1`;
@@ -114,8 +119,8 @@ try {
       const encoded = await window.__TAURI_INTERNALS__.invoke('generate_local_image', {
         requestId: crypto.randomUUID(), baseUrl, apiKey: 'synthetic-image-key', model: 'native-image-fixture', prompt: 'Synthetic image', direct: false,
       });
-      const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0)), dimensions = new DataView(bytes.buffer);
-      return { ok: true, bytes: bytes.length, width: dimensions.getUint32(16), height: dimensions.getUint32(20) };
+      const header = Uint8Array.from(atob(encoded.slice(0, 32)), c => c.charCodeAt(0)), dimensions = new DataView(header.buffer);
+      return { ok: true, bytes: encoded.length / 4 * 3 - (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0), width: dimensions.getUint32(16), height: dimensions.getUint32(20) };
     } catch (error) { return { ok: false, error: String(error) }; }
   }, { baseUrl });
   if (values['expect-denied']) {
@@ -127,9 +132,17 @@ try {
     expect(result.ok, result.error).toBe(true);
     expect(result.bytes).toBe(generatedPng.length);
     expect(result.bytes).toBeGreaterThan(4 * 1024 * 1024);
-    expect([result.width, result.height]).toEqual([1600, 1024]);
+    expect([result.width, result.height]).toEqual(dimensions);
     expect(requests).toEqual([{ path: '/v1/images/generations', authorization: 'Bearer synthetic-image-key' }, { path: '/image.png', authorization: null }]);
     checks.push('native image command allowed and URL downloaded without API key');
+    if (values['large-4k']) {
+      const inlineBytes = await page.evaluate(async baseUrl => {
+        const encoded = await window.__TAURI_INTERNALS__.invoke('generate_local_image', { requestId: crypto.randomUUID(), baseUrl, apiKey: 'synthetic-image-key', model: 'native-image-fixture', prompt: 'INLINE_RESULT 4K', size: '3840x2160' });
+        return encoded.length / 4 * 3 - (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0);
+      }, baseUrl);
+      expect(inlineBytes).toBe(generatedPng.length);
+      checks.push('native 4K inline Base64 above the previous 12 MiB response cap is received intact');
+    }
     const prior = requests.length;
     const edit = await page.evaluate(async ({ baseUrl, reference }) => {
       const invoke = window.__TAURI_INTERNALS__.invoke;
@@ -159,7 +172,7 @@ try {
     await page.getByRole('tab', { name: '图片生成', exact: true }).click();
     await page.getByText('由模型生成图片', { exact: true }).click();
     const studio = page.getByRole('region', { name: '图片生成工作室' });
-    for (const [prompt, message] of [['OVERSIZE_RESULT', '8 MiB'], ['INVALID_RESULT', 'PNG']]) {
+    for (const [prompt, message] of [['OVERSIZE_RESULT', '64 MiB'], ['INVALID_RESULT', 'PNG']]) {
       await page.getByLabel('图片提示词', { exact: true }).fill(prompt);
       await page.getByRole('button', { name: '生成图片并放入设计', exact: true }).click();
       await expect(studio.getByRole('alert')).toContainText(message);
@@ -167,6 +180,7 @@ try {
     }
     checks.push('native UI reports output size and invalid file errors explicitly without generic configuration advice');
     await page.getByLabel('图片提示词', { exact: true }).fill('Synthetic native UI image');
+    if (values['large-4k']) await page.getByLabel('图片比例', { exact: true }).selectOption('3840x2160');
     await page.getByRole('button', { name: '生成图片并放入设计', exact: true }).click();
     await expect(page.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible({ timeout: 15000 });
     expect(await page.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
@@ -181,7 +195,7 @@ try {
     await expect(studio.getByRole('status')).toHaveText('图片下载已开始。');
     imageDownload = { filename: download.suggestedFilename(), bytes: downloaded.length, sha256: createHash('sha256').update(downloaded).digest('hex') };
     checks.push('actual generated-image download saves the complete original PNG with a matching filename');
-    await checkImageStudio(page, output, bodies, png, checks);
+    await checkImageStudio(page, output, bodies, png, checks, values['large-4k'] ? 3840 : 1024);
     const restoredDownloadEvent = page.waitForEvent('download', { timeout: 10000 });
     await studio.getByRole('button', { name: '下载图片', exact: true }).click();
     expect((await readFile(await (await restoredDownloadEvent).path())).equals(studioPng)).toBe(true);
@@ -255,13 +269,15 @@ try {
   }
   expect(errors).toEqual([]);
   const report = { passed: true, checks, syntheticHttpRequests: requests.length, liveProvider, imageDownload, errors,
+    fixture: { dimensions, bytes: generatedPng.length, sha256: createHash('sha256').update(generatedPng).digest('hex') },
     binary: { bytes: binary.length, sha256: createHash('sha256').update(binary).digest('hex') },
     baselineDenial: values['expect-denied'] ? result.error : undefined };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ output, ...report }));
 } catch (error) {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
-  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ checks, errors, syntheticHttpRequests: requests.length, error: String(error) }, null, 2));
+  const images = await page?.getByRole('img', { name: '模型生成结果', exact: true }).evaluateAll(images => images.map(image => ({ width: image.naturalWidth, height: image.naturalHeight, complete: image.complete }))).catch(() => []);
+  await writeFile(path.join(output, 'failure.json'), JSON.stringify({ checks, errors, images, syntheticHttpRequests: requests.length, error: String(error) }, null, 2));
   console.error(JSON.stringify({ output, passed: false, checks }));
   throw error;
 } finally {

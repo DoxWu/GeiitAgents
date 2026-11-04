@@ -58,7 +58,7 @@ async def test_server_image_fails_over_to_independently_configured_endpoint(monk
     assert result == {"data_url": f"data:image/png;base64,{png}", "model": "image-backup"}
 
 
-@pytest.mark.parametrize("size", ["0x1024", "513x1024", "4096x1024", "01024x1024", "1024X1024"])
+@pytest.mark.parametrize("size", ["0x1024", "513x1024", "4112x1024", "01024x1024", "1024X1024"])
 @pytest.mark.asyncio
 async def test_invalid_dimensions_rejected_before_provider_lookup(size, monkeypatch):
     def unexpected_lookup():
@@ -108,16 +108,17 @@ async def test_server_image_downloads_provider_result_url(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_server_image_accepts_provider_result_larger_than_upload_limit(monkeypatch):
+@pytest.mark.parametrize("embedded", [False, True])
+async def test_server_image_accepts_provider_result_larger_than_upload_limit(monkeypatch, embedded):
     primary = ProviderEndpointConfig(name="primary", type="openai_images", model="image-main", api_key="main-key", api_base="https://image-main.example/v1", enabled=True)
     monkeypatch.setattr(image_generation.ConfigLoader, "load", lambda: ModelProviderConfig(providers={"image_generation": [primary]}))
     original = httpx.AsyncClient
-    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [{"url": "https://images.example/result"}]}))
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [{"b64_json": data_url.split(",", 1)[1]} if embedded else {"url": "https://images.example/result"}]}))
     monkeypatch.setattr(image_generation.httpx, "AsyncClient", lambda **kwargs: original(transport=transport, **kwargs))
-    image = b"\x89PNG\r\n\x1a\n" + b"x" * 5_000_000
+    image = b"\x89PNG\r\n\x1a\n" + b"x" * 25_000_000
     data_url = "data:image/png;base64," + base64.b64encode(image).decode()
     monkeypatch.setattr(image_generation, "_image_data_url_from_provider_url", AsyncMock(return_value=data_url))
-    result = await image_generation.generate_server_image("primary", "synthetic")
+    result = await image_generation.generate_server_image("primary", "synthetic", "4096x4096")
     assert result == {"data_url": data_url, "model": "image-main"}
 
 
@@ -155,7 +156,7 @@ def test_provider_image_url_download_is_public_https_and_size_bounded(monkeypatc
             "https://images.example/result?sig=synthetic",
             {
                 "headers": {"Accept": "image/png,image/jpeg,image/webp"},
-                "timeout": 2,
+                "timeout": 10,
                 "stream": True,
             },
         )

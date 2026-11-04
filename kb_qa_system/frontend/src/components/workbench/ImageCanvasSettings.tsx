@@ -12,8 +12,8 @@ export function ImageCanvasSettings({ value, onChange }: { value: ImageCanvas; o
       if (preset) onChange({ ...value, width: preset.width, height: preset.height });
     }}><option value="">自定义尺寸</option>{IMAGE_SIZE_PRESETS.map(p => <option key={imageSizeValue(p)} value={imageSizeValue(p)}>{p.label} · {p.width} × {p.height}</option>)}</select></label>
     <div className="grid min-w-0 grid-cols-2 gap-3">
-      <label className="work-label">图片宽度（像素）<input className="work-input" type="number" min={512} max={2048} step={16} value={width} onChange={event => setWidth(event.target.value)} /></label>
-      <label className="work-label">图片高度（像素）<input className="work-input" type="number" min={512} max={2048} step={16} value={height} onChange={event => setHeight(event.target.value)} /></label>
+      <label className="work-label">图片宽度（像素）<input className="work-input" type="number" min={512} max={4096} step={16} value={width} onChange={event => setWidth(event.target.value)} /></label>
+      <label className="work-label">图片高度（像素）<input className="work-input" type="number" min={512} max={4096} step={16} value={height} onChange={event => setHeight(event.target.value)} /></label>
     </div>
     <button type="button" className="work-command justify-self-start" onClick={() => {
       try { const next = { ...value, width: Number(width), height: Number(height) }; imageSizeValue(next); onChange(next); setError(''); }

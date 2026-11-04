@@ -13,6 +13,7 @@ from app.core.model_provider.config_loader import ConfigLoader
 from app.core.provider_image import (
     MAX_IMAGE_BYTES,
     MAX_IMAGE_DOWNLOAD_SECONDS,
+    MAX_IMAGE_RESPONSE_BYTES,
     download_provider_image_url,
 )
 from app.core.provider_image import (
@@ -24,7 +25,7 @@ from app.core.provider_image import (
 from app.core.public_http import public_get
 from app.schemas.image_generation import validate_image_size
 
-MAX_RESPONSE_BYTES = 12 * 1024 * 1024
+MAX_RESPONSE_BYTES = MAX_IMAGE_RESPONSE_BYTES
 
 
 def configured_image_endpoints() -> list[dict[str, str]]:

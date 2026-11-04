@@ -9,11 +9,14 @@ export const IMAGE_SIZE_PRESETS = [
   { label: '竖屏 9:16', width: 864, height: 1536 },
   { label: '横向 4:3', width: 1024, height: 768 },
   { label: '竖向 3:4', width: 768, height: 1024 },
+  { label: '4K 宽屏 16:9', width: 3840, height: 2160 },
+  { label: '4K 竖屏 9:16', width: 2160, height: 3840 },
+  { label: '4K 正方形', width: 4096, height: 4096 },
 ];
 
 export function imageSizeValue(size: ImageSize = DEFAULT_IMAGE_SIZE): string {
-  if (!size || ![size.width, size.height].every(value => Number.isInteger(value) && value >= 512 && value <= 2048 && value % 16 === 0)) {
-    throw new Error('图片宽高应为512–2048之间的16的倍数。');
+  if (!size || ![size.width, size.height].every(value => Number.isInteger(value) && value >= 512 && value <= 4096 && value % 16 === 0)) {
+    throw new Error('图片宽高应为512–4096之间的16的倍数。');
   }
   return `${size.width}x${size.height}`;
 }

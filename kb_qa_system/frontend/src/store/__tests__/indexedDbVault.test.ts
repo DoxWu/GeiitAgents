@@ -78,3 +78,26 @@ it('closes the storage connection after a failed unlock', async () => {
   expect(close).toHaveBeenCalled();
   expect(store.getState().unlocked).toBe(false);
 });
+
+it('waits for the final lock write before immediately unlocking the latest image task', async () => {
+  await store.getState().unlock(password);
+  const write = IndexedDbVaultStorage.prototype.setItem;
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  vi.spyOn(IndexedDbVaultStorage.prototype, 'setItem').mockImplementationOnce(async function (...args) {
+    entered(); await gate; return write.apply(this, args);
+  });
+  const latest = { id: 'pending-image', name: 'latest', updatedAt: new Date().toISOString(), draft: { prompt: 'last edit before lock', shapes: [], references: [] } };
+  store.getState().queueImageTask(latest);
+  const locking = store.getState().lock(); await started;
+  const read = vi.spyOn(IndexedDbVaultStorage.prototype, 'getItem');
+  const unlocking = store.getState().unlock(password);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(read).not.toHaveBeenCalled();
+    expect(store.getState().unlocked).toBe(false);
+  } finally { release(); await Promise.all([locking, unlocking]); }
+  expect(store.getState().unlocked).toBe(true);
+  expect(store.getState().imageTasks).toEqual([latest]);
+});

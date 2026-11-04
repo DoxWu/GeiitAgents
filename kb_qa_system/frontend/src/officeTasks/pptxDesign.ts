@@ -1,5 +1,5 @@
 import pptxgen from 'pptxgenjs';
-import { validateGeneratedWorkImage } from '@/services/workbenchImages';
+import { MAX_VAULT_IMAGE_BYTES, validateGeneratedWorkImage } from '@/services/workbenchImages';
 import type { WorkImage } from '@/types/workbench';
 import { validateShapes, type CompositionShape } from './composition';
 
@@ -48,7 +48,7 @@ export function validatePptxDesign(value: unknown): PptxDesignDeck {
       validateGeneratedWorkImage(slide.image); imageBytes += slide.image.bytes;
     }
   }
-  if (deck.slides.filter(slide => slide.image).length > 50 || imageBytes > 8 * 1024 * 1024) throw new Error('PPT 最多附加 50 张图片，图片总量不能超过 8 MiB。');
+  if (deck.slides.filter(slide => slide.image).length > 50 || imageBytes > MAX_VAULT_IMAGE_BYTES) throw new Error('PPT 最多附加 50 张图片，图片总量不能超过 128 MiB。');
   return structuredClone(deck as PptxDesignDeck);
 }
 

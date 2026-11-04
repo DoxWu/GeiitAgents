@@ -6,8 +6,8 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::{header::CONTENT_LENGTH, Url};
 
-const MAX_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 88 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_BYTES: usize = 1_500_000;
 const MAX_ENCODED_IMAGE_BYTES: usize = (MAX_IMAGE_BYTES + 2) / 3 * 4;
 
@@ -143,7 +143,7 @@ async fn download_image(url: Url, endpoint: &Url) -> Result<Vec<u8>, String> {
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(15));
+        .timeout(Duration::from_secs(60));
 
     if !same_local_origin {
         if url.scheme() != "https" || url.port_or_known_default() != Some(443) {
@@ -237,7 +237,7 @@ pub fn validate_size(size: &str) -> Result<(), String> {
             value.is_empty()
                 || !value.bytes().all(|c| c.is_ascii_digit())
                 || value.parse::<u32>().map_or(true, |n| {
-                    !(512..=2048).contains(&n) || n % 16 != 0 || n.to_string() != *value
+                    !(512..=4096).contains(&n) || n % 16 != 0 || n.to_string() != *value
                 })
         })
     {
@@ -563,7 +563,7 @@ mod tests {
     #[test]
     fn accepts_generated_images_above_upload_limit_but_under_workspace_limit() {
         let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-        bytes.resize(1_600_000, 0);
+        bytes.resize(25_000_000, 0);
         assert_eq!(validate_generated_image(&bytes), Ok("image/png"));
         bytes.resize(MAX_IMAGE_BYTES + 1, 0);
         assert_eq!(
@@ -598,13 +598,20 @@ mod tests {
 
     #[test]
     fn validates_dimensions_before_provider_requests() {
-        for size in ["1024x1024", "1536x864", "864x1536", "2048x2048"] {
+        for size in [
+            "1024x1024",
+            "1536x864",
+            "864x1536",
+            "2048x2048",
+            "3840x2160",
+            "4096x4096",
+        ] {
             assert!(validate_size(size).is_ok());
         }
         for size in [
             "1x1",
             "1025x1024",
-            "4096x1024",
+            "4112x1024",
             "1024x1024x1",
             " 1024x1024",
             "0512x1024",

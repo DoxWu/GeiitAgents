@@ -87,23 +87,23 @@ it('reports unsupported image edits even when the provider sends an empty error 
 });
 
 it('downloads and returns generated images above the reference upload limit', async () => {
-  const bytes = new Uint8Array(5_000_000); bytes.set(Uint8Array.from(atob('iVBORw0KGgo='), c => c.charCodeAt(0)));
+  const bytes = new Uint8Array(25_000_000); bytes.set(Uint8Array.from(atob('iVBORw0KGgo='), c => c.charCodeAt(0)));
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ url: 'https://cdn.example/large.png' }] })))
     .mockResolvedValueOnce(new Response(bytes)); vi.stubGlobal('fetch', fetcher);
   const image = await generateWorkImage(profile, 'synthetic', 'edit', signal);
-  expect(image.bytes).toBe(5_000_000);
+  expect(image.bytes).toBe(25_000_000);
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it.each(['IMAGE_RESULT_TOO_LARGE', 'IMAGE_RESULT_INVALID_FORMAT', 'IMAGE_RESULT_DOWNLOAD_FAILED', 'IMAGE_RESPONSE_TOO_LARGE'])('explains the native image reception failure %s', async code => {
   vi.stubGlobal('__TAURI_INTERNALS__', {}); vi.mocked(invoke).mockRejectedValue(code);
-  await expect(generateWorkImage(profile, 'synthetic', 'image', signal)).rejects.toThrow(code === 'IMAGE_RESULT_TOO_LARGE' ? '8 MiB' : code === 'IMAGE_RESPONSE_TOO_LARGE' ? '12 MiB' : code === 'IMAGE_RESULT_INVALID_FORMAT' ? 'PNG' : '下载');
+  await expect(generateWorkImage(profile, 'synthetic', 'image', signal)).rejects.toThrow(code === 'IMAGE_RESULT_TOO_LARGE' ? '64 MiB' : code === 'IMAGE_RESPONSE_TOO_LARGE' ? '88 MiB' : code === 'IMAGE_RESULT_INVALID_FORMAT' ? 'PNG' : '下载');
 });
 
 it.each([true, false])('explains oversize URL downloads with declared length=%s', async declared => {
-  const bytes = new Uint8Array(8 * 1024 * 1024 + 1);
+  const bytes = new Uint8Array(64 * 1024 * 1024 + 1);
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ url: 'https://cdn.example/oversize.png' }] })))
     .mockResolvedValueOnce(new Response(bytes, { headers: declared ? { 'Content-Length': String(bytes.length) } : {} }));
   vi.stubGlobal('fetch', fetcher);
-  await expect(generateWorkImage(profile, 'synthetic', 'image', signal)).rejects.toThrow('超过8 MiB');
+  await expect(generateWorkImage(profile, 'synthetic', 'image', signal)).rejects.toThrow('超过64 MiB');
 });

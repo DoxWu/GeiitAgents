@@ -1,5 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { downloadGeneratedWorkImage, readWorkImages, validateWorkImage, workImageFromDataUrl } from '../workbenchImages';
+import { decodeBase64, encodeBase64 } from '../binaryBase64';
+import { imageSizeValue } from '../imageGeneration';
 import { validateImageStudio } from '@/officeTasks/composition';
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -42,12 +44,26 @@ it('rejects MIME mismatches, spoofed data URLs, and too many attachments', async
   await expect(readWorkImages(Array.from({ length: 4 }, (_, index) => new File([png], `${index}.png`, { type: 'image/png' })))).rejects.toThrow('最多附加 3 张');
 });
 
-it('accepts generated results up to the 8 MiB vault budget while keeping uploaded references at 1.5 MiB', async () => {
-  const large = new Uint8Array(5_000_000); large.set(png);
-  const encoded = btoa(Array.from(large, byte => String.fromCharCode(byte)).join(''));
+it('accepts a 25 MB generated result while keeping uploaded references at 1.5 MiB', async () => {
+  const large = new Uint8Array(25_000_000); large.set(png);
+  const encoded = encodeBase64(large);
   const image = workImageFromDataUrl(`data:image/png;base64,${encoded}`, 'generated.png');
-  expect(image.bytes).toBe(5_000_000);
+  expect(image.bytes).toBe(25_000_000);
   expect(() => validateWorkImage(image)).toThrow('超限');
   expect(() => validateImageStudio({ prompt: '', references: [], shapes: [], result: image })).not.toThrow();
   await expect(readWorkImages([new File([large], 'reference.png', { type: 'image/png' })])).rejects.toThrow('1.5 MiB');
+});
+
+it('preserves base64 across chunk boundaries and rejects invalid padding', () => {
+  for (const length of [0, 1, 2, 3, 24575, 24576, 24577, 49153]) {
+    const bytes = Uint8Array.from({ length }, (_, index) => index % 256);
+    expect(decodeBase64(encodeBase64(bytes))).toEqual(bytes);
+  }
+  for (const value of ['aaaa=aaa', 'AA=', '!AAA', 'AAAA\n']) expect(() => decodeBase64(value)).toThrow();
+});
+
+it('accepts 4K dimensions and rejects dimensions outside the bounded range', () => {
+  expect(imageSizeValue({ width: 3840, height: 2160 })).toBe('3840x2160');
+  expect(imageSizeValue({ width: 4096, height: 4096 })).toBe('4096x4096');
+  expect(() => imageSizeValue({ width: 4112, height: 2160 })).toThrow('4096');
 });

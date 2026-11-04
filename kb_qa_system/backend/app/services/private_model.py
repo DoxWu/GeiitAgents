@@ -1,7 +1,6 @@
 """Request-scoped BYOK relay. No provider registry, cache, queue, or persistence."""
 
 import asyncio
-import base64
 import binascii
 import ipaddress
 import json
@@ -14,7 +13,7 @@ from app.core.image_request import image_target, image_request_options, image_re
 
 from app.core.model_text_stream import read_text_response
 from app.core.provider_image import ProviderImageError as ImageGenerationError
-from app.core.provider_image import image_data_url_from_provider_url
+from app.core.provider_image import MAX_IMAGE_RESPONSE_BYTES, image_data_url, image_data_url_from_provider_url
 from app.schemas.private_model import PrivateCompletion, PrivateImageGeneration, PrivateModelList
 
 
@@ -120,7 +119,7 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
                     chunks = bytearray()
                     async for chunk in response.aiter_bytes():
                         chunks.extend(chunk)
-                        if len(chunks) > 12 * 1024 * 1024:
+                        if len(chunks) > MAX_IMAGE_RESPONSE_BYTES:
                             raise PrivateModelError(502, "图像服务响应超过大小限制。")
                     try:
                         data = json.loads(chunks)
@@ -133,23 +132,13 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
                     encoded = image.get("b64_json")
                     if encoded is None and isinstance(image.get("url"), str):
                         data_url = await image_data_url_from_provider_url(image["url"])
-                        encoded = data_url.split(",", 1)[1]
-                    raw = base64.b64decode(encoded, validate=True)
-                    if len(raw) > 8 * 1024 * 1024:
-                        raise PrivateModelError(413, "模型生成图片超过8 MiB工作台图片容量，请降低输出尺寸后重试。")
-                    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
-                        mime = "image/png"
-                    elif raw.startswith(b"\xff\xd8\xff"):
-                        mime = "image/jpeg"
-                    elif len(raw) >= 12 and raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
-                        mime = "image/webp"
                     else:
-                        raise ValueError
-                    return {"data_url": f"data:{mime};base64,{encoded}"}
+                        data_url = image_data_url(encoded)
+                    return {"data_url": data_url}
     except PrivateModelError:
         raise
     except ImageGenerationError as exc:
-        status = 413 if "超过8 MiB" in str(exc) else 502
+        status = 413 if "超过64 MiB" in str(exc) else 502
         raise PrivateModelError(status, str(exc)) from None
     except (KeyError, IndexError, TypeError, ValueError, binascii.Error, json.JSONDecodeError):
         raise PrivateModelError(502, "图像服务未返回有效的内嵌 PNG、JPEG 或 WebP 图片。") from None

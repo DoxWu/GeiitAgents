@@ -1,8 +1,12 @@
-import { expect } from '@playwright/test';
+import { expect as baseExpect } from '@playwright/test';
 import path from 'node:path';
 
+// Real 4K PNG decoding and encrypted IndexedDB writes can exceed the default
+// five-second assertion window. Assertions still finish as soon as ready.
+const expect = baseExpect.configure({ timeout: 30000 });
+
 // Shared by the packaged WebView2 acceptance harness. Only synthetic materials.
-export async function checkImageStudio(page, output, bodies, png, checks = []) {
+export async function checkImageStudio(page, output, bodies, png, checks = [], expectedImageWidth = 1024) {
   const studio = page.getByRole('region', { name: '图片生成工作室' });
   const field = name => studio.getByLabel(name, { exact: true });
   const button = name => studio.getByRole('button', { name, exact: true });
@@ -15,7 +19,7 @@ export async function checkImageStudio(page, output, bodies, png, checks = []) {
   await expect(studio.getByRole('img', { name: 'synthetic-reference.png', exact: true })).toBeVisible();
   await button('生成图片并放入设计').click();
   await expect(studio.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible();
-  await expect.poll(() => studio.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(image => image.naturalWidth)).toBe(1024);
+  await expect.poll(() => studio.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(image => image.naturalWidth), { timeout: 30000 }).toBe(expectedImageWidth);
   await expect.poll(() => bodies.at(-1)?.size).toBe('1536x864');
   expect(bodies.at(-1).prompt).toContain('左上角(14.79%,16.11%)');
   expect(bodies.at(-1).prompt).toContain('旋转30°，层3');
@@ -95,7 +99,7 @@ export async function checkImageStudio(page, output, bodies, png, checks = []) {
   await expect(field('图片任务')).toHaveValue(firstId);
   await expect(field('图片任务名称')).toBeEnabled();
   await expect(studio.getByRole('img', { name: '模型生成结果', exact: true })).toBeVisible();
-  await expect.poll(() => studio.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(image => image.naturalWidth)).toBe(1024);
+  await expect.poll(() => studio.getByRole('img', { name: '模型生成结果', exact: true }).evaluate(image => image.naturalWidth), { timeout: 30000 }).toBe(expectedImageWidth);
   await field('图片任务').selectOption(secondId);
   await expect(field('图片任务')).toHaveValue(secondId);
   await expect(field('图片任务名称')).toBeEnabled();

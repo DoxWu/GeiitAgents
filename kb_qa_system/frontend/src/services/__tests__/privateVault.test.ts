@@ -37,7 +37,7 @@ describe("encrypted private vault", () => {
   it("rejects an oversized UTF-8 snapshot before encryption or storage", async () => {
     const vault = new PrivateVault(localStorage, "vault"); await vault.unlock(password);
     const huge: VaultData = { ...sample, conversations: [{ id: "conversation", profileId: "one", title: "large", updatedAt: new Date().toISOString(), messages: [{ id: "message", role: "user", content: "x".repeat(MAX_VAULT_SNAPSHOT_BYTES), createdAt: new Date().toISOString() }] }] };
-    await expect(vault.save(huge)).rejects.toThrow('超过 16 MiB 快照上限');
+    await expect(vault.save(huge)).rejects.toThrow('超过 192 MiB 快照上限');
     expect(localStorage.getItem("vault")).toBeTruthy();
   });
   it("rejects writes after locking and detects another window's changes", async () => {
