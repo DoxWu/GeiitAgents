@@ -47,6 +47,11 @@ export interface WorkImage {
   bytes: number;
 }
 
+// Generated outputs are deliberately separate from raster model inputs.
+export interface GeneratedWorkImage extends Omit<WorkImage, 'mimeType'> {
+  mimeType: WorkImage['mimeType'] | 'image/svg+xml' | 'image/gif';
+}
+
 export interface ModelImagePart {
   type: 'text' | 'image_url';
   text?: string;

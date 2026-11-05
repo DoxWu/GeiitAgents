@@ -1,4 +1,5 @@
-import type { WorkImage } from '@/types/workbench';
+import type { GeneratedWorkImage, WorkImage } from '@/types/workbench';
+import { validateGeneratedImageAsset } from './generatedImages';
 import { base64ByteLength, decodeBase64, encodeBase64 } from './binaryBase64';
 import { GENERATED_IMAGE_TOO_LARGE, MAX_GENERATED_IMAGE_BYTES } from './workbenchCapacity';
 export { MAX_GENERATED_IMAGE_BYTES, MAX_VAULT_IMAGE_BYTES } from './workbenchCapacity';
@@ -51,13 +52,13 @@ export function validateGeneratedWorkImage(image: WorkImage): void {
   validateImage(image, MAX_GENERATED_IMAGE_BYTES);
 }
 
-export function downloadGeneratedWorkImage(image: WorkImage): void {
-  validateGeneratedWorkImage(image);
+export function downloadGeneratedWorkImage(image: GeneratedWorkImage): void {
+  validateGeneratedImageAsset(image);
   const encoded = image.dataUrl.slice(image.dataUrl.indexOf(',') + 1);
   const bytes = decodeBase64(encoded);
-  const extension = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.slice('image/'.length);
+  const extension = image.mimeType === 'image/svg+xml' ? 'svg' : image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.slice('image/'.length);
   const baseName = Array.from(image.name, character => character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character) ? '_' : character).join('')
-    .replace(/\.(?:png|jpe?g|webp)$/i, '')
+    .replace(/\.(?:png|jpe?g|webp|svg|gif)$/i, '')
     .replace(/[. ]+$/g, '')
     .slice(0, 200) || 'generated-image';
   const blobUrl = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));

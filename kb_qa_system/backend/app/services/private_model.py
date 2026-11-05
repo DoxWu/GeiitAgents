@@ -110,7 +110,11 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
     _validate_api_key(api_key)
     base, resource, dashscope = image_target(request.base_url, request.reference_images)
     url, host, tls_name = await public_endpoint(base, resource)
-    options = image_request_options(request.model, request.prompt, request.size, request.reference_images, dashscope)
+    try:
+        options = image_request_options(request.model, request.prompt, request.size, request.reference_images, dashscope,
+                                        request.output_format, request.frame_count, request.frame_duration_ms)
+    except ValueError as exc:
+        raise PrivateModelError(422, str(exc)) from None
     try:
         async with asyncio.timeout(120):
             async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=httpx.Timeout(90, connect=10)) as client:
@@ -141,7 +145,7 @@ async def generate_private_image(request: PrivateImageGeneration, api_key: str) 
         status = 413 if "超过64 MiB" in str(exc) else 502
         raise PrivateModelError(status, str(exc)) from None
     except (KeyError, IndexError, TypeError, ValueError, binascii.Error, json.JSONDecodeError):
-        raise PrivateModelError(502, "图像服务未返回有效的内嵌 PNG、JPEG 或 WebP 图片。") from None
+        raise PrivateModelError(502, "图像服务未返回有效的 PNG、JPEG、WebP、SVG 或 GIF 图片。") from None
     except Exception:
         raise PrivateModelError(502, "图像生成请求超时或返回格式无效。") from None
 

@@ -180,7 +180,7 @@ def test_provider_image_url_download_is_public_https_and_size_bounded(monkeypatc
         (
             "https://images.example/result?sig=synthetic",
             {
-                "headers": {"Accept": "image/png,image/jpeg,image/webp"},
+                "headers": {"Accept": "image/png,image/jpeg,image/webp,image/gif,image/svg+xml"},
                 "timeout": 10,
                 "stream": True,
             },

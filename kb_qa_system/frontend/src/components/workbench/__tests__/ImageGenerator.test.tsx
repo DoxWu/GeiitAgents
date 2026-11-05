@@ -30,3 +30,17 @@ it('revokes consent and cancels old generation when reference images change', as
   resolve(reference); await waitFor(() => expect(onImage).not.toHaveBeenCalled());
   expect(screen.getByText(/直接发送2张参考原图/)).toBeTruthy();
 });
+
+it('cancels an in-flight output and revokes cloud consent when the format changes', async () => {
+  let resolve!: (image: WorkImage) => void;
+  const generate = vi.fn<typeof initial.generateImage>(() => new Promise(done => { resolve = done; }));
+  useWorkbenchStore.setState({ unlocked: true, profiles: [{ id: 'direct', name: 'direct', mode: 'direct', baseUrl: 'https://models.example/v1', model: 'chat', imageModel: 'gpt-image-2.6-flare', hasKey: true }], generateImage: generate });
+  const onImage = vi.fn();
+  const view = render(<ImageGenerator contextKey="task" requestPrompt="subject" output={{ format: 'svg' }} onImage={onImage} />);
+  fireEvent.click(screen.getByText('由模型生成图片')); fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: '生成图片并放入设计' }));
+  const signal = generate.mock.calls[0][3]!;
+  view.rerender(<ImageGenerator contextKey="task" requestPrompt="subject" output={{ format: 'gif', frameCount: 12 }} onImage={onImage} />);
+  expect(signal.aborted).toBe(true); expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+  resolve(reference); await waitFor(() => expect(onImage).not.toHaveBeenCalled());
+});

@@ -7,8 +7,14 @@ import json
 from urllib.parse import urlsplit
 
 import httpx
-from app.core.image_request import image_target, image_request_options, image_result, image_error_message, validate_reference_images
 
+from app.core.image_request import (
+    image_error_message,
+    image_request_options,
+    image_result,
+    image_target,
+    validate_reference_images,
+)
 from app.core.model_provider.config_loader import ConfigLoader
 from app.core.provider_image import (
     MAX_IMAGE_BYTES,
@@ -36,7 +42,7 @@ def configured_image_endpoints() -> list[dict[str, str]]:
     ]
 
 
-def _generation_url(base_url: str, resource: str = 'images/generations') -> str:
+def _generation_url(base_url: str, resource: str = "images/generations") -> str:
     parsed = urlsplit(base_url)
     if (
         parsed.scheme != "https"
@@ -69,12 +75,23 @@ async def _image_data_url_from_provider_url(image_url: str) -> str:
         raise ImageGenerationError("图片下载失败。") from None
 
 
-async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024x1024", reference_images: list[str] | None = None) -> dict[str, str]:
+async def generate_server_image(
+    endpoint_id: str,
+    prompt: str,
+    size: str = "1024x1024",
+    reference_images: list[str] | None = None,
+    output_format: str | None = None,
+    frame_count: int | None = None,
+    frame_duration_ms: int | None = None,
+) -> dict[str, str]:
     if len(prompt.strip()) == 0 or len(prompt) > 6000:
         raise ImageGenerationError("最终生图提示词需要1–6000个字符。")
     try:
-        validate_image_size(size)
-        reference_images = validate_reference_images([] if reference_images is None else reference_images)
+        if size != "auto" or output_format != "gif":
+            validate_image_size(size)
+        reference_images = validate_reference_images(
+            [] if reference_images is None else reference_images
+        )
     except ValueError:
         raise ImageGenerationError("图片尺寸或参考图片无效。") from None
     endpoints = [
@@ -88,13 +105,26 @@ async def generate_server_image(endpoint_id: str, prompt: str, size: str = "1024
     if start is None:
         raise ImageGenerationError("所选服务端生图模型不可用。")
 
-    failure = '生图请求失败，请检查模型配置或稍后重试。'
+    failure = "生图请求失败，请检查模型配置或稍后重试。"
     for endpoint in endpoints[start:]:
         try:
             base, resource, dashscope = image_target(endpoint.api_base, reference_images)
             url = _generation_url(base, resource)
-            options = image_request_options(endpoint.model, prompt.strip(), size, reference_images, dashscope)
-            timeout = httpx.Timeout(60.0, connect=5.0)
+            try:
+                options = image_request_options(
+                    endpoint.model,
+                    prompt.strip(),
+                    size,
+                    reference_images,
+                    dashscope,
+                    output_format,
+                    frame_count,
+                    frame_duration_ms,
+                )
+            except ValueError as exc:
+                failure = str(exc)
+                continue
+            timeout = httpx.Timeout(115.0, connect=5.0)
             async with httpx.AsyncClient(
                 timeout=timeout, follow_redirects=False, trust_env=False
             ) as client:

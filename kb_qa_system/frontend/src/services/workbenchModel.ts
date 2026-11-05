@@ -3,11 +3,12 @@ import { apiClient, getStoredTokens } from "@/api/client";
 
 import type { ModelMessageContent, ModelProfile } from "@/types/workbench";
 import { finishReason, readModelResponse, type FinishReason } from './modelStream';
-import { imageType, MAX_GENERATED_IMAGE_BYTES, workImageFromBase64, workImageFromDataUrl } from './workbenchImages';
+import { MAX_GENERATED_IMAGE_BYTES } from './workbenchImages';
 import { GENERATED_IMAGE_TOO_LARGE, MAX_IMAGE_RESPONSE_BYTES } from './workbenchCapacity';
+import { generatedImageFromBase64, generatedImageFromDataUrl } from './generatedImages';
 import { encodeBase64 } from './binaryBase64';
-import type { WorkImage } from '@/types/workbench';
-import { imageSizeValue, validateImagePrompt, type ImageSize } from './imageGeneration';
+import type { GeneratedWorkImage, WorkImage } from '@/types/workbench';
+import { imageSizeValue, validateImagePrompt, imageOutputFields, requireImageOutputModel, type ImageOutputOptions, type ImageSize } from './imageGeneration';
 import { imageReferenceData, imageRequest, imageResult, imageRequestError, IMAGE_REQUEST_ERRORS } from './imageRequest';
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
@@ -83,17 +84,15 @@ function providerImageUrl(value: string, baseUrl: string): string {
 
 async function providerImageDataUrl(image: { b64_json?: unknown; url?: unknown }, baseUrl: string, signal: AbortSignal): Promise<string> {
   if (typeof image.b64_json === 'string') {
-    try { return workImageFromBase64(image.b64_json, 'generated-image.png').dataUrl; }
+    try { return generatedImageFromBase64(image.b64_json, 'generated-image').dataUrl; }
     catch (error) { if (error instanceof Error && error.message === GENERATED_IMAGE_TOO_LARGE) throw error; throw new Error('图片服务返回了无效的图片数据。'); }
   }
   if (typeof image.url !== 'string') throw new Error('图片服务没有返回可用图片。');
   const url = providerImageUrl(image.url, baseUrl);
-  const response = await fetch(url, { method: 'GET', signal, credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { Accept: 'image/png,image/jpeg,image/webp' } });
+  const response = await fetch(url, { method: 'GET', signal, credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { Accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml' } });
   if (response.status !== 200) { await response.body?.cancel(); throw new Error('生成图片下载失败。'); }
   const bytes = await readBoundedBody(response, MAX_GENERATED_IMAGE_BYTES, signal, GENERATED_IMAGE_TOO_LARGE);
-  const mime = imageType(bytes);
-  if (!mime) throw new Error('图片服务返回了不支持的图片格式。');
-  return `data:${mime};base64,${encodeBase64(bytes)}`;
+  return generatedImageFromBase64(encodeBase64(bytes)).dataUrl;
 }
 
 export function requirePrivateRelay(apiKey: string): void {
@@ -178,20 +177,22 @@ export async function completeModel(
   }
 }
 
-export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal, dimensions?: ImageSize, references?: WorkImage[]): Promise<WorkImage> {
+export async function generateWorkImage(profile: ModelProfile, apiKey: string, prompt: string, signal: AbortSignal, dimensions?: ImageSize, references?: WorkImage[], output?: ImageOutputOptions): Promise<GeneratedWorkImage> {
   const model = validateImageModel(profile.imageModel);
   const baseUrl = validateProfile(profile);
   if (!model) throw new Error('请先在模型连接中配置兼容的生图模型名称。');
   prompt = validateImagePrompt(prompt);
   const size = imageSizeValue(dimensions);
   const referenceImages = imageReferenceData(references);
+  const fields = imageOutputFields(output, referenceImages);
+  requireImageOutputModel(model, output);
   if (signal.aborted) throw new DOMException('已取消', 'AbortError');
   if (profile.mode === 'relay') {
     requirePrivateRelay(apiKey);
-    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt, size, ...(referenceImages.length ? { reference_images: referenceImages } : {}) }, {
+    const result = await apiClient.post<{ data_url: string }>('/private-models/images/generate', { base_url: baseUrl, model, prompt, size, ...fields, ...(referenceImages.length ? { reference_images: referenceImages } : {}) }, {
       signal, headers: { 'X-Model-Api-Key': apiKey }, cache: 'no-store', redirect: 'error',
     });
-    return workImageFromDataUrl(result.data_url, 'generated-image.png');
+    return generatedImageFromDataUrl(result.data_url, 'generated-image');
   }
   if (isDesktop()) {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -199,10 +200,10 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     signal.addEventListener('abort', abort, { once: true });
     try {
       if (signal.aborted) throw new Error();
-      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt, size, referenceImages, direct: profile.mode === 'direct' });
+      const encoded = await invoke<string>('generate_local_image', { requestId, baseUrl, apiKey, model, prompt, size, referenceImages, ...(output ? { output } : {}), direct: profile.mode === 'direct' });
       if (signal.aborted) throw new Error();
       if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_GENERATED_IMAGE_BYTES / 3) * 4) throw new Error('IMAGE_RESULT_TOO_LARGE');
-      return workImageFromBase64(encoded, 'generated-image.png');
+      return generatedImageFromBase64(encoded, 'generated-image');
     } catch (error) {
       if (signal.aborted) throw new DOMException('已取消', 'AbortError');
       // Tauri rejects before sending the request when a command lacks ACL
@@ -221,14 +222,14 @@ export async function generateWorkImage(profile: ModelProfile, apiKey: string, p
     finally { signal.removeEventListener('abort', abort); }
   }
   try {
-    const request = imageRequest(baseUrl, model, prompt, size, referenceImages);
+    const request = imageRequest(baseUrl, model, prompt, size, referenceImages, output);
     const response = await fetch(request.url, { method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
       headers: { ...(request.json ? { 'Content-Type': 'application/json' } : {}), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) }, body: request.body });
     const data = response.body ? await readBoundedBody(response, MAX_IMAGE_RESPONSE_BYTES, signal, IMAGE_REQUEST_ERRORS.IMAGE_RESPONSE_TOO_LARGE) : new Uint8Array();
     if (!response.ok) throw imageRequestError(response.status, data, referenceImages.length > 0);
     const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data));
     const dataUrl = await providerImageDataUrl(imageResult(payload), baseUrl, signal);
-    return workImageFromDataUrl(dataUrl, 'generated-image.png');
+    return generatedImageFromDataUrl(dataUrl, 'generated-image');
   } catch (error) {
     if (signal.aborted) throw new DOMException('已取消', 'AbortError');
     if (error instanceof Error && [...Object.values(IMAGE_REQUEST_ERRORS), '生成图片下载失败。', '图片服务返回的图片地址无效。', '图片服务返回了不安全的图片地址。',

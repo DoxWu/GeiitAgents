@@ -1,4 +1,29 @@
 export interface ImageSize { width: number; height: number }
+export interface ImageOutputOptions { format: 'png' | 'svg' | 'gif'; frameCount?: number; frameDurationMs?: number; autoSize?: boolean }
+export function imageOutputFields(options?: ImageOutputOptions, references: string[] = []): Record<string, string | number> {
+  if (!options) return {};
+  if (!['png', 'svg', 'gif'].includes(options.format)) throw new Error('输出格式无效。');
+  if (options.format === 'png') {
+    if (options.frameCount !== undefined || options.frameDurationMs !== undefined || options.autoSize) throw new Error('动画参数仅适用于GIF。');
+    return {};
+  }
+  if (references.length) throw new Error('SVG/GIF仅支持文字生成，请切回普通图片使用参考图编辑。');
+  if (options.format === 'svg') {
+    if (options.frameCount !== undefined || options.frameDurationMs !== undefined || options.autoSize) throw new Error('动画参数仅适用于GIF。');
+    return { output_format: 'svg' };
+  }
+  const count = options.frameCount ?? 9, duration = options.frameDurationMs ?? 200;
+  if (!Number.isInteger(count) || count < 2 || count > 64 || !Number.isInteger(duration) || duration < 20 || duration > 2000 || options.autoSize !== undefined && typeof options.autoSize !== 'boolean') throw new Error('GIF需要2–64帧，每帧20–2000毫秒。');
+  return { output_format: 'gif', frame_count: count, frame_duration_ms: duration, ...(options.autoSize ? { size: 'auto' } : {}) };
+}
+
+export function requireImageOutputModel(model: string, options?: ImageOutputOptions): void {
+  // These named models have a documented protocol. Other compatible providers
+  // may expose custom IDs; let their server decide capability rather than guessing.
+  if (!options || options.format === 'png') return;
+  if (/^gpt-image-/i.test(model) && !/^gpt-image-2\.6-(?:sunburst|flare)(?:-|$)/i.test(model)
+      || /^(?:qwen|wan|dall-e)[-.]/i.test(model)) throw new Error('所选模型未声明SVG/GIF输出能力，请使用gpt-image-2.6-sunburst、gpt-image-2.6-flare或支持该格式的兼容模型。');
+}
 export const DEFAULT_IMAGE_SIZE: ImageSize = { width: 1024, height: 1024 };
 export const MAX_IMAGE_PROMPT_LENGTH = 6000;
 export const IMAGE_SIZE_PRESETS = [

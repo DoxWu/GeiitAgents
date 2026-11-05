@@ -11,6 +11,7 @@ import { MemoryDirectory } from '@/fileOrganizer/testDirectory';
 import { snapshotText } from '@/fileOrganizer/textEdit';
 import { newCompositionShape } from '@/officeTasks/composition';
 import { workImageFromDataUrl } from '@/services/workbenchImages';
+import { generatedImageFromBase64 } from '@/services/generatedImages';
 
 beforeEach(async () => {
   vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('TextEncoder', TextEncoder); vi.stubGlobal('TextDecoder', TextDecoder); vi.stubGlobal('Blob', NodeBlob);
@@ -18,6 +19,19 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.restoreAllMocks(); await store.getState().lock(); vi.unstubAllGlobals(); });
 async function fixture() { return (await backup.exportVaultBackup(await vaultBackupFixture(), '1234', true)).file; }
+
+it('exports and restores extended generated formats and animation settings without conversion', async () => {
+  const results = [generatedImageFromBase64(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><circle r="5"/></svg>').toString('base64')), generatedImageFromBase64('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')];
+  await store.getState().unlock('old-pass');
+  for (const [index, result] of results.entries()) await store.getState().saveImageTask({ id: `extended-${index}`, name: `extended-${index}`, updatedAt: new Date().toISOString(), draft: { prompt: 'synthetic', shapes: [], references: [], result, output: index ? { format: 'gif', frameCount: 9, frameDurationMs: 200, autoSize: true } : { format: 'svg' } } });
+  const exported = await store.getState().exportWorkbenchBackup('1234', false);
+  await store.getState().lock();
+  await store.getState().prepareWorkbenchRestore(exported.file, '1234', 'new-pass');
+  await store.getState().commitWorkbenchRestore(store.getState().vaultRestorePreview!.id);
+  await store.getState().unlock('new-pass');
+  expect(store.getState().imageTasks.map(task => task.draft.result?.dataUrl).sort()).toEqual(results.map(image => image.dataUrl).sort());
+  expect(store.getState().imageTasks.find(task => task.id === 'extended-1')?.draft.output?.autoSize).toBe(true);
+});
 
 it('persists a generated result larger than the upload limit through lock and encrypted backup restore', async () => {
   const result = workImageFromDataUrl(`data:image/png;base64,${btoa('\x89PNG\r\n\x1a\n' + '\0'.repeat(5_000_000 - 8))}`, 'large-generated.png');

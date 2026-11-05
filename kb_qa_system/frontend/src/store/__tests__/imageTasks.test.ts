@@ -4,12 +4,29 @@ import { useWorkbenchStore as store, VAULT_STORAGE_KEY } from '../workbenchStore
 import { PrivateVault } from '@/services/privateVault';
 import { newCompositionShape, type ImageStudioTask } from '@/officeTasks/composition';
 import { MAX_VAULT_IMAGE_BYTES } from '@/services/workbenchImages';
+import { generatedImageFromBase64 } from '@/services/generatedImages';
 
 vi.mock('@/services/workbenchModel', async original => ({ ...await original<typeof import('@/services/workbenchModel')>(), getAccountModel: vi.fn().mockResolvedValue(null) }));
 const password = 'synthetic-image-task-password';
 const task = (id: string): ImageStudioTask => ({ id, name: id, updatedAt: new Date().toISOString(), draft: { prompt: id, canvas: { width: 1536, height: 864, background: '#aabbcc' }, shapes: [newCompositionShape(0)], references: [] } });
 beforeEach(async () => { vi.stubGlobal('crypto', webcrypto); localStorage.clear(); await store.getState().unlock(password); });
 afterEach(async () => { await store.getState().lock(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it('restores SVG and GIF outputs, animation settings and manual prompts from the encrypted vault', async () => {
+  const svg = task('svg'), gif = task('gif');
+  svg.draft.output = { format: 'svg' };
+  svg.draft.result = generatedImageFromBase64(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></svg>').toString('base64'));
+  gif.draft.output = { format: 'gif', frameCount: 12, frameDurationMs: 100, autoSize: true };
+  gif.draft.animation = { action: 'float', motion: 'slow', loop: 'seamless' };
+  gif.draft.finalPrompt = 'custom animation prompt';
+  gif.draft.result = generatedImageFromBase64('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+  await store.getState().saveImageTask(svg); await store.getState().saveImageTask(gif);
+  await store.getState().lock();
+  expect(localStorage.getItem(VAULT_STORAGE_KEY)).not.toContain('custom animation prompt');
+  await store.getState().unlock(password);
+  expect(store.getState().imageTasks.find(value => value.id === 'svg')).toEqual(svg);
+  expect(store.getState().imageTasks.find(value => value.id === 'gif')).toEqual(gif);
+});
 
 it('persists independent task geometry, edits and deletion across encrypted reload', async () => {
   const first = task('first'), second = task('second');

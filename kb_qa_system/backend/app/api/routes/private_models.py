@@ -115,7 +115,8 @@ async def generate_server_configured_image(request: Request):
     if not data.consent:
         raise HTTPException(400, "发送图片描述及参考图到服务端模型前需要明确授权。", headers=NO_STORE)
     try:
-        result = await generate_server_image(data.endpoint_id, data.prompt, data.size, data.reference_images)
+        output = {key: getattr(data, key) for key in ('output_format', 'frame_count', 'frame_duration_ms') if getattr(data, key) is not None}
+        result = await generate_server_image(data.endpoint_id, data.prompt, data.size, data.reference_images, **output)
         return JSONResponse(result, headers=NO_STORE)
     except ImageGenerationError as exc:
         raise HTTPException(502, str(exc), headers=NO_STORE) from None

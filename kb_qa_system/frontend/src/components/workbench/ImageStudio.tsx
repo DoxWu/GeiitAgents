@@ -5,6 +5,7 @@ import { downloadGeneratedWorkImage, readWorkImages, workImageFromDataUrl } from
 import { CompositionCanvas } from './CompositionCanvas';
 import { ImageCanvasSettings } from './ImageCanvasSettings';
 import { ImageGenerator } from './ImageGenerator';
+import { ImageOutputSettings } from './ImageOutputSettings';
 import { useWorkbenchFence } from '@/hooks/useWorkbenchFence';
 import { Hint } from './Hint';
 import { validateImagePrompt } from '@/services/imageGeneration';
@@ -132,6 +133,7 @@ export function ImageStudio() {
           <CompositionCanvas key={taskId} shapes={draft.shapes} images={draft.references} background={canvas.background} aspectRatio={canvas.width / canvas.height} onChange={shapes => setDraft(d => ({ ...d, shapes }))} />
         </div>
         <div className="grid min-w-0 content-start gap-4" data-image-controls>
+          <ImageOutputSettings key={`output-${taskId}`} draft={draft} onChange={patch => setDraft(d => ({ ...d, ...patch }))} />
           <label className="work-label">图片提示词<textarea aria-label="图片提示词" className="work-input min-h-32 resize-y" maxLength={1000} value={draft.prompt} onChange={event => setDraft(d => ({ ...d, prompt: event.target.value }))} placeholder="描述主体、内容与风格；布局参数会自动附加" /></label>
           <details className="min-w-0 border border-line p-3"><summary className="cursor-pointer text-sm">实际发送的生图提示词（含当前构图）</summary>
             <p className="mt-2 text-xs text-ink-secondary">这里的内容会完整发送给生图模型。手动编辑后，画布变化不会自动覆盖；可重新同步当前构图。</p>
@@ -148,7 +150,7 @@ export function ImageStudio() {
           <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />允许本次发送构图、区域描述及参考图到所选模型</label>
           <button type="button" className="work-command justify-self-start" disabled={!model || !consent} onClick={() => void summarize()}>根据构图整理提示词</button>
           {promptError && <p role="alert" className="text-xs text-danger">{promptError}</p>}
-          <ImageGenerator key={taskId} contextKey={taskId} requestPrompt={requestPrompt} size={canvas} referenceImages={draft.references} disabled={Boolean(promptError) || switching} onImage={image => {
+          <ImageGenerator key={taskId} contextKey={taskId} requestPrompt={requestPrompt} size={canvas} output={draft.output ?? { format: 'png' }} referenceImages={draft.references} disabled={Boolean(promptError) || switching} onImage={image => {
             if (taskEpoch.current !== currentEpoch || activeTask.current !== taskId) return;
             setDraft(validateImageStudio({ ...latest.current, result: image })); setNotice('图片已生成，草稿正在加密保存。');
           }} />

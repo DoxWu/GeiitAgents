@@ -11,6 +11,62 @@ const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_BYTES: usize = 1_500_000;
 const MAX_ENCODED_IMAGE_BYTES: usize = (MAX_IMAGE_BYTES + 2) / 3 * 4;
 
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImageOutput {
+    pub format: Option<String>,
+    pub frame_count: Option<u32>,
+    pub frame_duration_ms: Option<u32>,
+    pub auto_size: Option<bool>,
+}
+
+impl ImageOutput {
+    fn fields(
+        &self,
+        model: &str,
+        references: bool,
+        dashscope: bool,
+    ) -> Result<serde_json::Value, String> {
+        let format = self.format.as_deref().unwrap_or("png");
+        if !["png", "svg", "gif"].contains(&format)
+            || format != "gif"
+                && (self.frame_count.is_some()
+                    || self.frame_duration_ms.is_some()
+                    || self.auto_size == Some(true))
+            || format != "png" && (references || dashscope)
+        {
+            return Err("IMAGE_OUTPUT_UNSUPPORTED".into());
+        }
+        if format == "png" {
+            return Ok(serde_json::json!({}));
+        }
+        let lower = model.to_ascii_lowercase();
+        if lower.starts_with("gpt-image-")
+            && !["gpt-image-2.6-sunburst", "gpt-image-2.6-flare"]
+                .iter()
+                .any(|id| lower == *id || lower.starts_with(&format!("{id}-")))
+            || ["qwen-", "qwen.", "wan-", "wan.", "dall-e-", "dall-e."]
+                .iter()
+                .any(|id| lower.starts_with(id))
+        {
+            return Err("IMAGE_OUTPUT_UNSUPPORTED".into());
+        }
+        if format == "svg" {
+            return Ok(serde_json::json!({"output_format": "svg"}));
+        }
+        let count = self.frame_count.unwrap_or(9);
+        let duration = self.frame_duration_ms.unwrap_or(200);
+        if !(2..=64).contains(&count) || !(20..=2000).contains(&duration) {
+            return Err("IMAGE_OUTPUT_UNSUPPORTED".into());
+        }
+        let mut fields = serde_json::json!({"output_format": "gif", "frame_count": count, "frame_duration_ms": duration});
+        if self.auto_size == Some(true) {
+            fields["size"] = serde_json::json!("auto");
+        }
+        Ok(fields)
+    }
+}
+
 enum GeneratedImage {
     Embedded(String),
     Url(Url),
@@ -177,7 +233,10 @@ async fn download_image(url: Url, endpoint: &Url) -> Result<Vec<u8>, String> {
     let client = builder.build().map_err(|_| "Image client unavailable")?;
     let response = client
         .get(url)
-        .header("Accept", "image/png,image/jpeg,image/webp")
+        .header(
+            "Accept",
+            "image/png,image/jpeg,image/webp,image/gif,image/svg+xml",
+        )
         .send()
         .await
         .map_err(|_| "Image download failed")?;
@@ -205,7 +264,7 @@ async fn download_image(url: Url, endpoint: &Url) -> Result<Vec<u8>, String> {
         }
         bytes.extend_from_slice(&chunk);
     }
-    if bytes.is_empty() || image_mime(&bytes).is_none() {
+    if bytes.is_empty() || generated_image_mime(&bytes).is_none() {
         return Err("IMAGE_RESULT_INVALID_FORMAT".into());
     }
     Ok(bytes)
@@ -227,7 +286,29 @@ fn validate_generated_image(bytes: &[u8]) -> Result<&'static str, String> {
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err("IMAGE_RESULT_TOO_LARGE".into());
     }
-    image_mime(bytes).ok_or_else(|| "IMAGE_RESULT_INVALID_FORMAT".into())
+    generated_image_mime(bytes).ok_or_else(|| "IMAGE_RESULT_INVALID_FORMAT".into())
+}
+
+// Full SVG XML and active-content validation is performed in the frontend before
+// a native result can be previewed, saved or downloaded. Reference inputs stay raster.
+fn generated_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if let Some(mime) = image_mime(bytes) {
+        return Some(mime);
+    }
+    if bytes.len() >= 13
+        && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"))
+        && bytes[6..8].iter().any(|v| *v != 0)
+        && bytes[8..10].iter().any(|v| *v != 0)
+    {
+        return Some("image/gif");
+    }
+    if let Ok(xml) = std::str::from_utf8(bytes) {
+        let xml = xml.trim_start_matches('\u{feff}').trim_start();
+        if xml.starts_with("<svg") || xml.starts_with("<?xml") || xml.starts_with("<!--") {
+            return Some("image/svg+xml");
+        }
+    }
+    None
 }
 
 pub fn validate_size(size: &str) -> Result<(), String> {
@@ -307,8 +388,10 @@ fn image_request(
     prompt: &str,
     size: &str,
     references: &[String],
+    output: &ImageOutput,
 ) -> Result<reqwest::RequestBuilder, String> {
     let images = reference_bytes(references)?;
+    let fields = output.fields(model, !references.is_empty(), dashscope_endpoint(&url))?;
     if dashscope_endpoint(&url) {
         url.set_path("/api/v1/services/aigc/multimodal-generation/generation");
         let mut content: Vec<serde_json::Value> = references
@@ -320,7 +403,15 @@ fn image_request(
             "parameters": {"n": 1, "size": size.replace('x', "*"), "prompt_extend": false, "watermark": false} })));
     }
     if images.is_empty() {
-        return Ok(client.post(url).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size, "response_format": "b64_json" })));
+        let mut body =
+            serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size });
+        if !model.to_ascii_lowercase().starts_with("gpt-image-") {
+            body["response_format"] = serde_json::json!("b64_json");
+        }
+        for (key, value) in fields.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        return Ok(client.post(url).json(&body));
     }
     let path = url
         .path()
@@ -357,6 +448,9 @@ fn image_request(
         ("size", size),
         ("response_format", "b64_json"),
     ] {
+        if field == "response_format" && model.to_ascii_lowercase().starts_with("gpt-image-") {
+            continue;
+        }
         body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n{value}\r\n").as_bytes());
     }
     for (index, (mime, bytes)) in images.iter().enumerate() {
@@ -408,6 +502,7 @@ pub async fn generate(
     prompt: String,
     size: String,
     references: Vec<String>,
+    output: ImageOutput,
 ) -> Result<String, String> {
     validate_size(&size)?;
     let client = reqwest::Client::builder()
@@ -416,7 +511,15 @@ pub async fn generate(
         .timeout(Duration::from_secs(115))
         .build()
         .map_err(|_| "Image client unavailable")?;
-    let mut request = image_request(&client, url.clone(), &model, &prompt, &size, &references)?;
+    let mut request = image_request(
+        &client,
+        url.clone(),
+        &model,
+        &prompt,
+        &size,
+        &references,
+        &output,
+    )?;
     if !api_key.is_empty() {
         request = request.bearer_auth(api_key);
     }
@@ -466,6 +569,60 @@ pub async fn generate(
 mod tests {
     use super::*;
 
+    #[test]
+    fn svg_and_gif_use_documented_generation_fields() {
+        let client = reqwest::Client::new();
+        for format in ["svg", "gif"] {
+            let output = ImageOutput {
+                format: Some(format.into()),
+                auto_size: Some(format == "gif"),
+                ..Default::default()
+            };
+            let request = image_request(
+                &client,
+                Url::parse("https://api.openai.com/v1/images/generations").unwrap(),
+                "gpt-image-2.6-flare",
+                "synthetic",
+                "1024x1024",
+                &[],
+                &output,
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+            let body: serde_json::Value =
+                serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+            assert_eq!(body["output_format"], format);
+            assert!(body.get("response_format").is_none());
+            if format == "gif" {
+                assert_eq!(body["size"], "auto");
+                assert_eq!(body["frame_count"], 9);
+                assert_eq!(body["frame_duration_ms"], 200);
+            } else {
+                assert!(body.get("frame_count").is_none());
+            }
+            assert!(output.fields("gpt-image-2.6-flare", true, false).is_err());
+        }
+    }
+
+    #[test]
+    fn extended_results_are_separate_from_reference_formats() {
+        for bytes in [
+            b"GIF89a\x01\x00\x01\x00\x80\x00\x00".as_slice(),
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".as_slice(),
+        ] {
+            assert!(validate_generated_image(bytes).is_ok());
+            assert!(image_mime(bytes).is_none());
+        }
+        assert!(ImageOutput {
+            format: Some("gif".into()),
+            frame_count: Some(65),
+            ..Default::default()
+        }
+        .fields("gpt-image-2.6-flare", false, false)
+        .is_err());
+    }
+
     fn reference() -> String {
         format!(
             "data:image/png;base64,{}",
@@ -485,6 +642,7 @@ mod tests {
                 "keep subject",
                 "1536x864",
                 &vec![reference(); count],
+                &ImageOutput::default(),
             )
             .unwrap()
             .build()
@@ -528,6 +686,7 @@ mod tests {
             "keep subject",
             "1536x864",
             &[reference(), reference()],
+            &ImageOutput::default(),
         )
         .unwrap()
         .build()
@@ -562,6 +721,7 @@ mod tests {
             "synthetic 4K scene",
             "3840x2160",
             &[],
+            &ImageOutput::default(),
         )
         .unwrap()
         .build()

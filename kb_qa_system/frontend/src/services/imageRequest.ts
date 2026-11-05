@@ -1,5 +1,6 @@
 import type { WorkImage } from '@/types/workbench';
 import { validateWorkImage } from './workbenchImages';
+import { imageOutputFields, requireImageOutputModel, type ImageOutputOptions } from './imageGeneration';
 
 export const IMAGE_EDIT_PATH = '/api/v1/services/aigc/multimodal-generation/generation';
 
@@ -15,15 +16,18 @@ export function isDashScopeImageEndpoint(url: URL): boolean {
 }
 
 // Preserve the configured origin: credentials never move to another host.
-export function imageRequest(baseUrl: string, model: string, prompt: string, size: string, references: string[]): { url: string; body: BodyInit; json: boolean } {
+export function imageRequest(baseUrl: string, model: string, prompt: string, size: string, references: string[], output?: ImageOutputOptions): { url: string; body: BodyInit; json: boolean } {
   const url = new URL(baseUrl);
+  const fields = imageOutputFields(output, references);
+  requireImageOutputModel(model, output);
   if (isDashScopeImageEndpoint(url)) {
+    if (fields.output_format) throw new Error('百炼原生生图接口不支持SVG/GIF输出，请选择兼容的生图连接。');
     url.pathname = IMAGE_EDIT_PATH;
     return { url: url.href, json: true, body: JSON.stringify({ model, input: { messages: [{ role: 'user', content: [...references.map(image => ({ image })), { text: prompt }] }] }, parameters: { n: 1, size: size.replace('x', '*'), prompt_extend: false, watermark: false } }) };
   }
-  if (!references.length) return { url: `${baseUrl}/images/generations`, json: true, body: JSON.stringify({ model, prompt, n: 1, size, response_format: 'b64_json' }) };
+  if (!references.length) return { url: `${baseUrl}/images/generations`, json: true, body: JSON.stringify({ model, prompt, n: 1, size, ...(/^gpt-image-/i.test(model) ? {} : { response_format: 'b64_json' }), ...fields }) };
   const body = new FormData();
-  for (const [key, value] of Object.entries({ model, prompt, n: '1', size, response_format: 'b64_json' })) body.append(key, value);
+  for (const [key, value] of Object.entries({ model, prompt, n: '1', size, ...(/^gpt-image-/i.test(model) ? {} : { response_format: 'b64_json' }) })) body.append(key, value);
   references.forEach((dataUrl, index) => {
     const [header, encoded] = dataUrl.split(','), mime = header.slice(5, -7);
     const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
@@ -48,7 +52,8 @@ export const IMAGE_REQUEST_ERRORS: Record<string, string> = {
   IMAGE_AUTH_REJECTED: '图像服务拒绝认证，请检查 API Key 和模型权限。',
   IMAGE_RATE_LIMIT: '图像服务额度或速率已达上限。',
   IMAGE_RESULT_TOO_LARGE: '模型已经返回图片，但单张图片超过64 MiB接收上限。请降低输出尺寸后重试。',
-  IMAGE_RESULT_INVALID_FORMAT: '模型已返回结果，但图片不是有效的PNG、JPEG或WebP文件。',
+  IMAGE_RESULT_INVALID_FORMAT: '模型已返回结果，但图片不是有效的PNG、JPEG、WebP、SVG或GIF文件。',
+  IMAGE_OUTPUT_UNSUPPORTED: '所选模型或接口不支持当前SVG/GIF格式，或动画参数无效。',
   IMAGE_RESULT_DOWNLOAD_FAILED: '模型已返回图片地址，但工作台无法安全下载该图片。请重试或检查模型返回的图片地址。',
   IMAGE_RESPONSE_TOO_LARGE: '模型返回数据超过88 MiB传输上限。请使用图片地址响应或降低输出尺寸。',
 };

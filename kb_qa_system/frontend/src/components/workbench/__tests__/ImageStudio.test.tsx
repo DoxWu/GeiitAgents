@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useWorkbenchStore as store } from '@/store/workbenchStore';
 import type { WorkImage } from '@/types/workbench';
@@ -45,4 +45,17 @@ it('sends the user-edited full request prompt to the image generator', () => {
   fireEvent.change(editor, { target: { value: 'user-authored final image instructions' } });
   expect(screen.getByTestId('sent-prompt').textContent).toBe('user-authored final image instructions');
   expect((editor as HTMLTextAreaElement).value).toBe('user-authored final image instructions');
+});
+
+it('keeps number edits local until valid and switches format settings without duplicating controls', async () => {
+  render(<ImageStudio />);
+  fireEvent.change(screen.getByLabelText('生成格式'), { target: { value: 'gif' } });
+  const count = screen.getByLabelText('动画帧数');
+  fireEvent.change(count, { target: { value: '' } }); fireEvent.blur(count);
+  expect((count as HTMLInputElement).value).toBe('9');
+  fireEvent.change(count, { target: { value: '12' } }); fireEvent.blur(count);
+  expect(screen.getByTestId('sent-prompt').textContent).toContain('12帧');
+  fireEvent.click(screen.getByRole('button', { name: '新建图片任务' }));
+  await waitFor(() => expect((screen.getByLabelText('生成格式') as HTMLSelectElement).value).toBe('png'));
+  expect(screen.getAllByLabelText('生成格式')).toHaveLength(1);
 });

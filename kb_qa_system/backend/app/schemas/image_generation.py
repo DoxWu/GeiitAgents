@@ -1,8 +1,11 @@
 """Bounded request schemas for the server-side image model."""
-import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from app.core.image_request import validate_reference_images
+import re
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.core.image_request import image_output_fields, validate_reference_images
 
 
 def validate_image_size(size: str) -> str:
@@ -18,6 +21,18 @@ class ImageGenerationOptions(BaseModel):
     prompt: str = Field(min_length=1, max_length=6000)
     size: str = "1024x1024"
     reference_images: list[str] = Field(default_factory=list, max_length=2)
+    output_format: Literal["svg", "gif"] | None = None
+    frame_count: int | None = Field(default=None, strict=True, ge=2, le=64)
+    frame_duration_ms: int | None = Field(default=None, strict=True, ge=20, le=2000)
+
+    @model_validator(mode="after")
+    def valid_output(self):
+        image_output_fields(self.output_format, self.frame_count, self.frame_duration_ms)
+        if self.output_format and self.reference_images:
+            raise ValueError("SVG/GIF仅支持文字生成，不支持参考图编辑。")
+        if self.size == "auto" and self.output_format != "gif":
+            raise ValueError("自动帧尺寸仅适用于GIF。")
+        return self
 
     @field_validator("reference_images")
     @classmethod
@@ -27,7 +42,7 @@ class ImageGenerationOptions(BaseModel):
     @field_validator("size")
     @classmethod
     def valid_size(cls, value: str) -> str:
-        return validate_image_size(value)
+        return value if value == "auto" else validate_image_size(value)
 
 
 class ServerImageRequest(ImageGenerationOptions):

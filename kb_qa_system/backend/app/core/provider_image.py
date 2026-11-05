@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import re
 import time
+import xml.etree.ElementTree as ET
 from urllib.parse import urlsplit
 
 from app.core.public_http import public_get
@@ -18,6 +20,61 @@ MAX_IMAGE_DOWNLOAD_SECONDS = 60
 
 class ProviderImageError(Exception):
     pass
+
+
+def validate_static_svg(image: bytes) -> None:
+    try:
+        xml = image.decode("utf-8-sig")
+        if re.search(r"<!DOCTYPE|<!ENTITY|<\?(?!xml\s)", xml, re.I):
+            raise ValueError()
+        root = ET.fromstring(xml)
+        namespace = "{http://www.w3.org/2000/svg}"
+        if root.tag != namespace + "svg":
+            raise ValueError()
+        allowed = set(
+            "svg a switch view g defs symbol use path rect circle ellipse line polyline polygon text tspan textPath title desc metadata clipPath mask pattern marker linearGradient radialGradient stop filter feBlend feColorMatrix feComponentTransfer feComposite feConvolveMatrix feDiffuseLighting feDisplacementMap feDistantLight feDropShadow feFlood feFuncA feFuncB feFuncG feFuncR feGaussianBlur feMerge feMergeNode feMorphology feOffset fePointLight feSpecularLighting feSpotLight feTile feTurbulence style".split()
+        )
+
+        def safe_css(value: str) -> bool:
+            value = re.sub(r"/\*[\s\S]*?\*/", "", value)
+            value = re.sub(
+                r"\\([0-9a-f]{1,6}\s?|[^0-9a-f\r\n])",
+                lambda match: (
+                    chr(min(int(match[1].strip(), 16), 0x10FFFF))
+                    if re.match(r"[0-9a-f]", match[1], re.I)
+                    else match[1]
+                ),
+                value,
+                flags=re.I,
+            )
+            return not re.search(
+                r"\\|/\*|@(?:import|font-face|(?:-webkit-)?keyframes)\b|(?:expression|image|(?:-webkit-)?image-set)\s*\(|(?:javascript|vbscript)\s*:|-moz-binding|behavior\s*:",
+                value,
+                re.I,
+            ) and all(
+                re.fullmatch(r'\s*[\'"]?#[\w:.-]+[\'"]?\s*', target)
+                for target in re.findall(r"url\s*\(([^)]*)\)", value, re.I)
+            )
+
+        for node in root.iter():
+            if node.tag.removeprefix(namespace) not in allowed or not node.tag.startswith(
+                namespace
+            ):
+                raise ValueError()
+            if node.tag == namespace + "style" and not safe_css(node.text or ""):
+                raise ValueError()
+            for name, value in node.attrib.items():
+                local = name.rsplit("}", 1)[-1]
+                if (
+                    local.lower().startswith("on")
+                    or local == "base"
+                    or local == "href"
+                    and not re.fullmatch(r"#[\w:.-]+", value)
+                    or not safe_css(value)
+                ):
+                    raise ValueError()
+    except (UnicodeError, ValueError, ET.ParseError):
+        raise ProviderImageError("SVG包含无效XML或不支持的活动内容。") from None
 
 
 def _size_error(max_image_bytes: int) -> ProviderImageError:
@@ -43,6 +100,16 @@ def image_data_url(encoded: str, *, max_image_bytes: int = MAX_IMAGE_BYTES) -> s
         mime = "image/jpeg"
     elif len(image) >= 12 and image[:4] == b"RIFF" and image[8:12] == b"WEBP":
         mime = "image/webp"
+    elif (
+        len(image) >= 13
+        and image[:6] in {b"GIF87a", b"GIF89a"}
+        and any(image[6:8])
+        and any(image[8:10])
+    ):
+        mime = "image/gif"
+    elif image.lstrip(b"\xef\xbb\xbf \r\n\t").startswith((b"<svg", b"<?xml", b"<!--")):
+        validate_static_svg(image)
+        mime = "image/svg+xml"
     else:
         raise ProviderImageError("图片服务返回了不支持的格式。")
     return f"data:{mime};base64,{encoded}"
@@ -75,7 +142,7 @@ def download_provider_image_url(
         deadline = time.monotonic() + max_download_seconds
         response = request_get(
             image_url,
-            headers={"Accept": "image/png,image/jpeg,image/webp"},
+            headers={"Accept": "image/png,image/jpeg,image/webp,image/gif,image/svg+xml"},
             timeout=10,
             stream=True,
         )
