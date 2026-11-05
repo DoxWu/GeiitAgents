@@ -4,7 +4,7 @@ import { ACCOUNT_MODEL_ID, useWorkbenchStore } from '@/store/workbenchStore';
 import { readWorkImages } from '@/services/workbenchImages';
 import { exportDesignedPptx, validatePptxDesign, type PptxDesignDeck, type PptxDesignSlide, type PptxSlideLayout } from '@/officeTasks/pptxDesign';
 import { markdownSlides } from '@/officeTasks/pptx';
-import type { TaskRun, WorkImage } from '@/types/workbench';
+import type { TaskRun, WorkArtifact, WorkImage } from '@/types/workbench';
 import { ImageGenerator } from './ImageGenerator';
 import { CompositionCanvas } from './CompositionCanvas';
 import { newCompositionShape } from '@/officeTasks/composition';
@@ -60,7 +60,22 @@ function download(blob: Blob, name: string) {
   link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function PptxDesigner() {
+function restoreGeneratedTask(task: TaskRun, artifacts: WorkArtifact[]): PptxDesignDeck {
+  const artifact = task.artifactIds.map(id => artifacts.find(item => item.id === id)).filter(item => item?.kind === 'markdown').at(-1);
+  if (task.outputFormat === 'pptx' && !['pptx-design.json', 'pptx-layout.json'].includes(task.sourceName ?? '')) {
+    const base = initialDeck();
+    if (!artifact) return validatePptxDesign({ ...base, title: task.title, slides: [{ ...base.slides[0], title: task.title, topic: task.instruction.slice(0, 2000) }] });
+    return validatePptxDesign({ ...base, title: task.title, slides: markdownSlides(artifact.content, task.title).map(section => ({
+      id: crypto.randomUUID(), title: section.title, layout: 'bullets', topic: '',
+      content: section.body.map(block => block.kind === 'table' ? block.rows.map(row => row.join(' | ')).join('\n') : block.text).join('\n'),
+    })) });
+  }
+  const saved = restoreTask(task);
+  if (!saved) throw new Error('无法读取该次生成保存的设计快照。');
+  return artifact?.finishReason === 'stop' ? task.sourceName === 'pptx-layout.json' ? applyPptxContent(saved, artifact.content) : applyGeneratedContent(saved, artifact.content) : saved;
+}
+
+export function PptxDesigner({ embedded = false, sourceTask, newSession = 0 }: { embedded?: boolean; sourceTask?: TaskRun; newSession?: number } = {}) {
   const store = useWorkbenchStore(), fileInput = useRef<HTMLInputElement>(null);
   const savePptxDraft = useWorkbenchStore(state => state.savePptxDraft);
   const [deck, setDeck] = useState<PptxDesignDeck>(() => structuredClone(store.pptxDraft ?? initialDeck()));
@@ -79,7 +94,8 @@ export function PptxDesigner() {
   const profile = store.profiles.find(item => item.id === profileId);
   const cloud = profileId === ACCOUNT_MODEL_ID || ['relay', 'direct'].includes(profile?.mode || '');
   const runs = store.taskRuns.filter(item => item.type === 'document.generate-markdown' && ['pptx-design.json', 'pptx-layout.json'].includes(item.sourceName ?? ''));
-  const run = runs.find(item => item.id === runId) ?? runs[0];
+  const run = runs.find(item => item.id === runId) ?? (embedded ? undefined : runs[0]);
+  const sourceLoaded = useRef<TaskRun>(), session = useRef(newSession), vaultStatus = useRef<boolean>();
 
   useEffect(() => { if (!profileId) setProfileId(store.profiles[0]?.id ?? (store.accountModel ? ACCOUNT_MODEL_ID : '')); }, [profileId, store.profiles, store.accountModel]);
   useEffect(() => { setConsent(false); }, [profileId, deck]);
@@ -89,10 +105,23 @@ export function PptxDesigner() {
     return () => clearTimeout(timer);
   }, [deck, store.unlocked, savePptxDraft]);
   useEffect(() => {
-    const savedDraft = useWorkbenchStore.getState().pptxDraft;
-    const next = store.unlocked && savedDraft ? structuredClone(savedDraft) : initialDeck();
-    setDeck(next); setSelectedSlide(next.slides[0].id); setNotice(''); setError('');
-  }, [store.unlocked]);
+    if (vaultStatus.current !== store.unlocked) {
+      vaultStatus.current = store.unlocked; sourceLoaded.current = undefined;
+      const savedDraft = useWorkbenchStore.getState().pptxDraft;
+      const next = store.unlocked && savedDraft && !(embedded && newSession > 0 && !sourceTask) ? structuredClone(savedDraft) : initialDeck();
+      setDeck(next); setSelectedSlide(next.slides[0].id); setRunId(''); setNotice(''); setError('');
+    }
+    if (session.current !== newSession) {
+      session.current = newSession; sourceLoaded.current = undefined;
+      const next = initialDeck(); setDeck(next); setSelectedSlide(next.slides[0].id); setRunId(''); setConsent(false); setError(''); setNotice('');
+    }
+    if (!store.unlocked || !sourceTask || sourceLoaded.current === sourceTask) return;
+    sourceLoaded.current = sourceTask;
+    try {
+      const next = restoreGeneratedTask(sourceTask, store.artifacts);
+      setDeck(next); setSelectedSlide(next.slides[0].id); setProfileId(sourceTask.profileId); setRunId(sourceTask.id); setConsent(false); setError(''); setNotice('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '设计恢复失败。'); }
+  }, [sourceTask, newSession, embedded, store.artifacts, store.unlocked]);
 
   function patchDeck(patch: Partial<PptxDesignDeck>) { setDeck(current => ({ ...current, ...patch })); setError(''); }
   function patchSlide(patch: Partial<PptxDesignSlide>) { setDeck(current => ({ ...current, slides: current.slides.map(item => item.id === slide.id ? { ...item, ...patch } : item) })); setError(''); }
@@ -159,27 +188,24 @@ export function PptxDesigner() {
     finally { setBusy(false); }
   }
   function loadRun(task: TaskRun) {
-    const saved = restoreTask(task);
-    if (!saved) { setError('无法读取该次生成保存的设计快照。'); return; }
-    const artifact = task.artifactIds.map(id => store.artifacts.find(item => item.id === id)).find(item => item?.kind === 'markdown');
-    try { setDeck(artifact?.finishReason === 'stop' ? task.sourceName === 'pptx-layout.json' ? applyPptxContent(saved, artifact.content) : applyGeneratedContent(saved, artifact.content) : saved); }
+    try { const next = restoreGeneratedTask(task, store.artifacts); setDeck(next); setSelectedSlide(next.slides[0].id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : '生成内容无法填入设计。'); return; }
-    setSelectedSlide(saved.slides[0].id); setProfileId(task.profileId); setRunId(task.id); setConsent(false); setError('');
+    setProfileId(task.profileId); setRunId(task.id); setConsent(false); setError('');
   }
 
-  return <section className="grid min-h-0 flex-1 gap-5 overflow-auto p-4 lg:grid-cols-[250px_minmax(0,1fr)]" aria-label="PPT 页面设计器"><fieldset disabled={busy || !store.unlocked} className="contents">
-    <aside className="grid content-start gap-3 border-b border-line pb-4 lg:border-b-0 lg:border-r lg:pr-4">
+  return <section className={`grid min-h-0 min-w-0 flex-1 gap-5 ${embedded ? '' : 'overflow-auto p-4 lg:grid-cols-[250px_minmax(0,1fr)]'}`} aria-label="PPT 页面设计器"><fieldset disabled={busy || !store.unlocked} className="contents">
+    <aside className={`grid min-w-0 content-start gap-3 border-b border-line pb-4 ${embedded ? '' : 'lg:border-b-0 lg:border-r lg:pr-4'}`}>
       <label className="work-label">演示文稿标题<input className="work-input" maxLength={120} value={deck.title} onChange={event => patchDeck({ title: event.target.value })} /></label>
       <div className="flex items-center justify-between"><h2 className="text-sm font-semibold">页面 · {slides.length}</h2><button className="work-icon" title="添加页面" aria-label="添加页面" disabled={slides.length >= 50} onClick={addSlide}><Plus size={17} /></button></div>
-      <ol className="grid gap-1" aria-label="PPT 页面列表">{slides.map((item, index) => <li key={item.id}><button className={`w-full truncate border px-3 py-2 text-left text-sm ${item.id === slide.id ? 'border-brand bg-muted' : 'border-line'}`} onClick={() => setSelectedSlide(item.id)}>{String(index + 1).padStart(2, '0')} · {item.title || '未命名页面'}</button></li>)}</ol>
+      <ol className={embedded ? 'flex min-w-0 gap-2 overflow-x-auto pb-1' : 'grid gap-1'} aria-label="PPT 页面列表">{slides.map((item, index) => <li className={embedded ? 'w-44 shrink-0' : ''} key={item.id}><button className={`w-full truncate border px-3 py-2 text-left text-sm ${item.id === slide.id ? 'border-brand bg-muted' : 'border-line'}`} onClick={() => setSelectedSlide(item.id)}>{String(index + 1).padStart(2, '0')} · {item.title || '未命名页面'}</button></li>)}</ol>
       <div className="flex gap-2"><button className="work-command" disabled={slides.length <= 1} onClick={removeSlide}><Trash2 size={15} />删除页</button><button className="work-command" disabled={slides.indexOf(slide) <= 0} onClick={() => moveSlide(-1)}>上移</button><button className="work-command" disabled={slides.indexOf(slide) >= slides.length - 1} onClick={() => moveSlide(1)}>下移</button></div>
-      {runs.length > 0 && <label className="work-label">设计与生成记录<select className="work-input" value={run?.id ?? ''} onChange={event => { const selected = runs.find(item => item.id === event.target.value); if (selected) loadRun(selected); }}>
+      {!embedded && runs.length > 0 && <label className="work-label">设计与生成记录<select className="work-input" value={run?.id ?? ''} onChange={event => { const selected = runs.find(item => item.id === event.target.value); if (selected) loadRun(selected); }}>
         {runs.map(item => <option key={item.id} value={item.id}>{item.title} · {item.status === 'succeeded' ? '已完成' : item.status === 'running' ? '运行中' : '未完成'}</option>)}
       </select></label>}
     </aside>
-    <div className="grid content-start gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-1"><h1 className="text-lg font-semibold">逐页设计 PowerPoint</h1><Hint label="逐页演示文稿设计">编辑每页布局和内容主题，或直接写入正文；支持上传或生成图片。最多50页、每页一张图片，总计128 MiB。视觉模型读取前3张图片；导出会生成可编辑的PPTX。</Hint></div><button className="work-command" onClick={() => { const next = initialDeck(); setDeck(next); setSelectedSlide(next.slides[0].id); }}>新建设计</button><button className="work-command" onClick={() => { setError(''); void store.savePptxDraft(deck).then(() => setNotice('设计已加密保存；切换页签后可继续编辑。')).catch(reason => setError(reason.message)); }}><Save size={15} />保存设计</button></div>
-      <div className="grid gap-5 xl:grid-cols-[minmax(260px,0.8fr)_minmax(360px,1.2fr)]">
+    <div className="grid min-w-0 content-start gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-1"><h2 className="text-lg font-semibold">逐页设计 PowerPoint</h2><Hint label="逐页演示文稿设计">编辑每页布局和内容主题，或直接写入正文；支持上传或生成图片。最多50页、每页一张图片，总计128 MiB。视觉模型读取前3张图片；导出会生成可编辑的PPTX。</Hint></div>{!embedded && <button className="work-command" onClick={() => { const next = initialDeck(); setDeck(next); setSelectedSlide(next.slides[0].id); }}>新建设计</button>}<button className="work-command" onClick={() => { setError(''); void store.savePptxDraft(deck).then(() => setNotice('设计已加密保存；切换页签后可继续编辑。')).catch(reason => setError(reason.message)); }}><Save size={15} />保存设计</button></div>
+      <div className="grid min-w-0 gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))' }}>
         <div className="grid content-start gap-4">
           <label className="work-label">本页标题<input className="work-input" maxLength={120} value={slide.title} onChange={event => patchSlide({ title: event.target.value })} /></label>
           <label className="work-label">页面版式<select aria-label="页面版式" className="work-input" value={slide.layout} onChange={event => patchSlide({ layout: event.target.value as PptxSlideLayout, ...(event.target.value === 'custom' && !slide.regions ? { regions: [{ ...newCompositionShape(0),kind:'text',color:deck.theme.text,text:slide.title,x:7,y:7,w:86,h:18 },{ ...newCompositionShape(1),kind:'text',color:deck.theme.text,text:slide.content,description:slide.topic,x:7,y:30,w:86,h:60 }] } : {}) })}>{layouts.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>

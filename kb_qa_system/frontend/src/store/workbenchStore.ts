@@ -25,6 +25,7 @@ import type { FinishReason } from '@/services/modelStream';
 import { isWorkflowModelNode, validateWorkflow, workflowOrder, type WorkflowDefinition, type WorkflowInput } from '@/workflows/definition';
 import { isDue, nextIntervalAt, scheduleEvent, validateWorkflowSchedule, type WorkflowSchedule } from '@/workflows/schedule';
 import type { ChartInput } from '@/officeTasks/chart';
+import { CHART_IMAGE_PROMPT, parseChartImageDraft, type ChartImageDraft } from '@/officeTasks/chartFromImage';
 import { selectedPersonalItems, validatePersonalInput, type PersonalInput, type PersonalItem, type PersonalSelection } from '@/personal/items';
 import { inputFromDraft, validatePersonalDraft, type PersonalDraft } from '@/personal/itemDraft';
 import type { PersonalImportChoice, PersonalImportPlan, PersonalImportPreview, PersonalImportResult } from '@/personal/import';
@@ -202,6 +203,7 @@ interface WorkbenchState {
   startDocumentTask: (profileId: string, input: DocumentTaskInput, allowCloud: boolean) => Promise<string>;
   startOfficeToolTask: (profileId: string, input: OfficeToolInput, allowCloud: boolean, allowWebSearch?: boolean) => Promise<string>;
   startChartTask: (input: ChartInput, requestId: string) => Promise<string>;
+  extractChartImage: (profileId: string, image: WorkImage, instruction: string, allowCloud: boolean, signal: AbortSignal) => Promise<ChartImageDraft>;
   reviewChartImage: (taskId: string, artifactId: string, profileId: string, image: WorkImage, allowCloud: boolean, signal: AbortSignal) => Promise<void>;
   cancelTask: (id: string) => void;
   removeTask: (id: string) => Promise<void>;
@@ -1775,6 +1777,28 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       }
       throw error;
     } finally { if (artifactOperations.get(id) === controller) artifactOperations.delete(id); }
+  },
+  extractChartImage: async (profileId, image, instruction, allowCloud, signal) => {
+    if (!get().unlocked || !vault) throw new Error('请先解锁工作台。');
+    validateWorkImage(image);
+    if (typeof instruction !== 'string' || instruction.length > 2000) throw new Error('图表补充要求最多2000字符。');
+    const profile = get().profiles.find(item => item.id === profileId), secret = secrets.find(item => item.id === profileId);
+    if (!profile || !secret) throw new Error('请选择可用的视觉模型连接。');
+    if (profile.mode !== 'local' && !allowCloud) throw new Error('发送图表图片到云端前需要本次明确授权。');
+    const epoch = generation, testedSecret = secret.apiKey;
+    const answer = await modelCheck(profile.mode, signal, requestSignal => completeModel(profile, secret.apiKey, [
+      { role: 'system', content: CHART_IMAGE_PROMPT },
+      { role: 'user', content: [
+        { type: 'text', text: instruction.trim() || '请识别这张图表，保留可读的标题、单位、系列与数据。' },
+        { type: 'image_url', image_url: { url: image.dataUrl } },
+      ] },
+    ], requestSignal), 90_000);
+    const current = get().profiles.find(item => item.id === profileId);
+    if (signal.aborted || epoch !== generation || !get().unlocked || !vault || secrets.find(item => item.id === profileId)?.apiKey !== testedSecret
+      || current?.mode !== profile.mode || current.baseUrl !== profile.baseUrl || current.model !== profile.model || current.maxTokens !== profile.maxTokens) {
+      throw new DOMException('模型连接或密钥库状态已改变，未载入识别结果。', 'AbortError');
+    }
+    return parseChartImageDraft(answer);
   },
   reviewChartImage: async (taskId, artifactId, profileId, image, allowCloud, signal) => {
     if (!get().unlocked || !vault) throw new Error('请先解锁工作台。');

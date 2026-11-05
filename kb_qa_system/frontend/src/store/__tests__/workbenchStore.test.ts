@@ -24,6 +24,8 @@ vi.mock('@/services/visionCapability', () => ({ probeVisionModel: vi.fn() }));
 vi.mock("@/services/workbenchModel", async (original) => ({ ...await original<typeof import("@/services/workbenchModel")>(), completeModel: vi.fn(), completeAccountModel: vi.fn(), getAccountModel: vi.fn() }));
 const profile: Omit<ModelProfile, "hasKey"> = { id: "p1", name: "local", mode: "local", baseUrl: "http://127.0.0.1:11434/v1", model: "test", maxTokens: 100 };
 const password = "test-passphrase-1234";
+const chartImage = { name: 'chart.png', mimeType: 'image/png' as const, dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
+const chartImageReply = JSON.stringify({ title: '识别销售额', chartType: 'bar', csv: '月份,销售额\n一月,20\n二月,35', unit: '元', categoryColumn: 0, valueColumns: [1], notes: ['请复核数值。'] });
 beforeEach(async () => {
   vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("TextEncoder", TextEncoder); vi.stubGlobal("TextDecoder", TextDecoder);
   localStorage.clear(); vi.mocked(completeModel).mockReset();
@@ -37,6 +39,38 @@ beforeEach(async () => {
   await store.getState().unlock(password); await store.getState().saveProfile(profile, "fixture-key");
 });
 afterEach(async () => { await store.getState().lock(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it('sends the uploaded chart image to the chosen model and returns a checked draft without creating a task', async () => {
+  vi.mocked(completeModel).mockResolvedValue(chartImageReply);
+  const result = await store.getState().extractChartImage('p1', chartImage, '保留单位', false, new AbortController().signal);
+  expect(result.input).toMatchObject({ title: '识别销售额', valueColumns: [1], unit: '元' });
+  expect(result.notes).toEqual(['请复核数值。']);
+  expect(vi.mocked(completeModel).mock.calls.at(-1)?.[2][1]).toEqual({ role: 'user', content: [
+    { type: 'text', text: '保留单位' }, { type: 'image_url', image_url: { url: chartImage.dataUrl } },
+  ] });
+  expect(store.getState().taskRuns).toEqual([]);
+  expect(store.getState().artifacts).toEqual([]);
+});
+it('requires explicit cloud consent for chart image extraction before contacting a model', async () => {
+  await store.getState().saveProfile({ ...profile, id: 'chart-cloud', mode: 'relay', baseUrl: 'https://api.example.com/v1' }, 'fixture-key');
+  const signal = new AbortController().signal;
+  await expect(store.getState().extractChartImage('chart-cloud', chartImage, '', false, signal)).rejects.toThrow('明确授权');
+  expect(completeModel).not.toHaveBeenCalled();
+  vi.mocked(completeModel).mockResolvedValue(chartImageReply);
+  await store.getState().extractChartImage('chart-cloud', chartImage, '', true, signal);
+  expect(completeModel).toHaveBeenCalledTimes(1);
+});
+it('rejects malformed chart model output and ignores a response after the selected connection changes', async () => {
+  vi.mocked(completeModel).mockResolvedValue('{"title":');
+  await expect(store.getState().extractChartImage('p1', chartImage, '', false, new AbortController().signal)).rejects.toThrow('完整');
+  let finish!: (reply: string) => void;
+  vi.mocked(completeModel).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const pending = store.getState().extractChartImage('p1', chartImage, '', false, new AbortController().signal);
+  await store.getState().saveProfile({ ...profile, model: 'replacement-vision' }, 'fixture-key');
+  finish(chartImageReply);
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  expect(store.getState().taskRuns).toEqual([]);
+});
 
 it('flushes an encrypted workflow draft on lock and restores it without making it runnable', async () => {
   const draft = { ...newWorkflow(), nodes: [newWorkflowNode('create_document', 0)] };

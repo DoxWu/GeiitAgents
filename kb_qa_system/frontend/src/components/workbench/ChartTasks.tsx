@@ -8,6 +8,7 @@ import { chartSvgToPng } from '@/officeTasks/chartImage';
 import { exportChartXlsx, parseFirstXlsxSheet, XLSX_MIME } from '@/officeTasks/xlsx';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import type { TaskStatus } from '@/types/workbench';
+import { ChartImageImport } from './ChartImageImport';
 
 const sample: ChartInput = { title: '季度销售额', csv: '月份,销售额\n一月,120\n二月,180\n三月,150', categoryColumn: 0, valueColumn: 1, chartType: 'bar', unit: '元' };
 const status: Record<TaskStatus, string> = { running: '运行中', succeeded: '已完成', failed: '失败', interrupted: '已中断', cancelled: '已取消' };
@@ -26,6 +27,7 @@ export function ChartTasks() {
   const [input, setInput] = useState<ChartInput>({ ...sample });
   const [checked, setChecked] = useState<ReturnType<typeof checkChart> | null>(null);
   const [selected, setSelected] = useState('');
+  const [imageParsing, setImageParsing] = useState(false);
   const [importedSheet, setImportedSheet] = useState('');
   const [busy, setBusy] = useState(false), [reviewing, setReviewing] = useState(false), [reviewProfileId, setReviewProfileId] = useState(''), [allowCloudReview, setAllowCloudReview] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const requestId = useRef(crypto.randomUUID()), mounted = useRef(false), fileGeneration = useRef(0), fileInput = useRef<HTMLInputElement>(null);
@@ -109,7 +111,7 @@ export function ChartTasks() {
       <div ref={taskNavigation.resultRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
       {task && <section aria-label="图表任务详情" className="mt-6 border-t border-line pt-5">
         <div className="flex flex-wrap items-center gap-2"><h2 className="min-w-0 flex-1 break-words text-lg font-semibold">{task.title}</h2>
-          <button className="work-command" disabled={busy || !task.chartInput} onClick={() => { if (task.chartInput) { change({ ...task.chartInput, valueColumns: task.chartInput.valueColumns?.slice() }); taskNavigation.showInput(); } }}><RotateCcw size={15} />复用图表输入</button>
+          <button className="work-command" disabled={busy || imageParsing || !task.chartInput} onClick={() => { if (task.chartInput) { change({ ...task.chartInput, valueColumns: task.chartInput.valueColumns?.slice() }); taskNavigation.showInput(); } }}><RotateCcw size={15} />复用图表输入</button>
           <button className="work-command" disabled={busy || task.status === 'running'} onClick={() => { if (window.confirm('删除此图表任务、输入和成果？')) void store.removeTask(task.id).catch(e => setError(e instanceof Error ? e.message : '删除失败。')); }}><Trash2 size={15} />删除图表任务</button></div>
         <p className="mt-2 text-sm">{status[task.status]} · {new Date(task.updatedAt).toLocaleString()}</p>{task.error && <p className="text-sm text-danger">{task.error}</p>}
         <details className="mt-3 text-xs"><summary>图表执行记录</summary>{store.toolRuns.filter(tool => tool.taskId === task.id).map(tool => <p className="mt-1" key={tool.id}>{tool.tool} · {status[tool.status]}{tool.converterVersion ? ` · ${tool.converterVersion}` : ''}</p>)}</details>
@@ -135,7 +137,11 @@ export function ChartTasks() {
       </section>}
       </div>
       <div ref={taskNavigation.inputRef} tabIndex={-1} className="scroll-mt-28 outline-none sm:scroll-mt-20">
-      <fieldset disabled={busy} className="mt-5 grid min-w-0 gap-4 border-b border-line pb-5 sm:grid-cols-2">
+      <ChartImageImport disabled={busy} contextKey={`${task?.id ?? ''}:${requestId.current}`} onBusyChange={setImageParsing} onDraft={draft => {
+        change(draft.input); setChecked(checkChart(draft.input));
+        setNotice(`已载入图片识别草稿，请对照原图复核数值后保存。${draft.notes.length ? `识别说明：${draft.notes.join('；')}` : ''}`);
+      }} />
+      <fieldset disabled={busy || imageParsing} className="mt-5 grid min-w-0 gap-4 border-b border-line pb-5 sm:grid-cols-2">
         <label className="work-label">图表标题<input className="work-input" maxLength={80} value={input.title} onChange={e => change({ title: e.target.value })} /></label>
         <label className="work-label">单位（可选）<input className="work-input" maxLength={20} value={input.unit} onChange={e => change({ unit: e.target.value })} /></label>
         <label className="work-label sm:col-span-2">CSV 数据<textarea aria-label="CSV 数据" className="work-input min-h-40 resize-y font-mono" maxLength={100000} value={input.csv} onChange={e => change({ csv: e.target.value })} /></label>
@@ -145,7 +151,7 @@ export function ChartTasks() {
         <fieldset className="min-w-0 rounded border border-line p-3">
           <legend className="px-1 text-sm font-medium">数值列（可多选）</legend>
           <div className="grid gap-2 sm:grid-cols-2">{columns.map((header, index) => <label key={index} className="flex min-w-0 items-start gap-2 break-all text-sm">
-            <input type="checkbox" className="mt-1 shrink-0" aria-label={`数值列：${header}`} checked={selectedValueColumns.includes(index)} disabled={busy || index === input.categoryColumn || (input.chartType === 'pie' && !selectedValueColumns.includes(index)) || (!selectedValueColumns.includes(index) && selectedValueColumns.length >= MAX_CHART_SERIES)} onChange={event => { const valueColumns = event.target.checked ? [...selectedValueColumns, index] : selectedValueColumns.filter(column => column !== index); change({ valueColumn: valueColumns[0] ?? -1, valueColumns }); }} />{header}
+            <input type="checkbox" className="mt-1 shrink-0" aria-label={`数值列：${header}`} checked={selectedValueColumns.includes(index)} disabled={busy || imageParsing || index === input.categoryColumn || (input.chartType === 'pie' && !selectedValueColumns.includes(index)) || (!selectedValueColumns.includes(index) && selectedValueColumns.length >= MAX_CHART_SERIES)} onChange={event => { const valueColumns = event.target.checked ? [...selectedValueColumns, index] : selectedValueColumns.filter(column => column !== index); change({ valueColumn: valueColumns[0] ?? -1, valueColumns }); }} />{header}
           </label>)}</div>
           <p className="mt-2 text-xs text-ink-secondary">散点图把这些列作为 Y 轴系列，与 X 轴数值按原始行对应；柱状图、水平条形图和折线图可选择 1–{MAX_CHART_SERIES} 个系列，饼图只支持单个非负系列。</p>
         </fieldset>

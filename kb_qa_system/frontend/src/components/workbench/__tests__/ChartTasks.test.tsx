@@ -3,15 +3,17 @@ import JSZip from 'jszip';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TaskRun } from '@/types/workbench';
+import { checkChart } from '@/officeTasks/chart';
 import { ChartTasks } from '../ChartTasks';
 
 const { state, getState } = vi.hoisted(() => {
-  const value = { taskRuns: [] as TaskRun[], artifacts: [] as { id: string; taskId: string; kind: string; content: string; name: string; sha256?: string }[], toolRuns: [], profiles: [] as { id: string; name: string; mode: 'local' | 'relay'; capabilities?: { vision?: { state: string } } }[], startChartTask: vi.fn(), reviewChartImage: vi.fn(), storageError: null as string | null, unlocked: true };
+  const value = { taskRuns: [] as TaskRun[], artifacts: [] as { id: string; taskId: string; kind: string; content: string; name: string; sha256?: string }[], toolRuns: [], profiles: [] as { id: string; name: string; mode: 'local' | 'relay'; capabilities?: { vision?: { state: string } } }[], startChartTask: vi.fn(), reviewChartImage: vi.fn(), extractChartImage: vi.fn(), storageError: null as string | null, unlocked: true };
   return { state: value, getState: () => value };
 });
 vi.mock('@/store/workbenchStore', () => { const hook = () => state; Object.assign(hook, { getState }); return { useWorkbenchStore: hook }; });
+vi.mock('@/hooks/useWorkbenchFence', () => ({ useWorkbenchFence: () => () => () => state.unlocked }));
 vi.mock('@/officeTasks/chartImage', () => ({ chartSvgToPng: vi.fn(async () => ({ name: 'chart.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 })) }));
-beforeEach(() => { state.taskRuns = []; state.artifacts = []; state.profiles = []; state.startChartTask.mockReset().mockResolvedValue('chart:fixture'); state.reviewChartImage.mockReset().mockResolvedValue(undefined); vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture'); vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {}); });
+beforeEach(() => { state.unlocked = true; state.taskRuns = []; state.artifacts = []; state.profiles = []; state.startChartTask.mockReset().mockResolvedValue('chart:fixture'); state.reviewChartImage.mockReset().mockResolvedValue(undefined); state.extractChartImage.mockReset(); vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture'); vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {}); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('previews every selected series and clears approval when selection changes', async () => {
@@ -130,4 +132,44 @@ it('requires fresh cloud consent for each chart image review', async () => {
   expect(button).toBeEnabled();
   await user.click(button); await screen.findByRole('status');
   expect(state.reviewChartImage).toHaveBeenCalledWith('chart-task', 'svg-1', 'relay', expect.anything(), true, expect.any(AbortSignal));
+});
+
+const imageFile = (name = 'chart.png') => new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], name, { type: 'image/png' });
+const imageChart = { title: '图片中的销售', csv: '月份,销售额\n一月,25\n二月,40', categoryColumn: 0, valueColumn: 1, chartType: 'line' as const, unit: '万元' };
+it('requires cloud consent, loads an editable image draft and saves only after user review', async () => {
+  state.profiles = [{ id: 'vision', name: '图片模型', mode: 'relay' }];
+  state.extractChartImage.mockResolvedValue({ input: checkChart(imageChart).input, notes: ['部分数值为估读。'] });
+  const user = userEvent.setup(); render(<ChartTasks />);
+  await user.click(screen.getByText('从图表图片生成'));
+  await user.upload(screen.getByLabelText('选择图表图片文件'), imageFile());
+  const button = screen.getByRole('button', { name: '识别并生成图表草稿' });
+  expect(button).toBeDisabled();
+  await user.type(screen.getByLabelText('补充要求（可选）'), '改成折线图');
+  await user.click(screen.getByLabelText(/我允许本次将上传的图表图片/));
+  await user.click(button);
+  expect(await screen.findByRole('status')).toHaveTextContent('估读');
+  expect(state.extractChartImage).toHaveBeenCalledWith('vision', expect.objectContaining({ dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }), '改成折线图', true, expect.any(AbortSignal));
+  expect(screen.getByLabelText('图表标题')).toHaveValue(imageChart.title);
+  expect(screen.getByLabelText('CSV 数据')).toHaveValue(imageChart.csv);
+  expect(screen.getByRole('img', { name: /预览/ })).toBeInTheDocument();
+  expect(state.startChartTask).not.toHaveBeenCalled();
+  expect(button).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: '保存图表任务' }));
+  expect(state.startChartTask).toHaveBeenCalledWith(expect.objectContaining(imageChart), expect.any(String));
+});
+it('cancels image recognition and ignores a late response after replacing the source image', async () => {
+  state.profiles = [{ id: 'vision', name: '本机图片模型', mode: 'local' }];
+  let resolve!: (value: unknown) => void;
+  state.extractChartImage.mockImplementation(() => new Promise(done => { resolve = done; }));
+  const user = userEvent.setup(); render(<ChartTasks />);
+  await user.click(screen.getByText('从图表图片生成'));
+  await user.upload(screen.getByLabelText('选择图表图片文件'), imageFile());
+  await user.click(screen.getByRole('button', { name: '识别并生成图表草稿' }));
+  expect(screen.getByLabelText('CSV 数据')).toBeDisabled();
+  await user.upload(screen.getByLabelText('选择图表图片文件'), imageFile('replacement.png'));
+  expect(state.extractChartImage.mock.calls[0][4].aborted).toBe(true);
+  resolve({ input: imageChart, notes: [] });
+  await screen.findByRole('button', { name: '识别并生成图表草稿' });
+  expect(screen.getByLabelText('图表标题')).toHaveValue('季度销售额');
+  expect(state.startChartTask).not.toHaveBeenCalled();
 });

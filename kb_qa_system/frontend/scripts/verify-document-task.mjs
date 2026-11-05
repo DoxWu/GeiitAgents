@@ -162,6 +162,7 @@ try {
   expect(completionRequests).toHaveLength(1);
   const firstPayload = JSON.parse(sent[0].messages[1].content);
   expect(firstPayload).toEqual({ title: '项目周报', instruction: '整理为包含进展、风险和下周计划的周报。',
+    outputFormat: 'docx',
     source: { file: '粘贴材料.txt', content: sourceText }, images: [] });
   expect(JSON.stringify(sent[0])).not.toMatch(/synthetic-task-session|task-test-1234|api.?key/i);
   const encrypted = await readVaultCiphertext(page);
@@ -458,6 +459,7 @@ try {
   expect(externalAttempts).toEqual([]);
   expect(sent).toHaveLength(webRequestsBefore + 1);
   await page.getByRole('tab', { name: '文档生成' }).click();
+  await page.getByRole('button', { name: '新建文档任务', exact: true }).click();
   await page.getByLabel('文档标题', { exact: true }).fill('取消测试');
   await page.getByLabel('生成要求', { exact: true }).fill('生成一份不会被保存的测试文档。');
   await page.getByLabel('参考材料（可选）', { exact: true }).fill('仅用于取消流程。');
