@@ -8,7 +8,7 @@ import * as images from '@/services/workbenchImages';
 
 vi.mock('@/services/workbenchModel', async original => ({ ...await original<typeof import('@/services/workbenchModel')>(), getAccountModel: vi.fn().mockResolvedValue(null) }));
 const image: WorkImage = { name: 'synthetic.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=', bytes: 8 };
-vi.mock('../ImageGenerator', () => ({ ImageGenerator: ({ onImage }: { onImage: (image: WorkImage) => void }) => <button onClick={() => onImage(image)}>Return generated fixture</button> }));
+vi.mock('../ImageGenerator', () => ({ ImageGenerator: ({ onImage, requestPrompt }: { onImage: (image: WorkImage) => void; requestPrompt?: string }) => <><div data-testid="sent-prompt">{requestPrompt}</div><button onClick={() => onImage(image)}>Return generated fixture</button></> }));
 beforeEach(async () => {
   vi.stubGlobal('crypto', webcrypto); localStorage.clear(); await store.getState().unlock('synthetic-image-password');
   await store.getState().saveImageTask({ id: 'saved-task', name: 'Saved task', updatedAt: new Date().toISOString(), draft: { prompt: 'existing prompt', references: [], shapes: [] } });
@@ -36,4 +36,13 @@ it('shows a retry message if the download cannot be initiated', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Return generated fixture' }));
   fireEvent.click(screen.getByRole('button', { name: '下载图片' }));
   expect(screen.getByRole('status').textContent).toContain('图片下载失败');
+});
+
+it('sends the user-edited full request prompt to the image generator', () => {
+  render(<ImageStudio />);
+  fireEvent.click(screen.getByText('实际发送的生图提示词（含当前构图）'));
+  const editor = screen.getByRole('textbox', { name: '实际发送的生图提示词' });
+  fireEvent.change(editor, { target: { value: 'user-authored final image instructions' } });
+  expect(screen.getByTestId('sent-prompt').textContent).toBe('user-authored final image instructions');
+  expect((editor as HTMLTextAreaElement).value).toBe('user-authored final image instructions');
 });

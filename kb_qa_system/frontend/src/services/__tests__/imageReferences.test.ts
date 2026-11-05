@@ -4,7 +4,7 @@ import { apiClient } from '@/api/client';
 import { generateServerImage } from '@/api/serverImages';
 import type { ModelProfile, WorkImage } from '@/types/workbench';
 import { generateWorkImage } from '../workbenchModel';
-import { imageReferenceData, imageRequest, isDashScopeImageEndpoint } from '../imageRequest';
+import { imageReferenceData, imageRequest, imageRequestError, isDashScopeImageEndpoint } from '../imageRequest';
 
 vi.mock('@/api/client', () => ({ apiClient: { post: vi.fn() }, getStoredTokens: vi.fn(() => ({ access_token: 'synthetic' })) }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -73,6 +73,27 @@ it('rejects invalid references before any model request and limits official host
   expect(isDashScopeImageEndpoint(new URL('https://ws-fixture.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'))).toBe(true);
   const textOnly = imageRequest(profile.baseUrl, 'image', 'text', '1024x1024', []);
   expect(textOnly.url).toContain('/images/generations');
+  expect(JSON.parse(textOnly.body as string)).toMatchObject({ model: 'image', prompt: 'text', size: '1024x1024' });
+});
+
+it('sends text-only 4K requests to the native DashScope endpoint with its size format', () => {
+  const baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  const request = imageRequest(baseUrl, 'qwen-image-3.0-pro', 'a synthetic scene', '3840x2160', []);
+  expect(request.url).toBe('https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation');
+  expect(request.json).toBe(true);
+  expect(JSON.parse(request.body as string)).toEqual({
+    model: 'qwen-image-3.0-pro',
+    input: { messages: [{ role: 'user', content: [{ text: 'a synthetic scene' }] }] },
+    parameters: { n: 1, size: '3840*2160', prompt_extend: false, watermark: false },
+  });
+});
+
+it('explains 4K parameter rejections without exposing provider bodies', () => {
+  const error = imageRequestError(422, new TextEncoder().encode('{"message":"secret fixture"}'), false);
+  expect(error.message).toContain('所选宽高');
+  expect(error.message).toContain('4K');
+  expect(error.message).not.toContain('secret fixture');
+  expect(imageRequestError(422, new Uint8Array(), true).message).toContain('参考图格式');
 });
 
 it('maps native quota errors without exposing arbitrary provider text', async () => {

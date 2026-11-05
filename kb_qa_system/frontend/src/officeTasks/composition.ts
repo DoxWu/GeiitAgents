@@ -6,7 +6,7 @@ export interface ImageCanvas extends ImageSize { background: string }
 export const DEFAULT_IMAGE_CANVAS: ImageCanvas = { width: 1024, height: 1024, background: '#f4f3ef' };
 // Old drafts used a fixed 16:9 preview. Preserve their geometry on load.
 export const LEGACY_IMAGE_CANVAS: ImageCanvas = { width: 1536, height: 864, background: '#f4f3ef' };
-export interface ImageStudioDraft { prompt: string; shapes: CompositionShape[]; references: WorkImage[]; canvas?: ImageCanvas; result?: WorkImage }
+export interface ImageStudioDraft { prompt: string; finalPrompt?: string; shapes: CompositionShape[]; references: WorkImage[]; canvas?: ImageCanvas; result?: WorkImage }
 export interface ImageStudioTask { id: string; name: string; updatedAt: string; draft: ImageStudioDraft }
 export function validateImageTasks(value: unknown): ImageStudioTask[] {
   if (!Array.isArray(value) || value.length > 50) throw new Error('最多保存50个图片任务。');
@@ -51,7 +51,7 @@ export function validateShapes(value: unknown): CompositionShape[] {
 }
 export function validateImageStudio(value: unknown): ImageStudioDraft {
   const d = value as ImageStudioDraft;
-  if (!d || typeof d !== 'object' || Object.keys(d).some(k => !['prompt','shapes','references','canvas','result'].includes(k)) || typeof d.prompt !== 'string' || d.prompt.length > 1000 || !Array.isArray(d.references) || d.references.length > 2) throw new Error('图片草稿无效。');
+  if (!d || typeof d !== 'object' || Object.keys(d).some(k => !['prompt','finalPrompt','shapes','references','canvas','result'].includes(k)) || typeof d.prompt !== 'string' || d.prompt.length > 1000 || d.finalPrompt !== undefined && (typeof d.finalPrompt !== 'string' || d.finalPrompt.length > 6000) || !Array.isArray(d.references) || d.references.length > 2) throw new Error('图片草稿无效。');
   imageCanvas(d.canvas);
   validateShapes(d.shapes); d.references.forEach(validateWorkImage); if (d.result) validateGeneratedWorkImage(d.result);
   if ([...d.references, ...(d.result ? [d.result] : [])].reduce((n,i) => n+i.bytes,0) > MAX_VAULT_IMAGE_BYTES) throw new Error('图片草稿素材总量超过128 MiB。');

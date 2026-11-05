@@ -7,6 +7,7 @@ import { ImageCanvasSettings } from './ImageCanvasSettings';
 import { ImageGenerator } from './ImageGenerator';
 import { useWorkbenchFence } from '@/hooks/useWorkbenchFence';
 import { Hint } from './Hint';
+import { validateImagePrompt } from '@/services/imageGeneration';
 
 const fresh = (): ImageStudioDraft => ({ prompt: '', canvas: { ...DEFAULT_IMAGE_CANVAS }, shapes: [newCompositionShape(0)], references: [] });
 export function ImageStudio() {
@@ -33,8 +34,13 @@ export function ImageStudio() {
       setNotice('图片下载失败，请重试。');
     }
   }
-  let requestPrompt = '', promptError = '';
-  try { requestPrompt = compositionPrompt(draft); } catch (error) { promptError = error instanceof Error ? error.message : '构图提示词无效。'; }
+  let requestPrompt = '', generatedPrompt = '', promptError = '';
+  try { generatedPrompt = compositionPrompt(draft); }
+  catch (error) { if (draft.finalPrompt === undefined) promptError = error instanceof Error ? error.message : '构图提示词无效。'; }
+  if (!promptError) {
+    try { requestPrompt = validateImagePrompt(draft.finalPrompt ?? generatedPrompt); }
+    catch (error) { promptError = error instanceof Error ? error.message : '构图提示词无效。'; }
+  }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (previousUnlocked.current === store.unlocked) return;
@@ -95,7 +101,7 @@ export function ImageStudio() {
       const task = useWorkbenchStore.getState().taskRuns.find(t => t.id === id);
       const artifact = useWorkbenchStore.getState().artifacts.find(a => task?.artifactIds.includes(a.id));
       if (task?.status !== 'succeeded' || artifact?.finishReason !== 'stop' || artifact.content.trim().length > 1000) throw new Error('提示词生成未完整完成或超过1000字符。');
-      setDraft(d => ({ ...d, prompt: artifact.content.trim() })); setNotice('已整理内容与风格，请审阅；区域位置、尺寸和层级会由当前构图自动附加。');
+      setDraft(d => ({ ...d, prompt: artifact.content.trim(), finalPrompt: undefined })); setNotice('已整理内容与风格，请审阅；区域位置、尺寸和层级会由当前构图自动附加。');
     } catch (error) { if (current()) setNotice(error instanceof Error ? error.message : '整理失败'); }
     finally { if (mounted.current) setBusy(false); }
   }
@@ -127,7 +133,11 @@ export function ImageStudio() {
         </div>
         <div className="grid min-w-0 content-start gap-4" data-image-controls>
           <label className="work-label">图片提示词<textarea aria-label="图片提示词" className="work-input min-h-32 resize-y" maxLength={1000} value={draft.prompt} onChange={event => setDraft(d => ({ ...d, prompt: event.target.value }))} placeholder="描述主体、内容与风格；布局参数会自动附加" /></label>
-          <details className="min-w-0 border border-line p-3"><summary className="cursor-pointer text-sm">实际发送的生图提示词（含当前构图）</summary><pre aria-label="最终生图提示词" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{promptError || requestPrompt}</pre></details>
+          <details className="min-w-0 border border-line p-3"><summary className="cursor-pointer text-sm">实际发送的生图提示词（含当前构图）</summary>
+            <p className="mt-2 text-xs text-ink-secondary">这里的内容会完整发送给生图模型。手动编辑后，画布变化不会自动覆盖；可重新同步当前构图。</p>
+            <textarea aria-label="实际发送的生图提示词" className="work-input mt-2 min-h-40 resize-y font-mono text-xs" maxLength={6000} value={promptError ? '' : requestPrompt} onChange={event => setDraft(d => ({ ...d, finalPrompt: event.target.value }))} placeholder={promptError || generatedPrompt} />
+            {draft.finalPrompt !== undefined && <button type="button" className="work-command mt-2" onClick={() => setDraft(d => ({ ...d, finalPrompt: undefined }))}>重新同步当前构图</button>}
+          </details>
           <label className="work-label">参考图片<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="work-input" onChange={event => {
             const fence = capture(), epoch = taskEpoch.current, current = () => fence() && taskEpoch.current === epoch;
             const files = Array.from(event.target.files ?? []); event.target.value = '';

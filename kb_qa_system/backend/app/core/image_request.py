@@ -26,8 +26,6 @@ def validate_reference_images(images: list[str]) -> list[str]:
 
 def image_target(base_url: str, references: list[str]) -> tuple[str, str, bool]:
     """Return the base, allowed resource and protocol, always on the same origin."""
-    if not references:
-        return base_url, 'images/generations', False
     parsed = urlsplit(base_url)
     host = parsed.hostname or ''
     dashscope = host in {'dashscope.aliyuncs.com', 'dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com'} or bool(
@@ -36,16 +34,16 @@ def image_target(base_url: str, references: list[str]) -> tuple[str, str, bool]:
     if dashscope:
         # Keep credentials/query/fragment for the caller's normal URL validator.
         return urlunsplit(parsed._replace(path='')), IMAGE_EDIT_PATH.lstrip('/'), True
-    return base_url, 'images/edits', False
+    return base_url, ('images/edits' if references else 'images/generations'), False
 
 
 def image_request_options(model: str, prompt: str, size: str, references: list[str], dashscope: bool) -> dict:
-    if not references:
-        return {'json': {'model': model, 'prompt': prompt, 'n': 1, 'size': size, 'response_format': 'b64_json'}}
     if dashscope:
         return {'json': {'model': model, 'input': {'messages': [{'role': 'user', 'content': [
             *({'image': image} for image in references), {'text': prompt},
         ]}]}, 'parameters': {'n': 1, 'size': size.replace('x', '*'), 'prompt_extend': False, 'watermark': False}}}
+    if not references:
+        return {'json': {'model': model, 'prompt': prompt, 'n': 1, 'size': size, 'response_format': 'b64_json'}}
     files = []
     for index, image in enumerate(references):
         header, encoded = image.split(',', 1)
@@ -80,6 +78,8 @@ def image_error_message(status: int, payload: object, references: bool) -> str:
         return '图像服务拒绝认证，请检查 API Key 和模型权限。'
     if status == 429:
         return '图像服务额度或速率已达上限。'
-    if references and status in (400, 404, 405, 415, 422):
+    if status in (400, 422):
+        return '图像服务拒绝了请求参数、画布尺寸或参考图格式。若使用4K画布，请确认模型支持所选宽高；参考图请求还需支持图片输入。'
+    if references and status in (404, 405, 415):
         return '参考图生成请求被拒绝，请确认所选模型支持图片编辑及当前接口格式；参考图未被丢弃重试。'
     return '图像服务请求失败，请检查接口地址和生图模型名称。'

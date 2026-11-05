@@ -1,6 +1,6 @@
 """Reference bytes must reach the image provider, including every fallback."""
-import base64
 import asyncio
+import base64
 import json
 import socket
 from unittest.mock import AsyncMock
@@ -9,7 +9,12 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.core.image_request import IMAGE_EDIT_PATH, image_target
+from app.core.image_request import (
+    IMAGE_EDIT_PATH,
+    image_error_message,
+    image_request_options,
+    image_target,
+)
 from app.core.model_provider.schemas import ModelProviderConfig, ProviderEndpointConfig
 from app.schemas.private_model import PrivateImageGeneration
 from app.services import private_model, server_image_generation
@@ -33,6 +38,29 @@ def test_official_host_matching_does_not_rewrite_similar_hosts():
     for host in ['dashscope.aliyuncs.com.evil.example', 'other.aliyuncs.com', 'x.cn-beijing.maas.aliyuncs.com.evil.example']:
         base = f'https://{host}/v1'
         assert image_target(base, [REFERENCE]) == (base, 'images/edits', False)
+
+
+def test_dashscope_text_only_4k_uses_native_route_and_size_protocol():
+    base = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    request_base, resource, dashscope = image_target(base, [])
+    assert request_base == 'https://dashscope.aliyuncs.com'
+    assert resource == IMAGE_EDIT_PATH.lstrip('/')
+    assert dashscope is True
+    options = image_request_options('qwen-image-3.0-pro', 'synthetic scene', '3840x2160', [], dashscope)
+    assert options['json'] == {
+        'model': 'qwen-image-3.0-pro',
+        'input': {'messages': [{'role': 'user', 'content': [{'text': 'synthetic scene'}]}]},
+        'parameters': {'n': 1, 'size': '3840*2160', 'prompt_extend': False, 'watermark': False},
+    }
+    assert image_target('https://models.example/v1', []) == ('https://models.example/v1', 'images/generations', False)
+    assert image_request_options('image', 'text', '3840x2160', [], False)['json']['size'] == '3840x2160'
+
+
+def test_text_only_parameter_rejection_has_a_fixed_size_hint():
+    message = image_error_message(422, {'message': 'synthetic-secret'}, False)
+    assert '所选宽高' in message and '4K' in message
+    assert 'synthetic-secret' not in message
+    assert '参考图格式' in image_error_message(422, {}, True)
 
 
 @pytest.mark.asyncio
@@ -72,6 +100,30 @@ async def test_byok_sends_image_bytes_with_pinned_host_and_tls(monkeypatch, dash
     ), 'synthetic')
     assert result['data_url'] == REFERENCE and len(calls) == 1
     assert download.await_count == (1 if dashscope else 0)
+
+
+@pytest.mark.asyncio
+async def test_byok_sends_text_only_4k_to_dashscope_native_route(monkeypatch):
+    base = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, 'getaddrinfo', AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, '', ('1.1.1.1', 443))]))
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.url.path == IMAGE_EDIT_PATH
+        body = json.loads(request.content)
+        assert body['model'] == 'qwen-image-3.0-pro'
+        assert body['input']['messages'][0]['content'] == [{'text': 'synthetic 4K scene'}]
+        assert body['parameters']['size'] == '3840*2160'
+        return httpx.Response(200, json={'data': [{'b64_json': base64.b64encode(PNG).decode()}]})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(private_model.httpx, 'AsyncClient', lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
+    result = await private_model.generate_private_image(PrivateImageGeneration(
+        base_url=base, model='qwen-image-3.0-pro', prompt='synthetic 4K scene', size='3840x2160',
+    ), 'synthetic')
+    assert result['data_url'] == REFERENCE and len(calls) == 1
 
 
 @pytest.mark.asyncio

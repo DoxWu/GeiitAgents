@@ -24,6 +24,12 @@ it('keeps legacy landscape drafts and validates new canvas dimensions without mo
   expect(() => validateImageStudio({ ...legacy, canvas: { ...canvas, background: 'url(secret)' } })).toThrow();
 });
 
+it('persists an editable final request prompt within the provider input limit', () => {
+  const draft = { prompt: 'base theme', finalPrompt: 'exact prompt sent to image provider', shapes: [], references: [] };
+  expect(validateImageStudio(draft).finalPrompt).toBe(draft.finalPrompt);
+  expect(() => validateImageStudio({ ...draft, finalPrompt: 'x'.repeat(6001) })).toThrow();
+});
+
 it('builds final prompts from current geometry and layers even without visual-model summarization', () => {
   const shape = { ...newCompositionShape(0), x: 14.79, y: 16.11, w: 12.08, h: 14.04, layer: 3, description: '绿色斗篷', rotation: 30 };
   const prompt = compositionPrompt({ prompt: '人物与背景', canvas: { width: 1536, height: 864, background: '#112233' }, shapes: [shape], references: [] });

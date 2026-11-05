@@ -20,6 +20,7 @@ it('revokes consent and cancels old generation when reference images change', as
   fireEvent.click(screen.getByText('由模型生成图片'));
   const consent = screen.getByRole('checkbox'); fireEvent.click(consent);
   fireEvent.click(screen.getByRole('button', { name: '生成图片并放入设计' }));
+  expect(generate.mock.calls[0]?.[1]).toBe('edit');
   expect(generate.mock.calls[0]?.[5]).toEqual([reference]);
   const signal = (generate.mock.calls as unknown[][])[0][3] as AbortSignal;
   view.rerender(<ImageGenerator contextKey="task" requestPrompt="edit" referenceImages={[reference, { ...reference, name: 'second.png' }]} onImage={onImage} />);

@@ -16,12 +16,12 @@ export function isDashScopeImageEndpoint(url: URL): boolean {
 
 // Preserve the configured origin: credentials never move to another host.
 export function imageRequest(baseUrl: string, model: string, prompt: string, size: string, references: string[]): { url: string; body: BodyInit; json: boolean } {
-  if (!references.length) return { url: `${baseUrl}/images/generations`, json: true, body: JSON.stringify({ model, prompt, n: 1, size, response_format: 'b64_json' }) };
   const url = new URL(baseUrl);
   if (isDashScopeImageEndpoint(url)) {
     url.pathname = IMAGE_EDIT_PATH;
     return { url: url.href, json: true, body: JSON.stringify({ model, input: { messages: [{ role: 'user', content: [...references.map(image => ({ image })), { text: prompt }] }] }, parameters: { n: 1, size: size.replace('x', '*'), prompt_extend: false, watermark: false } }) };
   }
+  if (!references.length) return { url: `${baseUrl}/images/generations`, json: true, body: JSON.stringify({ model, prompt, n: 1, size, response_format: 'b64_json' }) };
   const body = new FormData();
   for (const [key, value] of Object.entries({ model, prompt, n: '1', size, response_format: 'b64_json' })) body.append(key, value);
   references.forEach((dataUrl, index) => {
@@ -44,6 +44,7 @@ export function imageResult(payload: unknown): { b64_json?: unknown; url?: unkno
 export const IMAGE_REQUEST_ERRORS: Record<string, string> = {
   IMAGE_EDIT_QUOTA: '参考图编辑调用被百炼的“仅使用免费额度”限制拦截，请检查该模型的可用额度和调用设置。',
   IMAGE_REFERENCE_UNSUPPORTED: '参考图生成请求被拒绝，请确认所选模型支持图片编辑及当前接口格式；参考图未被丢弃重试。',
+  IMAGE_REQUEST_REJECTED: '图像服务拒绝了请求参数、画布尺寸或参考图格式。若使用4K画布，请确认模型支持所选宽高；参考图请求还需支持图片输入。',
   IMAGE_AUTH_REJECTED: '图像服务拒绝认证，请检查 API Key 和模型权限。',
   IMAGE_RATE_LIMIT: '图像服务额度或速率已达上限。',
   IMAGE_RESULT_TOO_LARGE: '模型已经返回图片，但单张图片超过64 MiB接收上限。请降低输出尺寸后重试。',
@@ -58,6 +59,8 @@ export function imageRequestError(status: number, body: Uint8Array, references: 
   const key = code === 'AllocationQuota.FreeTierOnly' ? 'IMAGE_EDIT_QUOTA'
     : status === 401 || status === 403 ? 'IMAGE_AUTH_REJECTED'
     : status === 429 ? 'IMAGE_RATE_LIMIT'
-    : references && [400, 404, 405, 415, 422].includes(status) ? 'IMAGE_REFERENCE_UNSUPPORTED' : '';
-  return new Error(IMAGE_REQUEST_ERRORS[key] ?? '生图接口请求失败或未返回可用图片，请检查模型、接口兼容性和跨域设置。');
+    : [400, 422].includes(status) ? 'IMAGE_REQUEST_REJECTED'
+    : references && [404, 405, 415].includes(status) ? 'IMAGE_REFERENCE_UNSUPPORTED' : '';
+  const mapped = key;
+  return new Error(IMAGE_REQUEST_ERRORS[mapped] ?? '生图接口请求失败或未返回可用图片，请检查模型、接口兼容性和跨域设置。');
 }

@@ -108,6 +108,31 @@ async def test_server_image_downloads_provider_result_url(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_server_text_only_4k_uses_dashscope_native_route(monkeypatch):
+    endpoint = ProviderEndpointConfig(
+        name="primary", type="openai_images", model="qwen-image-3.0-pro", api_key="synthetic",
+        api_base="https://dashscope.aliyuncs.com/compatible-mode/v1", enabled=True,
+    )
+    monkeypatch.setattr(image_generation.ConfigLoader, "load", lambda: ModelProviderConfig(providers={"image_generation": [endpoint]}))
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.url.path == "/api/v1/services/aigc/multimodal-generation/generation"
+        body = json.loads(request.content)
+        assert body["input"]["messages"][0]["content"] == [{"text": "synthetic 4K scene"}]
+        assert body["parameters"]["size"] == "3840*2160"
+        return httpx.Response(200, json={"data": [{"b64_json": png}]})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(image_generation.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
+    result = await image_generation.generate_server_image("primary", "synthetic 4K scene", "3840x2160")
+    assert result == {"data_url": f"data:image/png;base64,{png}", "model": endpoint.model}
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("embedded", [False, True])
 async def test_server_image_accepts_provider_result_larger_than_upload_limit(monkeypatch, embedded):
     primary = ProviderEndpointConfig(name="primary", type="openai_images", model="image-main", api_key="main-key", api_base="https://image-main.example/v1", enabled=True)

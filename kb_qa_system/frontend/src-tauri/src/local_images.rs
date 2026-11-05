@@ -309,9 +309,6 @@ fn image_request(
     references: &[String],
 ) -> Result<reqwest::RequestBuilder, String> {
     let images = reference_bytes(references)?;
-    if images.is_empty() {
-        return Ok(client.post(url).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size, "response_format": "b64_json" })));
-    }
     if dashscope_endpoint(&url) {
         url.set_path("/api/v1/services/aigc/multimodal-generation/generation");
         let mut content: Vec<serde_json::Value> = references
@@ -321,6 +318,9 @@ fn image_request(
         content.push(serde_json::json!({"text": prompt}));
         return Ok(client.post(url).json(&serde_json::json!({ "model": model, "input": {"messages": [{"role": "user", "content": content}]},
             "parameters": {"n": 1, "size": size.replace('x', "*"), "prompt_extend": false, "watermark": false} })));
+    }
+    if images.is_empty() {
+        return Ok(client.post(url).json(&serde_json::json!({ "model": model, "prompt": prompt, "n": 1, "size": size, "response_format": "b64_json" })));
     }
     let path = url
         .path()
@@ -395,7 +395,8 @@ fn provider_error(status: u16, body: &[u8], references: bool) -> &'static str {
     match status {
         401 | 403 => "IMAGE_AUTH_REJECTED",
         429 => "IMAGE_RATE_LIMIT",
-        400 | 404 | 405 | 415 | 422 if references => "IMAGE_REFERENCE_UNSUPPORTED",
+        400 | 422 => "IMAGE_REQUEST_REJECTED",
+        404 | 405 | 415 if references => "IMAGE_REFERENCE_UNSUPPORTED",
         _ => "Image generation failed",
     }
 }
@@ -549,6 +550,36 @@ mod tests {
     }
 
     #[test]
+    fn sends_text_only_4k_to_the_native_dashscope_endpoint() {
+        let client = reqwest::Client::new();
+        let endpoint =
+            Url::parse("https://dashscope.aliyuncs.com/compatible-mode/v1/images/generations")
+                .unwrap();
+        let request = image_request(
+            &client,
+            endpoint,
+            "qwen-image-3.0-pro",
+            "synthetic 4K scene",
+            "3840x2160",
+            &[],
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(
+            body["input"]["messages"][0]["content"],
+            serde_json::json!([{"text": "synthetic 4K scene"}])
+        );
+        assert_eq!(body["parameters"]["size"], "3840*2160");
+    }
+
+    #[test]
     fn rejects_mismatched_oversized_and_excessive_references() {
         assert!(reference_bytes(&vec![reference(); 3]).is_err());
         assert!(reference_bytes(&[reference().replace("image/png", "image/jpeg")]).is_err());
@@ -593,6 +624,10 @@ mod tests {
         assert_eq!(
             provider_error(500, b"secret", true),
             "Image generation failed"
+        );
+        assert_eq!(
+            provider_error(422, br#"{"message":"secret"}"#, false),
+            "IMAGE_REQUEST_REJECTED"
         );
     }
 
